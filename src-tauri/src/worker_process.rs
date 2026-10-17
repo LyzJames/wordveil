@@ -89,7 +89,11 @@ impl WorkerInstallation {
     pub fn pool_with(self,residency:ResidencyPolicy)->Result<ModelPool> {
         // Validate the executable and all DLL/Python data files before granting
         // the worker read access. Worker code never decides what is trusted.
-        if let Launcher::Frozen{directory}=&self.launcher { verify_files(directory,&self.worker_files)?; }
+        match &self.launcher {
+            Launcher::Frozen{directory}=>verify_files(directory,&self.worker_files)?,
+            #[cfg(feature="dev-worker")]
+            Launcher::Source{..}=>{}
+        }
         let records=self.artifacts.values().collect::<Vec<_>>();
         let launcher_identity=match &self.launcher { Launcher::Frozen{directory}=>directory.to_str().ok_or(Error::Integrity)?.to_owned(), #[cfg(feature="dev-worker")] Launcher::Source{app,..}=>format!("source:{}",app.display()) };
         // The identity names what runs (installation root, launcher, artifacts,
@@ -114,7 +118,13 @@ impl WorkerInstallation {
         let argument=strip(&directory)?;
         let policy=self.launcher.policy(vec!["--model".into(),key.model.clone(),"--artifact".into(),argument],vec![directory],scratch.clone(),8usize*1024*1024*1024)?;
         let mut process=IsolatedProcess::spawn(policy)?;
-        let ready=process.receive(cancellation,deadline)?;
+        // A worker that exits before reporting ready (memory pressure, broken
+        // runtime) is a start failure, not an integrity fault of the files.
+        let ready=match process.receive(cancellation,deadline) {
+            Ok(value)=>value,
+            Err(Error::Cancelled)=>return Err(Error::Cancelled),
+            Err(_)=>{ let _=process.terminate(); let _=std::fs::remove_dir_all(&scratch); return Err(Error::Worker("model_worker_start_failed".into())); }
+        };
         if ready.get("event").and_then(Value::as_str)!=Some("ready") || ready.get("model_id").and_then(Value::as_str)!=Some(&key.model) {
             process.terminate()?; return Err(Error::Integrity);
         }

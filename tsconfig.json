@@ -10,5 +10,5 @@
       "@tauri-apps/api/*":["../docs/tooling/node/node_modules/@tauri-apps/api/*"]
     }
   },
-  "include":["src/**/*.tsx","src/**/*.d.ts"]
+  "include":["src/**/*.ts","src/**/*.tsx"]
 }

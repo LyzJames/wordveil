@@ -55,7 +55,15 @@ impl LocalWorker {
         }
         let policy = self.launcher.policy(arguments, read_only, scratch.clone(), MEMORY_LIMIT)?;
         let mut process = IsolatedProcess::spawn(policy)?;
-        let ready = process.receive(&AtomicBool::new(false), Instant::now() + Duration::from_secs(120))?;
+        let ready = match process.receive(&AtomicBool::new(false), Instant::now() + Duration::from_secs(120)) {
+            Ok(value) => value,
+            Err(_) => {
+                let _ = process.terminate();
+                drop(process);
+                let _ = std::fs::remove_dir_all(&scratch);
+                return Err(Error::Worker("local_worker_start_failed".into()));
+            }
+        };
         if ready.get("event").and_then(Value::as_str) != Some("ready") || ready.get("service").and_then(Value::as_str) != Some("local") {
             process.terminate()?;
             return Err(Error::Integrity);

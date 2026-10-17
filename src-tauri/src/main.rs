@@ -368,7 +368,11 @@ fn layout(root: &Path) -> Result<(Layout, PathBuf, bool), String> {
         let app = source.join("..").canonicalize().map_err(|_| "开发布局缺少应用目录".to_string())?;
         let plain = |p: PathBuf| PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\").to_string());
         let (docs, app) = (plain(docs), plain(app));
-        let data = docs.join("runtime/m1-dev");
+        // The e2e build may point at a fresh synthetic data root; other builds cannot.
+        let data = match std::env::var_os("LVJIN_E2E_DATA_ROOT").map(PathBuf::from).filter(|p| cfg!(feature = "e2e") && p.is_absolute()) {
+            Some(path) => path,
+            None => docs.join("runtime/m1-dev"),
+        };
         let webview = docs.join("build/webview2-fixed/Microsoft.WebView2.FixedVersionRuntime.155.0.4283.60.x64");
         let _ = root;
         return Layout::development(&docs, &app, &data).map(|l| (l, webview, false)).map_err(|e| message(&e));

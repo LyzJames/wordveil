@@ -112,3 +112,13 @@ required-features = ["m0-harness", "dev-worker"]
 name = "m1_pipeline"
 path = "../../docs/tests/m1/pipeline.rs"
 required-features = ["m0-harness", "dev-worker"]
+
+[[test]]
+name = "m1_bench"
+path = "../../docs/tests/m1/bench.rs"
+required-features = ["m0-harness", "dev-worker"]
+
+[[bin]]
+name = "m1-verify"
+path = "../../docs/tests/m1/verify_installation.rs"
+required-features = ["m0-harness"]
