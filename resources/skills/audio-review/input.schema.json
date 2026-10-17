@@ -1,0 +1,55 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_ref": {
+      "description": "音频原件/视频音轨的版本或选择凭证",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Source Ref",
+      "type": "string"
+    },
+    "range_ref": {
+      "description": "实际音轨/声道及时段",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Range Ref",
+      "type": "string"
+    },
+    "question_id": {
+      "description": "用户分析目的",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "decoded_bundle_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "视频流程已有解码时复用，须版本/范围相同",
+      "title": "Decoded Bundle Ref"
+    },
+    "analysis_goal": {
+      "description": "仅转写不外发；独立analyze执行相应原生首读与最终文字分析，视频子任务固定text_only",
+      "enum": [
+        "text_only",
+        "analyze"
+      ],
+      "title": "Analysis Goal",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_ref",
+    "range_ref",
+    "question_id",
+    "analysis_goal"
+  ],
+  "title": "audio_review_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

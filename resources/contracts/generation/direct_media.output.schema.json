@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "media_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Media Refs",
+      "type": "array"
+    },
+    "observations": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "limitations": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "media_refs",
+    "observations",
+    "limitations"
+  ],
+  "title": "MediaObservation",
+  "type": "object"
+}

@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "TaskNode": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Node Id",
+          "type": "string"
+        },
+        "depends_on": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "role_id": {
+          "enum": [
+            "planner",
+            "evidence-researcher",
+            "legal-analyst",
+            "finance-analyst",
+            "media-reader",
+            "evidence-checker",
+            "synthesizer"
+          ],
+          "title": "Role Id",
+          "type": "string"
+        },
+        "goal_ref": {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "title": "Goal Ref",
+          "type": "string"
+        },
+        "acceptance_ref": {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "title": "Acceptance Ref",
+          "type": "string"
+        },
+        "stop_ref": {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "title": "Stop Ref",
+          "type": "string"
+        },
+        "context_packet_ref": {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "title": "Context Packet Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "depends_on",
+        "role_id",
+        "goal_ref",
+        "acceptance_ref",
+        "stop_ref",
+        "context_packet_ref"
+      ],
+      "title": "TaskNode",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "task_graph": {
+      "items": {
+        "$ref": "#/$defs/TaskNode"
+      },
+      "maxItems": 6,
+      "title": "Task Graph",
+      "type": "array"
+    }
+  },
+  "required": [
+    "task_graph"
+  ],
+  "title": "TaskPlan",
+  "type": "object"
+}

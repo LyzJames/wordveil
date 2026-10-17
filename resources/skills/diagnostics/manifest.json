@@ -1,0 +1,35 @@
+{
+  "id": "diagnostics",
+  "title": "本地诊断与问题报告",
+  "kind": "capability",
+  "description": "查看应用组件、资源完整性、任务状态与脱敏错误，按用户选择生成本地诊断草稿，不自动上传。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "diagnostics.redacted"
+  ],
+  "children": [],
+  "handler_binding": "builtin.diagnostics.v1",
+  "input_fields": [
+    {
+      "name": "target_ref",
+      "type": "ComponentOrTaskRef",
+      "required": true,
+      "rule": "明确组件或当前任务"
+    },
+    {
+      "name": "detail",
+      "type": "enum(status,redacted_report)",
+      "required": true,
+      "rule": "不含正文、凭证或原始路径"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

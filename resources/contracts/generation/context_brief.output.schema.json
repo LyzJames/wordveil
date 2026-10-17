@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "original_record_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Original Record Refs",
+      "type": "array"
+    },
+    "pinned_fact_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Pinned Fact Refs",
+      "type": "array"
+    },
+    "conflict_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Conflict Refs",
+      "type": "array"
+    },
+    "omitted_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Omitted Refs",
+      "type": "array"
+    },
+    "brief": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Brief",
+      "type": "string"
+    },
+    "lossy": {
+      "const": true,
+      "title": "Lossy",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "original_record_refs",
+    "pinned_fact_refs",
+    "conflict_refs",
+    "omitted_refs",
+    "brief",
+    "lossy"
+  ],
+  "title": "ContextBrief",
+  "type": "object"
+}

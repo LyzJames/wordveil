@@ -1,0 +1,48 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "audio_segments": {
+      "description": "由核心/解码Skill登记的PCM、原始时间及版本",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Audio Segments",
+      "type": "array"
+    },
+    "language_hint": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "用户选择或自动识别，不能编造语言",
+      "title": "Language Hint"
+    },
+    "vocabulary_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "仅用户确认的领域词，不含期待答案",
+      "title": "Vocabulary Ref"
+    }
+  },
+  "required": [
+    "audio_segments"
+  ],
+  "title": "audio_transcribe_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

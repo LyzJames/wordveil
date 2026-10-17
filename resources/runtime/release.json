@@ -1,0 +1,392 @@
+{
+  "schema_version": "lvjin.m0-release/1",
+  "version": "0.1.0-m0",
+  "milestone": "M0",
+  "business_workflows_implemented": false,
+  "automatic_downloads": false,
+  "updates": "M0 uses whole offline installer; no updater/network or signing key is embedded",
+  "signing": "M0 internal prototype is unsigned; external release requires owned Authenticode certificate and signed whole media manifest",
+  "cpu": "Windows x64, AVX2/FMA, CPU FP32, 4 threads; GPU disabled",
+  "minimum_test_profile": {
+    "os": "Windows 11 x64",
+    "physical_ram_bytes": 8589934592,
+    "page_file_required": true,
+    "threads": 4,
+    "cpu_target": "i9-12900H host / VMware 4-vCPU profile; other CPUs have no measured latency guarantee"
+  },
+  "recommended_ram_bytes": 17179869184,
+  "job_process_commit_limit_bytes": 8589934592,
+  "large_residents_max": 1,
+  "heavy_stages_max": 1,
+  "idle_ttl_seconds": 60,
+  "measured_host_profiles": [
+    {
+      "inference_seconds": [
+        0.3323505,
+        0.3582652,
+        0.2852375
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 3533512704,
+        "peak_working_set": 2933121024,
+        "private_bytes": 3524861952,
+        "working_set": 2927247360
+      },
+      "load_seconds": 30.5932282,
+      "model_id": "embedding",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 3563188224,
+        "peak_working_set": 2939445248,
+        "private_bytes": 3563163648,
+        "working_set": 2939445248
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        15396
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 0.3582652
+    },
+    {
+      "inference_seconds": [
+        1.0535766,
+        0.8912936,
+        0.9538229
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 3510620160,
+        "peak_working_set": 2932346880,
+        "private_bytes": 3491463168,
+        "working_set": 2927243264
+      },
+      "load_seconds": 28.6027343,
+      "model_id": "reranker",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 3530821632,
+        "peak_working_set": 2951905280,
+        "private_bytes": 3501887488,
+        "working_set": 2933760000
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        7588
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 0.9538229
+    },
+    {
+      "inference_seconds": [
+        0.1417587,
+        0.1099202,
+        0.1570616
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 2347708416,
+        "peak_working_set": 2100277248,
+        "private_bytes": 2003263488,
+        "working_set": 1756581888
+      },
+      "load_seconds": 32.3262642,
+      "model_id": "grounding",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 2347708416,
+        "peak_working_set": 2100277248,
+        "private_bytes": 1994702848,
+        "working_set": 1764773888
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        19984
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 0.1570616
+    },
+    {
+      "inference_seconds": [
+        12.4533203,
+        12.5991748,
+        12.5196328
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 778907648,
+        "peak_working_set": 613122048,
+        "private_bytes": 778715136,
+        "working_set": 613122048
+      },
+      "load_seconds": 9.6422517,
+      "model_id": "ocr-det",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 1462194176,
+        "peak_working_set": 1126268928,
+        "private_bytes": 805236736,
+        "working_set": 642228224
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        20736
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 12.5991748
+    },
+    {
+      "inference_seconds": [
+        2.3989177,
+        2.1619067,
+        2.0745168
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 349913088,
+        "peak_working_set": 254816256,
+        "private_bytes": 349720576,
+        "working_set": 254816256
+      },
+      "load_seconds": 3.6017696,
+      "model_id": "uvdoc",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 565407744,
+        "peak_working_set": 432242688,
+        "private_bytes": 383229952,
+        "working_set": 290418688
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        3524
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 2.1619067
+    },
+    {
+      "inference_seconds": [
+        0.1331525,
+        0.1344865,
+        0.0991392
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 720629760,
+        "peak_working_set": 554921984,
+        "private_bytes": 720437248,
+        "working_set": 554921984
+      },
+      "load_seconds": 12.0639685,
+      "model_id": "textline-ori",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 777674752,
+        "peak_working_set": 579928064,
+        "private_bytes": 736473088,
+        "working_set": 573046784
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        15984
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 0.1344865
+    },
+    {
+      "inference_seconds": [
+        1.4685017,
+        1.3376702,
+        1.4107292
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 792461312,
+        "peak_working_set": 627470336,
+        "private_bytes": 792461312,
+        "working_set": 627470336
+      },
+      "load_seconds": 23.357338,
+      "model_id": "ocr-rec",
+      "outputs": [
+        {
+          "text": "林涛收到借款人民币27000。期限为一年，双方未约定逾期额外费用。"
+        },
+        {
+          "text": "林涛收到借款人民币27000。期限为一年，双方未约定逾期额外费用。"
+        },
+        {
+          "text": "林涛收到借款人民币27000。期限为一年，双方未约定逾期额外费用。"
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 918786048,
+        "peak_working_set": 665305088,
+        "private_bytes": 819810304,
+        "working_set": 656171008
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        2624
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 1.4107292
+    },
+    {
+      "inference_seconds": [
+        0.1872224,
+        0.1516267,
+        0.1030717
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 720068608,
+        "peak_working_set": 554283008,
+        "private_bytes": 719876096,
+        "working_set": 554283008
+      },
+      "load_seconds": 20.4807622,
+      "model_id": "doc-ori",
+      "outputs": [
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        },
+        {
+          "output_type_verified": true
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 785960960,
+        "peak_working_set": 589799424,
+        "private_bytes": 735973376,
+        "working_set": 572612608
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        27848
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 0.1516267
+    },
+    {
+      "inference_seconds": [
+        7.4722036,
+        6.5671069,
+        5.0455295
+      ],
+      "is_appcontainer": true,
+      "load_memory": {
+        "peak_private_commit": 4407558144,
+        "peak_working_set": 3685511168,
+        "private_bytes": 4398182400,
+        "working_set": 3682336768
+      },
+      "load_seconds": 82.5639012,
+      "model_id": "asr",
+      "outputs": [
+        {
+          "transcription": "林涛收到借款人民币两万七千元，期限为一年，双方未约定逾期额外费用。",
+          "truncated": false
+        },
+        {
+          "transcription": "林涛收到借款人民币两万七千元，期限为一年，双方未约定逾期额外费用。",
+          "truncated": false
+        },
+        {
+          "transcription": "林涛收到借款人民币两万七千元，期限为一年，双方未约定逾期额外费用。",
+          "truncated": false
+        }
+      ],
+      "peak_memory": {
+        "peak_private_commit": 4554354688,
+        "peak_working_set": 3825369088,
+        "private_bytes": 4406046720,
+        "working_set": 3220324352
+      },
+      "percentile_limit": "two post-first warm measurements; descriptive maximum, not a stable population P95",
+      "processes": [
+        25100
+      ],
+      "shutdown_waited": true,
+      "status": "passed",
+      "warm_max_seconds": 6.5671069
+    }
+  ],
+  "performance_scope": "Fixed synthetic minimum probes: cold load and three actual inference times/RAM per model; two warm observations are not a stable population P95. Quality latency under concurrent builds is not a performance guarantee.",
+  "clean_install_acceptance": "Final external release manifest and guest report identify the exact installer hash, measured guest hardware, installation space and nine-model results. No unperformed acceptance claim is embedded here.",
+  "ffmpeg_version": "9.0.2",
+  "webview2_fixed_version": "155.0.4283.60",
+  "vc_runtime_version": "14.44.35112"
+}

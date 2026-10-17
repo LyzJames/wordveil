@@ -1,0 +1,56 @@
+{
+  "id": "video-review",
+  "title": "视频画面与音轨联合分析",
+  "kind": "workflow",
+  "description": "按原时间轴抽帧OCR并转写视频音轨；有对应原生媒体能力且获准时读取实际帧/音频或视频，保留覆盖与分歧。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [
+    "media-decode",
+    "image-review",
+    "audio-review",
+    "media-observe",
+    "knowledge-index",
+    "evidence-read",
+    "answer-compose",
+    "answer-grounding"
+  ],
+  "handler_binding": "builtin.video.review.v1",
+  "input_fields": [
+    {
+      "name": "source_ref",
+      "type": "MediaOrSelectionRef",
+      "required": true,
+      "rule": "原视频版本/用户选择凭证"
+    },
+    {
+      "name": "range_ref",
+      "type": "ApprovedTimeRangeRef",
+      "required": true,
+      "rule": "选定时间/音轨范围"
+    },
+    {
+      "name": "question_id",
+      "type": "ImmutableQuestionRef",
+      "required": true,
+      "rule": "用户的具体问题"
+    },
+    {
+      "name": "analysis_goal",
+      "type": "enum(text_only,analyze)",
+      "required": true,
+      "rule": "text_only不请求原生媒体，analyze按实际能力复核"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

@@ -1,0 +1,45 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "seed_ids": {
+      "description": "当前检索种子",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Seed Ids",
+      "type": "array"
+    },
+    "relation_types": {
+      "description": "仅注册的引用/解释/支持/版本关系",
+      "items": {
+        "enum": [
+          "cites",
+          "amends",
+          "supersedes",
+          "evidence_for",
+          "confirmed_fact",
+          "derived_from"
+        ],
+        "type": "string"
+      },
+      "title": "Relation Types",
+      "type": "array"
+    },
+    "max_hops": {
+      "description": "受根任务候选预算二次约束",
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Max Hops",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "seed_ids",
+    "relation_types",
+    "max_hops"
+  ],
+  "title": "graph_relations_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

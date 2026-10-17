@@ -1,0 +1,42 @@
+{
+  "id": "web-research",
+  "title": "授权联网研究",
+  "kind": "capability",
+  "description": "在用户许可的查询、目的地和预算内搜索并读取公共网页，记录来源、时间、原文快照和证据位置。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "network.search",
+    "network.fetch"
+  ],
+  "children": [],
+  "handler_binding": "builtin.web.research.v1",
+  "input_fields": [
+    {
+      "name": "query",
+      "type": "string[1..512]",
+      "required": true,
+      "rule": "核对真实搜索词中的敏感字段"
+    },
+    {
+      "name": "source_ids",
+      "type": "ApprovedSourceRef[]",
+      "required": true,
+      "rule": "获准来源/检索连接"
+    },
+    {
+      "name": "research_purpose",
+      "type": "string",
+      "required": true,
+      "rule": "本次用途，不新增权限"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

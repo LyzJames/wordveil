@@ -1,0 +1,43 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "calculation_type": {
+      "description": "仅注册的计算方法",
+      "enum": [
+        "sum",
+        "cashflow",
+        "loan",
+        "annualized",
+        "budget"
+      ],
+      "title": "Calculation Type",
+      "type": "string"
+    },
+    "confirmed_inputs": {
+      "description": "数值/币种/日期/方向及凭证须可追溯",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Confirmed Inputs",
+      "type": "array"
+    },
+    "assumption_ids": {
+      "description": "不可缺省编造计息口径",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Assumption Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "calculation_type",
+    "confirmed_inputs",
+    "assumption_ids"
+  ],
+  "title": "finance_calculate_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

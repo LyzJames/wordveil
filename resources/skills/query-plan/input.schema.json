@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "question_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "scope_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Scope Id",
+      "type": "string"
+    },
+    "constraint_ids": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Constraint Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "question_id",
+    "scope_id",
+    "constraint_ids"
+  ],
+  "title": "SearchPlanInput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

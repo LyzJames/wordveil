@@ -1,0 +1,22 @@
+{
+  "id": "media-reader",
+  "title": "媒体原文读取者",
+  "generation_skill": "media-observe",
+  "generation_purpose": "direct_media",
+  "allowed_skills": [
+    "document-ocr",
+    "audio-transcribe",
+    "image-review",
+    "audio-review",
+    "media-decode"
+  ],
+  "version": "0.1.0-m0",
+  "tool_input_constraints": {
+    "image-review": {
+      "mode": "extract_text"
+    },
+    "audio-review": {
+      "analysis_goal": "text_only"
+    }
+  }
+}

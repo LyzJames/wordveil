@@ -1,0 +1,53 @@
+{
+  "id": "report-export",
+  "title": "结果预览与导出",
+  "kind": "capability",
+  "description": "将当前结果、证据目录或计算表整理为 Markdown/CSV，先预览真实内容再导出到用户确认的位置。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [],
+  "handler_binding": "builtin.report.export.v1",
+  "input_fields": [
+    {
+      "name": "result_refs",
+      "type": "ResultRef[]",
+      "required": true,
+      "rule": "当前权限和固定结果版本"
+    },
+    {
+      "name": "format",
+      "type": "enum(markdown,csv)",
+      "required": true,
+      "rule": "首版格式"
+    },
+    {
+      "name": "operation",
+      "type": "enum(prepare,commit)",
+      "required": true,
+      "rule": "commit 需核心签发输出选择/确认凭证"
+    },
+    {
+      "name": "prepared_export_id",
+      "type": "ExportDraftRef|null",
+      "required": false,
+      "rule": "commit 时必填；绑定已预览草稿版本/内容哈希"
+    },
+    {
+      "name": "selection_id",
+      "type": "OutputSelectionRef|null",
+      "required": false,
+      "rule": "commit 时必填；核心签发目标/覆盖确认凭证"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

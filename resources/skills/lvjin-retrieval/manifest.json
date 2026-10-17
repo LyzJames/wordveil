@@ -1,0 +1,57 @@
+{
+  "id": "lvjin-retrieval",
+  "title": "法律金融检索与问答",
+  "kind": "workflow",
+  "description": "为个人法律金融问题组织四阶段证据流程，按范围调用本地/获准公共检索、重排、生成与有限核查修订。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [
+    "query-plan",
+    "knowledge-search",
+    "graph-relations",
+    "evidence-rerank",
+    "evidence-read",
+    "web-research",
+    "finance-calculate",
+    "answer-compose",
+    "answer-grounding"
+  ],
+  "handler_binding": "builtin.lvjin.retrieval.v1",
+  "input_fields": [
+    {
+      "name": "question_id",
+      "type": "ImmutableQuestionRef",
+      "required": true,
+      "rule": "保留原始问题"
+    },
+    {
+      "name": "scope_id",
+      "type": "ScopeRef",
+      "required": true,
+      "rule": "已授权资料/来源"
+    },
+    {
+      "name": "known_constraint_ids",
+      "type": "KnownConstraintRef[]",
+      "required": true,
+      "rule": "地区、事实日期和身份"
+    },
+    {
+      "name": "requested_output",
+      "type": "enum(answer,evidence_only)",
+      "required": true,
+      "rule": "无生成连接时仍可证据检索"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

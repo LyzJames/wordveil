@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "document_versions": {
+      "description": "只接受已登记版本",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Document Versions",
+      "type": "array"
+    },
+    "operation": {
+      "description": "remove 需已确认删除事件或明确用户动作",
+      "enum": [
+        "build",
+        "rebuild",
+        "remove"
+      ],
+      "title": "Operation",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_versions",
+    "operation"
+  ],
+  "title": "knowledge_index_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

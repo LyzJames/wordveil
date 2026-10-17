@@ -1,0 +1,41 @@
+{
+  "id": "finance-calculate",
+  "title": "确定性金融计算",
+  "kind": "capability",
+  "description": "对已确认金额、费用、日期和现金流执行可复算的收支、借款成本、还款和预算计算。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "local.calc"
+  ],
+  "children": [],
+  "handler_binding": "builtin.finance.calculate.v1",
+  "input_fields": [
+    {
+      "name": "calculation_type",
+      "type": "enum(sum,cashflow,loan,annualized,budget)",
+      "required": true,
+      "rule": "仅注册的计算方法"
+    },
+    {
+      "name": "confirmed_inputs",
+      "type": "FinancialInputRef[]",
+      "required": true,
+      "rule": "数值/币种/日期/方向及凭证须可追溯"
+    },
+    {
+      "name": "assumption_ids",
+      "type": "AssumptionRef[]",
+      "required": true,
+      "rule": "不可缺省编造计息口径"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

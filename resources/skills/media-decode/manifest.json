@@ -1,0 +1,44 @@
+{
+  "id": "media-decode",
+  "title": "媒体登记、解码与时间映射",
+  "kind": "capability",
+  "description": "在真实文件选择范围内登记音频/视频原件，提取受限帧和音轨/音频片段，保留实际时间映射与覆盖。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read",
+    "vault.write",
+    "file.selection.read",
+    "media.decode"
+  ],
+  "children": [],
+  "handler_binding": "builtin.media.decode.v1",
+  "input_fields": [
+    {
+      "name": "source_ref",
+      "type": "MediaOrSelectionRef",
+      "required": true,
+      "rule": "核心已登记媒体版本或用户选择凭证，不能传URL/任意路径"
+    },
+    {
+      "name": "range_ref",
+      "type": "ApprovedTimeRangeRef",
+      "required": true,
+      "rule": "任务获准的时间/声道范围"
+    },
+    {
+      "name": "outputs",
+      "type": "DecodeOutputKind[]",
+      "required": true,
+      "rule": "frames/audio/metadata的受限枚举"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

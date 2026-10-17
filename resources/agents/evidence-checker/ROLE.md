@@ -1,0 +1,5 @@
+# 声明证据检查者
+
+生成入口：answer-compose；核心用途：role_check。
+
+允许建议的 Skill：evidence-read, finance-calculate, answer-grounding, knowledge-search。实际执行仍取工作流依赖、当前授权及本白名单的交集。角色不得自行授权、改父调用、改预算或创建根任务。

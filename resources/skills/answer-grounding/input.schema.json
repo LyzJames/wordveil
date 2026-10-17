@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "question_id": {
+      "description": "完整原始问题",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "draft_ref": {
+      "description": "固定草稿正文与声明范围",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Draft Ref",
+      "type": "string"
+    },
+    "evidence_bundle_id": {
+      "description": "实际已登记联合证据",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Evidence Bundle Id",
+      "type": "string"
+    },
+    "calculation_ids": {
+      "description": "数字对照依据",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Calculation Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "question_id",
+    "draft_ref",
+    "evidence_bundle_id",
+    "calculation_ids"
+  ],
+  "title": "answer_grounding_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

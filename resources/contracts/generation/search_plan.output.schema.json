@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "question_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "scope_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Scope Id",
+      "type": "string"
+    },
+    "rewritten_queries": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 3,
+      "title": "Rewritten Queries",
+      "type": "array"
+    },
+    "constraint_ids": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Constraint Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "question_id",
+    "scope_id",
+    "rewritten_queries",
+    "constraint_ids"
+  ],
+  "title": "SearchPlan",
+  "type": "object"
+}

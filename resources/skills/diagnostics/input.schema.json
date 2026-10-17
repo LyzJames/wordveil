@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "target_ref": {
+      "description": "明确组件或当前任务",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Target Ref",
+      "type": "string"
+    },
+    "detail": {
+      "description": "不含正文、凭证或原始路径",
+      "enum": [
+        "status",
+        "redacted_report"
+      ],
+      "title": "Detail",
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_ref",
+    "detail"
+  ],
+  "title": "diagnostics_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

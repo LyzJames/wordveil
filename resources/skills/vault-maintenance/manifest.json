@@ -1,0 +1,34 @@
+{
+  "id": "vault-maintenance",
+  "title": "加密备份与恢复",
+  "kind": "ui-workflow",
+  "description": "通过受保护的用户界面创建、校验加密备份，并在独立新位置验证恢复；不向生成模型暴露密钥。",
+  "actors": [
+    "ui",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.maintenance"
+  ],
+  "children": [],
+  "handler_binding": "builtin.vault.maintenance.v1",
+  "input_fields": [
+    {
+      "name": "operation",
+      "type": "enum(backup,verify,restore)",
+      "required": true,
+      "rule": "UI 选择或预先确认的本地备份任务"
+    },
+    {
+      "name": "selection_id",
+      "type": "MaintenanceSelectionRef",
+      "required": true,
+      "rule": "核心签发目标/来源选择，不含口令"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

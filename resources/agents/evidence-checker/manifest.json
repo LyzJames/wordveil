@@ -1,0 +1,13 @@
+{
+  "id": "evidence-checker",
+  "title": "声明证据检查者",
+  "generation_skill": "answer-compose",
+  "generation_purpose": "role_check",
+  "allowed_skills": [
+    "evidence-read",
+    "finance-calculate",
+    "answer-grounding",
+    "knowledge-search"
+  ],
+  "version": "0.1.0-m0"
+}

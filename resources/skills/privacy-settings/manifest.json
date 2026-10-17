@@ -1,0 +1,33 @@
+{
+  "id": "privacy-settings",
+  "title": "私密空间与授权界面",
+  "kind": "ui-workflow",
+  "description": "通过可信界面创建、解锁/锁定私密空间，查看/撤销授权并修改安全设置；模型不能代替用户批准。",
+  "actors": [
+    "ui"
+  ],
+  "direct_capabilities": [
+    "settings.privacy"
+  ],
+  "children": [],
+  "handler_binding": "builtin.privacy.settings.v1",
+  "input_fields": [
+    {
+      "name": "operation",
+      "type": "enum(create,unlock,lock,view_grants,revoke_grant,change_policy)",
+      "required": true,
+      "rule": "受保护 UI 的明确动作"
+    },
+    {
+      "name": "ui_request_id",
+      "type": "TrustedUiRequestRef",
+      "required": true,
+      "rule": "不可由生成模型自行构造"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "document_version": {
+      "description": "获准材料版本",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Document Version",
+      "type": "string"
+    },
+    "page_ids": {
+      "description": "不得跨版本或越过页数预算",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Page Ids",
+      "type": "array"
+    },
+    "purpose": {
+      "description": "不扩大原有材料用途",
+      "enum": [
+        "read",
+        "index",
+        "correct"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_version",
+    "page_ids",
+    "purpose"
+  ],
+  "title": "document_ocr_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

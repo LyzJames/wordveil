@@ -1,0 +1,57 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "question_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "evidence_bundle_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Evidence Bundle Id",
+      "type": "string"
+    },
+    "calculation_ids": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Calculation Ids",
+      "type": "array"
+    },
+    "draft_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Draft Ref"
+    },
+    "validation_report_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Validation Report Ref"
+    }
+  },
+  "required": [
+    "question_id",
+    "evidence_bundle_id",
+    "calculation_ids"
+  ],
+  "title": "DraftAnswerInput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

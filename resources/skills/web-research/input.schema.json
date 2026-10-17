@@ -1,0 +1,36 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "description": "核对真实搜索词中的敏感字段",
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Query",
+      "type": "string"
+    },
+    "source_ids": {
+      "description": "获准来源/检索连接",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Source Ids",
+      "type": "array"
+    },
+    "research_purpose": {
+      "description": "本次用途，不新增权限",
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Research Purpose",
+      "type": "string"
+    }
+  },
+  "required": [
+    "query",
+    "source_ids",
+    "research_purpose"
+  ],
+  "title": "web_research_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,55 @@
+{
+  "id": "loan-analysis",
+  "title": "借款与还款分析",
+  "kind": "workflow",
+  "description": "整理借条、转账和聊天材料中的借还款事实，计算情景并结合有依据的规则形成问题清单。",
+  "actors": [
+    "ui",
+    "agent"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [
+    "document-import",
+    "matter-manage",
+    "finance-calculate",
+    "lvjin-retrieval",
+    "report-export",
+    "image-review",
+    "audio-review",
+    "video-review"
+  ],
+  "handler_binding": "builtin.loan.analysis.v1",
+  "input_fields": [
+    {
+      "name": "matter_id",
+      "type": "MatterRef",
+      "required": true,
+      "rule": "借款事务"
+    },
+    {
+      "name": "document_versions",
+      "type": "DocumentVersionRef[]",
+      "required": false,
+      "rule": "默认空；获准借条/凭证版本，与media_refs/事务已确认事实至少一项非空"
+    },
+    {
+      "name": "question_id",
+      "type": "ImmutableQuestionRef",
+      "required": true,
+      "rule": "分析目标与口径"
+    },
+    {
+      "name": "media_refs",
+      "type": "MediaVersionRef[]",
+      "required": false,
+      "rule": "默认空；获准录音/视频版本及时间范围由核心解析，不能传任意路径"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

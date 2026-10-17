@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "pattern": "^ref_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "calculation_refs": {
+          "items": {
+            "pattern": "^ref_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Calculation Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "claim_id",
+        "text",
+        "evidence_refs",
+        "calculation_refs"
+      ],
+      "title": "Claim",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "question_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/Claim"
+      },
+      "title": "Claims",
+      "type": "array"
+    },
+    "assumptions": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "conflicts": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "unknowns": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Unknowns",
+      "type": "array"
+    }
+  },
+  "required": [
+    "question_id",
+    "claims",
+    "assumptions",
+    "conflicts",
+    "unknowns"
+  ],
+  "title": "DraftAnswer",
+  "type": "object"
+}

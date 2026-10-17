@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "description": "受保护 UI 的明确动作",
+      "enum": [
+        "create",
+        "unlock",
+        "lock",
+        "view_grants",
+        "revoke_grant",
+        "change_policy"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "ui_request_id": {
+      "description": "不可由生成模型自行构造",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Ui Request Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation",
+    "ui_request_id"
+  ],
+  "title": "privacy_settings_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

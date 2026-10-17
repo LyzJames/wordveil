@@ -1,0 +1,60 @@
+{
+  "id": "audio-review",
+  "title": "音频转写与原音频复核",
+  "kind": "workflow",
+  "description": "对纯音频或视频音轨使用固定ASR文字兜底；生成接口支持原音频且获准时再直接听音频核对转写与可支持的声音信息。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [
+    "media-decode",
+    "audio-transcribe",
+    "media-observe",
+    "evidence-read",
+    "answer-compose",
+    "answer-grounding"
+  ],
+  "handler_binding": "builtin.audio.review.v1",
+  "input_fields": [
+    {
+      "name": "source_ref",
+      "type": "MediaOrSelectionRef",
+      "required": true,
+      "rule": "音频原件/视频音轨的版本或选择凭证"
+    },
+    {
+      "name": "range_ref",
+      "type": "ApprovedTimeRangeRef",
+      "required": true,
+      "rule": "实际音轨/声道及时段"
+    },
+    {
+      "name": "question_id",
+      "type": "ImmutableQuestionRef",
+      "required": true,
+      "rule": "用户分析目的"
+    },
+    {
+      "name": "decoded_bundle_ref",
+      "type": "DecodedMediaBundleRef",
+      "required": false,
+      "rule": "视频流程已有解码时复用，须版本/范围相同"
+    },
+    {
+      "name": "analysis_goal",
+      "type": "enum(text_only,analyze)",
+      "required": true,
+      "rule": "仅转写不外发；独立analyze执行相应原生首读与最终文字分析，视频子任务固定text_only"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

@@ -1,0 +1,35 @@
+{
+  "id": "external-tools",
+  "title": "受限外部工具连接",
+  "kind": "capability",
+  "description": "通过已配置且获准的 MCP 连接调用明确登记的工具，限制实际目的地、资料范围、参数和返回内容。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "connector.read"
+  ],
+  "children": [],
+  "handler_binding": "builtin.external.tools.v1",
+  "input_fields": [
+    {
+      "name": "binding_id",
+      "type": "ApprovedToolBindingRef",
+      "required": true,
+      "rule": "连接 ID + 工具名 + Schema 哈希，非任意命令/URL"
+    },
+    {
+      "name": "arguments_ref",
+      "type": "ValidatedTypedArgumentsRef",
+      "required": true,
+      "rule": "按该 binding 专用 JSON Schema 校验"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

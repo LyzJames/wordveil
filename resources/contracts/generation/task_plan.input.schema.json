@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "question_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "context_packet_ref": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Context Packet Ref",
+      "type": "string"
+    },
+    "catalog_ref": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Catalog Ref",
+      "type": "string"
+    },
+    "goal_ref": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Goal Ref",
+      "type": "string"
+    },
+    "stop_constraints_ref": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Stop Constraints Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "question_id",
+    "context_packet_ref",
+    "catalog_ref",
+    "goal_ref",
+    "stop_constraints_ref"
+  ],
+  "title": "TaskPlanInput",
+  "type": "object"
+}

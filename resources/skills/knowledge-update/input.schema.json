@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_selection_id": {
+      "description": "本地选择凭证或已授权来源 ID",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Source Selection Id",
+      "type": "string"
+    },
+    "update_mode": {
+      "description": "应用更新需明确用户动作或仍有效更新授权",
+      "enum": [
+        "preview",
+        "apply"
+      ],
+      "title": "Update Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_selection_id",
+    "update_mode"
+  ],
+  "title": "knowledge_update_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

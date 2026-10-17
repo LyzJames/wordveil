@@ -1,0 +1,37 @@
+{
+  "id": "knowledge-index",
+  "title": "资料索引与删除同步",
+  "kind": "capability",
+  "description": "为获准的资料版本建立中文全文与语义索引，维护更新、删除、索引一致性和可重建快照。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read",
+    "index.write",
+    "local.embedding"
+  ],
+  "children": [],
+  "handler_binding": "builtin.knowledge.index.v1",
+  "input_fields": [
+    {
+      "name": "document_versions",
+      "type": "DocumentVersionRef[]",
+      "required": true,
+      "rule": "只接受已登记版本"
+    },
+    {
+      "name": "operation",
+      "type": "enum(build,rebuild,remove)",
+      "required": true,
+      "rule": "remove 需已确认删除事件或明确用户动作"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

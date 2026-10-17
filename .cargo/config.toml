@@ -1,0 +1,4 @@
+[env]
+# Internal diagnostics can allocate through the secure allocator and recurse when
+# VirtualLock fails (SQLCipher issue #619). Never log database values or key state.
+LIBSQLITE3_FLAGS = { value = "-DSQLCIPHER_OMIT_LOG", force = true }

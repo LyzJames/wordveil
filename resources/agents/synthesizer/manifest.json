@@ -1,0 +1,11 @@
+{
+  "id": "synthesizer",
+  "title": "结果综合者",
+  "generation_skill": "answer-compose",
+  "generation_purpose": "draft_answer",
+  "allowed_skills": [
+    "evidence-read",
+    "answer-grounding"
+  ],
+  "version": "0.1.0-m0"
+}

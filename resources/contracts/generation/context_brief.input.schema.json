@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "context_packet_ref": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Context Packet Ref",
+      "type": "string"
+    },
+    "progress_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Progress Refs",
+      "type": "array"
+    },
+    "original_record_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Original Record Refs",
+      "type": "array"
+    },
+    "target_tokens": {
+      "maximum": 32768,
+      "minimum": 1,
+      "title": "Target Tokens",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "context_packet_ref",
+    "progress_refs",
+    "original_record_refs",
+    "target_tokens"
+  ],
+  "title": "ContextBriefInput",
+  "type": "object"
+}

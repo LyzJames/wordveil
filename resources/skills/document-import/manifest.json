@@ -1,0 +1,47 @@
+{
+  "id": "document-import",
+  "title": "资料导入与解析",
+  "kind": "workflow",
+  "description": "导入用户选定或已获准且经核心核验的资料，保留原件和版本，提取结构、按需OCR并建立索引。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.write",
+    "public_knowledge.write",
+    "file.selection.read",
+    "vault.read"
+  ],
+  "children": [
+    "document-ocr",
+    "knowledge-index"
+  ],
+  "handler_binding": "builtin.document.import.v1",
+  "input_fields": [
+    {
+      "name": "selection_id",
+      "type": "ImportSourceRef",
+      "required": true,
+      "rule": "核心签发的UI选择凭证，或已核验下载/离线知识包的ArtifactRef；绑定来源、哈希和范围，不能传路径/URL"
+    },
+    {
+      "name": "target_ref",
+      "type": "ImportTargetRef",
+      "required": true,
+      "rule": "核心核验的MatterRef或PublicKnowledgeCollectionRef；按真实目标选择写权限，不能将公共更新写入私密事务"
+    },
+    {
+      "name": "import_mode",
+      "type": "enum(copy,new_version)",
+      "required": true,
+      "rule": "显式新增副本或新版本"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

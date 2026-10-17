@@ -1,0 +1,42 @@
+{
+  "id": "evidence-rerank",
+  "title": "候选证据重排",
+  "kind": "capability",
+  "description": "对有权限的查询和候选原文做联合相关性评分，保留反证和子问题覆盖，精炼为答案上下文。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read",
+    "local.rerank"
+  ],
+  "children": [],
+  "handler_binding": "builtin.evidence.rerank.v1",
+  "input_fields": [
+    {
+      "name": "query_ref",
+      "type": "ImmutableQuestionRef",
+      "required": true,
+      "rule": "核心持有原始问题"
+    },
+    {
+      "name": "candidate_set_id",
+      "type": "CandidateSetRef",
+      "required": true,
+      "rule": "与当前任务范围和快照一致"
+    },
+    {
+      "name": "facet_ids",
+      "type": "FacetRef[]",
+      "required": true,
+      "rule": "只能引用已登记问题维度"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

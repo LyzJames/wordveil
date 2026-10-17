@@ -1,0 +1,42 @@
+{
+  "id": "graph-relations",
+  "title": "资料关系与图路径",
+  "kind": "capability",
+  "description": "沿已记录且有原文的法规、解释、案例、合同和凭证关系做有限图扩展，解释路径来源与适用范围。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read",
+    "graph.read"
+  ],
+  "children": [],
+  "handler_binding": "builtin.graph.relations.v1",
+  "input_fields": [
+    {
+      "name": "seed_ids",
+      "type": "EvidenceOrNodeRef[]",
+      "required": true,
+      "rule": "当前检索种子"
+    },
+    {
+      "name": "relation_types",
+      "type": "AllowedRelationType[]",
+      "required": true,
+      "rule": "仅注册的引用/解释/支持/版本关系"
+    },
+    {
+      "name": "max_hops",
+      "type": "integer[0..2]",
+      "required": true,
+      "rule": "受根任务候选预算二次约束"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

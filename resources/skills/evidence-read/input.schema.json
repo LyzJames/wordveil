@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "evidence_ids": {
+      "description": "核心证据目录中存在且获准",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Evidence Ids",
+      "type": "array"
+    },
+    "context_mode": {
+      "description": "扩展仍在同版本与读取预算内",
+      "enum": [
+        "exact",
+        "parent_clause",
+        "page"
+      ],
+      "title": "Context Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "evidence_ids",
+    "context_mode"
+  ],
+  "title": "evidence_read_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

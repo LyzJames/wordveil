@@ -1,0 +1,8 @@
+{
+  "name":"lvjin-desktop",
+  "version":"0.1.0",
+  "private":true,
+  "type":"module",
+  "dependencies":{"@tauri-apps/api":"2.12.4","react":"19.3.1","react-dom":"19.3.1"},
+  "devDependencies":{"esbuild":"0.28.2","typescript":"7.0.2","@types/react":"19.3.0","@types/react-dom":"19.3.0"}
+}

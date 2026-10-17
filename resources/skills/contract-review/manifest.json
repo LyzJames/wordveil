@@ -1,0 +1,54 @@
+{
+  "id": "contract-review",
+  "title": "合同与金融条款阅读",
+  "kind": "workflow",
+  "description": "阅读合同、保险或金融产品说明，定位具体条款、解释费用与风险并整理需要核实或协商的问题。",
+  "actors": [
+    "ui",
+    "agent"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [
+    "document-import",
+    "lvjin-retrieval",
+    "matter-manage",
+    "report-export",
+    "image-review",
+    "audio-review",
+    "video-review"
+  ],
+  "handler_binding": "builtin.contract.review.v1",
+  "input_fields": [
+    {
+      "name": "document_versions",
+      "type": "DocumentVersionRef[]",
+      "required": false,
+      "rule": "默认空；与media_refs至少一项非空，必须是获准合同/说明材料"
+    },
+    {
+      "name": "question_id",
+      "type": "ImmutableQuestionRef",
+      "required": true,
+      "rule": "用户阅读目标"
+    },
+    {
+      "name": "known_constraint_ids",
+      "type": "KnownConstraintRef[]",
+      "required": true,
+      "rule": "地区、身份、签署日期等已知事实"
+    },
+    {
+      "name": "media_refs",
+      "type": "MediaVersionRef[]",
+      "required": false,
+      "rule": "默认空；获准合同录音/视频及时间范围由核心解析"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

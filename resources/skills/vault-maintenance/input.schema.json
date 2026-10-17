@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "description": "UI 选择或预先确认的本地备份任务",
+      "enum": [
+        "backup",
+        "verify",
+        "restore"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "selection_id": {
+      "description": "核心签发目标/来源选择，不含口令",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Selection Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation",
+    "selection_id"
+  ],
+  "title": "vault_maintenance_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

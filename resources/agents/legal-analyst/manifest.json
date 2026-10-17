@@ -1,0 +1,12 @@
+{
+  "id": "legal-analyst",
+  "title": "法律适用分析者",
+  "generation_skill": "answer-compose",
+  "generation_purpose": "role_analysis",
+  "allowed_skills": [
+    "knowledge-search",
+    "graph-relations",
+    "evidence-read"
+  ],
+  "version": "0.1.0-m0"
+}

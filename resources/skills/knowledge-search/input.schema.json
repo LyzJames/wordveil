@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "ScopedQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "query_id": {
+          "enum": [
+            "q0",
+            "q1",
+            "q2",
+            "q3"
+          ],
+          "title": "Query Id",
+          "type": "string"
+        },
+        "query": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query_id",
+        "query"
+      ],
+      "title": "ScopedQuery",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "queries": {
+      "items": {
+        "$ref": "#/$defs/ScopedQuery"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Queries",
+      "type": "array"
+    },
+    "filter_ids": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Filter Ids",
+      "type": "array"
+    },
+    "snapshot_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Snapshot Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "queries",
+    "filter_ids",
+    "snapshot_id"
+  ],
+  "title": "SearchInput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

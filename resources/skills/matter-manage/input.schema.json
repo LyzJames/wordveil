@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "matter_id": {
+      "description": "当前空间",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Matter Id",
+      "type": "string"
+    },
+    "operation": {
+      "description": "commit 依赖真实确认凭证",
+      "enum": [
+        "read",
+        "prepare_change",
+        "commit_change"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "change_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "含来源/版本和待变更项",
+      "title": "Change Ref"
+    }
+  },
+  "required": [
+    "matter_id",
+    "operation"
+  ],
+  "title": "matter_manage_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

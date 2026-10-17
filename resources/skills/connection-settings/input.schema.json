@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "operation": {
+      "description": "UI 明确操作",
+      "enum": [
+        "save",
+        "probe",
+        "revoke"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "connection_draft_id": {
+      "description": "核心安全 UI 中的配置引用，不包含原始 Key",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Connection Draft Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation",
+    "connection_draft_id"
+  ],
+  "title": "connection_settings_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

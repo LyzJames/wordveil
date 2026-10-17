@@ -1,0 +1,68 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "result_refs": {
+      "description": "当前权限和固定结果版本",
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Result Refs",
+      "type": "array"
+    },
+    "format": {
+      "description": "首版格式",
+      "enum": [
+        "markdown",
+        "csv"
+      ],
+      "title": "Format",
+      "type": "string"
+    },
+    "operation": {
+      "description": "commit 需核心签发输出选择/确认凭证",
+      "enum": [
+        "prepare",
+        "commit"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "prepared_export_id": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "commit 时必填；绑定已预览草稿版本/内容哈希",
+      "title": "Prepared Export Id"
+    },
+    "selection_id": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "commit 时必填；核心签发目标/覆盖确认凭证",
+      "title": "Selection Id"
+    }
+  },
+  "required": [
+    "result_refs",
+    "format",
+    "operation"
+  ],
+  "title": "report_export_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

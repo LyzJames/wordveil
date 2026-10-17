@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "Challenge": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "issue_type": {
+          "enum": [
+            "unsupported",
+            "contradiction",
+            "missing_evidence",
+            "calculation",
+            "scope"
+          ],
+          "title": "Issue Type",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "pattern": "^ref_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "proposed_action": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Proposed Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "issue_type",
+        "evidence_refs",
+        "proposed_action"
+      ],
+      "title": "Challenge",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "draft_ref": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Draft Ref",
+      "type": "string"
+    },
+    "challenges": {
+      "items": {
+        "$ref": "#/$defs/Challenge"
+      },
+      "title": "Challenges",
+      "type": "array"
+    }
+  },
+  "required": [
+    "draft_ref",
+    "challenges"
+  ],
+  "title": "ChallengeReport",
+  "type": "object"
+}

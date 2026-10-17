@@ -1,0 +1,43 @@
+{
+  "id": "document-ocr",
+  "title": "图片与扫描件 OCR",
+  "kind": "capability",
+  "description": "识别当前资料中的图片或扫描页，执行整页方向、按需展平、文字检测、行方向与识别，返回可追溯文字和坐标。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read",
+    "vault.write",
+    "local.ocr"
+  ],
+  "children": [],
+  "handler_binding": "builtin.document.ocr.v1",
+  "input_fields": [
+    {
+      "name": "document_version",
+      "type": "DocumentVersionRef",
+      "required": true,
+      "rule": "获准材料版本"
+    },
+    {
+      "name": "page_ids",
+      "type": "PageRef[]",
+      "required": true,
+      "rule": "不得跨版本或越过页数预算"
+    },
+    {
+      "name": "purpose",
+      "type": "enum(read,index,correct)",
+      "required": true,
+      "rule": "不扩大原有材料用途"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

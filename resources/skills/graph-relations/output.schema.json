@@ -1,0 +1,191 @@
+{
+  "$defs": {
+    "Coverage": {
+      "additionalProperties": false,
+      "properties": {
+        "processed_refs": {
+          "items": {
+            "pattern": "^ref_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Processed Refs",
+          "type": "array"
+        },
+        "omitted_refs": {
+          "items": {
+            "pattern": "^ref_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Omitted Refs",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "processed_refs",
+        "omitted_refs",
+        "limitations"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "Usage": {
+      "additionalProperties": false,
+      "properties": {
+        "generation_attempts": {
+          "maximum": 7,
+          "minimum": 0,
+          "title": "Generation Attempts",
+          "type": "integer"
+        },
+        "native_media_attempts": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Native Media Attempts",
+          "type": "integer"
+        },
+        "grounding_units": {
+          "maximum": 36,
+          "minimum": 0,
+          "title": "Grounding Units",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generation_attempts",
+        "native_media_attempts",
+        "grounding_units"
+      ],
+      "title": "Usage",
+      "type": "object"
+    },
+    "Warning": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Warning",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": [
+        "completed",
+        "partial",
+        "needs_input",
+        "needs_authorization",
+        "requires_generation",
+        "cancelled",
+        "failed",
+        "installation_fault",
+        "external_result_unknown"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "root_task_id": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Root Task Id",
+      "type": "string"
+    },
+    "invocation_id": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Invocation Id",
+      "type": "string"
+    },
+    "skill_id": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Skill Id",
+      "type": "string"
+    },
+    "skill_version": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Skill Version",
+      "type": "string"
+    },
+    "data_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Data Ref"
+    },
+    "evidence_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/Warning"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "coverage": {
+      "$ref": "#/$defs/Coverage"
+    },
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    },
+    "audit_id": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Audit Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "root_task_id",
+    "invocation_id",
+    "skill_id",
+    "skill_version",
+    "data_ref",
+    "evidence_refs",
+    "warnings",
+    "coverage",
+    "usage",
+    "audit_id"
+  ],
+  "title": "SkillResult",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

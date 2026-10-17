@@ -1,0 +1,82 @@
+"""Bounded JSON-lines worker. Spawned only by the trusted isolated process broker.
+
+The broker supplies immutable resource paths on the command line. Business input
+has no paths, actor, grants, SQL, model downloads or credentials.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+from pathlib import Path
+import sys
+
+MAX_REQUEST=18*1024*1024
+MAX_RESPONSE=24*1024*1024
+
+
+def emit(protocol, value):
+    encoded=json.dumps(value,separators=(',',':'),ensure_ascii=False).encode('utf-8')+b'\n'
+    if len(encoded)>MAX_RESPONSE:
+        encoded=b'{"event":"error","code":"output_budget"}\n'
+    protocol.write(encoded)
+    protocol.flush()
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--model',required=True)
+    parser.add_argument('--artifact',type=Path,required=True)
+    parser.add_argument('--diagnose-installation',action='store_true',help='Return model-load diagnostics before accepting any business input (M0 verification).')
+    parser.add_argument('--installation-fixture',type=Path,help='With installation diagnostics, run one core-selected synthetic fixture and exit without reading stdin.')
+    args=parser.parse_args()
+    if args.installation_fixture and not args.diagnose_installation:
+        parser.error('Installation fixtures require explicit installation diagnostics')
+    os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK='True',CUDA_VISIBLE_DEVICES='',TOKENIZERS_PARALLELISM='false')
+    protocol=sys.stdout.buffer
+    # Vendor diagnostics may contain inputs. They never enter ordinary app logs.
+    with open(os.devnull,'w',encoding='utf-8') as sink:
+        try:
+            with contextlib.redirect_stdout(sink),contextlib.redirect_stderr(sink):
+                from agent_core.inference import CpuModel
+                model=CpuModel(args.model,args.artifact)
+        except Exception as error:
+            result={'event':'error','code':'model_load_failed','error_type':type(error).__name__}
+            if args.diagnose_installation:
+                import traceback
+                result['installation_diagnostics']=traceback.format_exc(limit=12)[-6000:]
+            emit(protocol,result)
+            return 1
+        if args.installation_fixture:
+            # The diagnostic broker grants only this public/synthetic fixture.
+            # No business stdin is accepted and ordinary workers never take it.
+            try:
+                request=json.loads(args.installation_fixture.read_text(encoding='utf-8'))
+                with contextlib.redirect_stdout(sink),contextlib.redirect_stderr(sink):
+                    result=model.predict(request)
+                emit(protocol,{'event':'result','data':result})
+                return 0
+            except Exception:
+                import traceback
+                emit(protocol,{'event':'error','code':'installation_fixture_failed','installation_diagnostics':traceback.format_exc(limit=14)[-6500:]})
+                return 1
+        emit(protocol,{'event':'ready','model_id':args.model})
+        while True:
+            line=sys.stdin.buffer.readline(MAX_REQUEST+1)
+            if not line:
+                return 0
+            if len(line)>MAX_REQUEST or not line.endswith(b'\n'):
+                emit(protocol,{'event':'error','code':'input_budget'})
+                return 1
+            try:
+                request=json.loads(line)
+                with contextlib.redirect_stdout(sink),contextlib.redirect_stderr(sink):
+                    result=model.predict(request)
+                emit(protocol,{'event':'result','data':result})
+            except Exception:
+                emit(protocol,{'event':'error','code':'invalid_or_failed_inference'})
+
+
+if __name__=='__main__':
+    raise SystemExit(main())

@@ -1,0 +1,13 @@
+# Build, test and package outputs are directed to the sibling docs workspace.
+# Generated files must never enter the application source tree.
+/target/
+/node_modules/
+/dist/
+/build/
+/src-tauri/target/
+/src-tauri/gen/
+__pycache__/
+*.pyc
+*.log
+*.env
+.env

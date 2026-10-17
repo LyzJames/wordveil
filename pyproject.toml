@@ -1,0 +1,16 @@
+[project]
+name = "lvjin-worker"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pydantic==2.14.1",
+    "transformers==5.20.0",
+    "torch==2.14.1",
+    "paddlepaddle==3.3.1",
+    "paddleocr==3.7.0",
+    "usearch==2.26.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["../docs/tests/m0"]
+cache_dir = "../docs/cache/pytest"

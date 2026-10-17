@@ -1,0 +1,672 @@
+{
+  "schema_version": "lvjin.models/1",
+  "selection_sha256": "1be50d763a75f75f8a8cb2cb2d7fa36bbef1707433573b36a401e31526698126",
+  "models": [
+    {
+      "model_id": "embedding",
+      "source_model_id": "Qwen/Qwen3-Embedding-0.6B",
+      "source_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "selected_directory": "model-work/source/embedding/97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "BF16": 310
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-embedding-original-development.json",
+      "development_evidence_sha256": "329dc0cf59dfafc679171a8d82f056a1282c2f303e452b183ee54aee98aba076",
+      "candidate_decisions": [
+        {
+          "evidence": "embedding-w4-pilot.json",
+          "sha256": "0185d751d33675a2a9564d9fe50e7e60bbe9b32494b09d747d63dc3d8e3c55dc",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        },
+        {
+          "evidence": "embedding-w8-pilot.json",
+          "sha256": "237f262ec9b4af4b828cfeea6d6fc4a84f8c4e498b01ff033358136116859d08",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "safetensors tensor header, without loading or converting weights",
+      "selected_artifact": {
+        "key": {
+          "model": "embedding",
+          "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+          "artifact": "4ba7b5e7ca486db246eb21885144c78be543973bd384785c8a6fea9ffdc9e2a5",
+          "engine": "transformers-5.20.0-torch-2.14.1-cpu",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/embedding",
+        "files": [
+          {
+            "path": "1_Pooling/config.json",
+            "bytes": 313,
+            "sha256": "37bf193fa101f19101bfad9c31d3eb0f786e247b7b1e5cb7f007d730eed1ddbd"
+          },
+          {
+            "path": "config.json",
+            "bytes": 727,
+            "sha256": "b5bf1f51fc45be473a54718cef92448d90a1be001bf9b9a44b8c7f10a19feaa9"
+          },
+          {
+            "path": "config_sentence_transformers.json",
+            "bytes": 215,
+            "sha256": "10667c72ddb772627bf1780cb7f86af8e2ae0032b8c243c731172064105c6961"
+          },
+          {
+            "path": "generation_config.json",
+            "bytes": 117,
+            "sha256": "28396d421a2108acce96383f6a7de78008f7f1b17f807958f3c14c51dbfb65fb"
+          },
+          {
+            "path": "merges.txt",
+            "bytes": 1671853,
+            "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+          },
+          {
+            "path": "model.safetensors",
+            "bytes": 1191586416,
+            "sha256": "0437e45c94563b09e13cb7a64478fc406947a93cb34a7e05870fc8dcd48e23fd"
+          },
+          {
+            "path": "modules.json",
+            "bytes": 349,
+            "sha256": "84e40c8e006c9b1d6c122e02cba9b02458120b5fb0c87b746c41e0207cf642cf"
+          },
+          {
+            "path": "README.md",
+            "bytes": 17237,
+            "sha256": "c34d9b7e5a267ad3fdd13227a253686bc90844ff4744a2a6a86c7c905e3d06f3"
+          },
+          {
+            "path": "tokenizer.json",
+            "bytes": 11423705,
+            "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "bytes": 9706,
+            "sha256": "253153d0738ceb4c668d2eff957714dd2bea0b56de772a9fdccd96cbf517e6a0"
+          },
+          {
+            "path": "vocab.json",
+            "bytes": 2776833,
+            "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          }
+        ]
+      },
+      "installed_bytes": 1207487471,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "reranker",
+      "source_model_id": "Qwen/Qwen3-Reranker-0.6B",
+      "source_revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+      "selected_directory": "model-work/source/reranker/e61197ed45024b0ed8a2d74b80b4d909f1255473",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "BF16": 310
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-reranker-original-development.json",
+      "development_evidence_sha256": "c122741b7e3a3638d4576a62bd2bc4945bb3ec867cd3a446b437bb44a18fe4f9",
+      "candidate_decisions": [
+        {
+          "evidence": "reranker-w4-pilot.json",
+          "sha256": "a257c8cefe3d4f8a1565fa225451f79419bb0bbac61a96e4ec287a13ff268352",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        },
+        {
+          "evidence": "reranker-w8-pilot.json",
+          "sha256": "1ff8fa86e38760b2b700a91851aad3cce719bae34dc9059225f252e3ec3cf077",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "safetensors tensor header, without loading or converting weights",
+      "selected_artifact": {
+        "key": {
+          "model": "reranker",
+          "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+          "artifact": "1f01bc45e74ea67ebadcb57181caad5410783a811ef986956902417cf2b8d495",
+          "engine": "transformers-5.20.0-torch-2.14.1-cpu",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/reranker",
+        "files": [
+          {
+            "path": "1_LogitScore/config.json",
+            "bytes": 57,
+            "sha256": "73e3156450564d8a98b7e47bcf5aace0f29600828b51937da545571e84db3ff3"
+          },
+          {
+            "path": "chat_template.jinja",
+            "bytes": 741,
+            "sha256": "6f682162495ec5b39fd9005c01b6aa2a74669379fe967039f1e2cbbe8752369d"
+          },
+          {
+            "path": "config.json",
+            "bytes": 727,
+            "sha256": "d479c427a9ca5295218063d4f9aca4f297ab4ac27487cca7af42c84643d51ef0"
+          },
+          {
+            "path": "config_sentence_transformers.json",
+            "bytes": 325,
+            "sha256": "6a153d6696f78fd588c1c728967f0b773ea869d3c6028f151ce71ebe49140762"
+          },
+          {
+            "path": "generation_config.json",
+            "bytes": 214,
+            "sha256": "81051cd3f6e77013827148d0b8a6ead93f8ac390d5ab805f849199f0af6a08db"
+          },
+          {
+            "path": "merges.txt",
+            "bytes": 1671853,
+            "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+          },
+          {
+            "path": "model.safetensors",
+            "bytes": 1191588280,
+            "sha256": "27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b"
+          },
+          {
+            "path": "modules.json",
+            "bytes": 280,
+            "sha256": "6f13b6b4a89e577b591b2077bca40c67c26541a6740a8809267cb474f90806a9"
+          },
+          {
+            "path": "README.md",
+            "bytes": 14742,
+            "sha256": "5bba8c734f6dd3ae48317b4139317e45a7fce48fc55e15670b23a0dd15492ab6"
+          },
+          {
+            "path": "sentence_bert_config.json",
+            "bytes": 362,
+            "sha256": "3234ebd224d492cbe8d55d5ec80a3f408451c4db3005bafb64fe1c51c763e01e"
+          },
+          {
+            "path": "tokenizer.json",
+            "bytes": 11422654,
+            "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "bytes": 9706,
+            "sha256": "253153d0738ceb4c668d2eff957714dd2bea0b56de772a9fdccd96cbf517e6a0"
+          },
+          {
+            "path": "vocab.json",
+            "bytes": 2776833,
+            "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+          }
+        ]
+      },
+      "installed_bytes": 1207486774,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "grounding",
+      "source_model_id": "KRLabsOrg/lettucedect-v2-mmbert-base",
+      "source_revision": "8831ce063dff760b01efe4519b4188f5ee2456f2",
+      "selected_directory": "model-work/source/grounding/8831ce063dff760b01efe4519b4188f5ee2456f2",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "F32": 138
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-grounding-original-development.json",
+      "development_evidence_sha256": "d22f88a1a188caaeb54ecee9123a3d7da008017fff8dc1195fa8fb79fde6394e",
+      "candidate_decisions": [
+        {
+          "evidence": "grounding-w8-pilot.json",
+          "sha256": "4828b1e1c8f5e729e81a85fecf22892ba7eb69c49d0e1145e98485bad6c4efd4",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "safetensors tensor header, without loading or converting weights",
+      "selected_artifact": {
+        "key": {
+          "model": "grounding",
+          "revision": "8831ce063dff760b01efe4519b4188f5ee2456f2",
+          "artifact": "6bf79630f8e1e3c38fc251cf8925b9597fb5bd3660970c5455b2b5d04749bd57",
+          "engine": "transformers-5.20.0-torch-2.14.1-cpu",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/grounding",
+        "files": [
+          {
+            "path": "config.json",
+            "bytes": 2067,
+            "sha256": "34ac1320dcb3a5a214a7d6239d5c0332a61b553f357e93ca02eb31ad0b49991e"
+          },
+          {
+            "path": "model.safetensors",
+            "bytes": 1230141424,
+            "sha256": "63db14018d08db0fb42924cad5f9b0f5afdb79e130fc246158419e0c492b697d"
+          },
+          {
+            "path": "README.md",
+            "bytes": 7870,
+            "sha256": "7cca06c000984fa5a8bd3d984c98e70a21776fcac50e0447ec4106ad1c451424"
+          },
+          {
+            "path": "tokenizer.json",
+            "bytes": 34363188,
+            "sha256": "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "bytes": 46440,
+            "sha256": "1d2f82c1341a79748e00efe82e67690f99d00b3c2a894f2b23128fd9d3519da3"
+          }
+        ]
+      },
+      "installed_bytes": 1264560989,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "ocr-det",
+      "source_model_id": "PaddlePaddle/PP-OCRv6_medium_det",
+      "source_revision": "8e0f56fb2ef86b461d99cfc7ac5c137738985f61",
+      "selected_directory": "model-work/source/ocr-det/8e0f56fb2ef86b461d99cfc7ac5c137738985f61",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "F32": 257
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-ocr-det-original-development.json",
+      "development_evidence_sha256": "07b3ebd7756a3c8a0cec2ee4de0f7faeba84095b4bb41efb0bce11973359b6ed",
+      "candidate_decisions": [
+        {
+          "evidence": "quality-ocr-det-ort-int8-development.json",
+          "sha256": "6756be74ff355050012317ba195e3311b94231124273f3e5ad841a1eaed2599a",
+          "decision": "rejected",
+          "reason": "Nine development cases do not establish the design sub-percentage quality gates; retain original precision"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "Paddle serialized PIR parameter type declarations; original pdiparams bytes unchanged",
+      "selected_artifact": {
+        "key": {
+          "model": "ocr-det",
+          "revision": "8e0f56fb2ef86b461d99cfc7ac5c137738985f61",
+          "artifact": "c5d38202ba6894d490b2f52778a60e0dcb7f1714f12c1afb4b4c3d9f88173fd1",
+          "engine": "paddle_static-3.3.1",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/ocr-det",
+        "files": [
+          {
+            "path": "inference.json",
+            "bytes": 312150,
+            "sha256": "0f1a7ec35da36173529c7a60238b7f7919e3831929c3f700ad90ad4896adecd5"
+          },
+          {
+            "path": "inference.pdiparams",
+            "bytes": 61960476,
+            "sha256": "85218d2e3d98f5a21c58b4220627be923a97aee5db3cc71f39536ab31ac53960"
+          },
+          {
+            "path": "inference.yml",
+            "bytes": 886,
+            "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
+          },
+          {
+            "path": "README.md",
+            "bytes": 23247,
+            "sha256": "59f37b08a9a49aa6c1275e7b0363991353582f4dc7676539a5d2b05aab57e744"
+          }
+        ]
+      },
+      "installed_bytes": 62296759,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "uvdoc",
+      "source_model_id": "PaddlePaddle/UVDoc",
+      "source_revision": "16c3f0ea9c2f0c6a57e24160f7eeaa7574613fa3",
+      "selected_directory": "model-work/candidates/uvdoc/fp32-geometry-v1",
+      "selected_variant": "selected",
+      "storage_tensor_dtypes": {
+        "F32": 259
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-uvdoc-selected-development.json",
+      "development_evidence_sha256": "d0b3a95794bc4ac2fbf9fcbc2948ebb93ae32e72b1da85f45102fc898d20f4cc",
+      "candidate_decisions": [
+        {
+          "evidence": "quality-uvdoc-ort-int8-development.json",
+          "sha256": "96c0b053787280c1c4e30d32d650432e83e25ed7971e372b51cc5bf36d15b133",
+          "decision": "rejected",
+          "reason": "INT8 has no verified backward geometry output; geometric path remains FP32"
+        }
+      ],
+      "selection_reason": "Unchanged FP32 weights, graph adds coarse backward grid output; exact development RGB conformance",
+      "storage_dtype_evidence": "Paddle serialized PIR parameter type declarations; original pdiparams bytes unchanged",
+      "selected_artifact": {
+        "key": {
+          "model": "uvdoc",
+          "revision": "16c3f0ea9c2f0c6a57e24160f7eeaa7574613fa3",
+          "artifact": "bd40f66ddab401e57b094348afd36f7798b29c9912a798d3fbfd195030cef67c",
+          "engine": "paddle_static-3.3.1",
+          "device": "cpu",
+          "profile": "fp32-geometry-v1-threads4"
+        },
+        "directory": "resources/models/uvdoc",
+        "files": [
+          {
+            "path": "geometry.json",
+            "bytes": 646,
+            "sha256": "23e52e2c2c27e29201e0e3e53adf2dd84d837f49611e617b85cdbe4073281176"
+          },
+          {
+            "path": "inference.json",
+            "bytes": 191303,
+            "sha256": "97f9b6b6e48f6f48c8fd0b7ba6add8ae1b190739df8ae3b1270a134bf76353de"
+          },
+          {
+            "path": "inference.pdiparams",
+            "bytes": 32054311,
+            "sha256": "810488899520e0da843b9bd9769ba4949f1c81e357f0eceb12d4a7da459c3eca"
+          },
+          {
+            "path": "inference.yml",
+            "bytes": 330,
+            "sha256": "be83d537b358f3ff87740e77e14a83ee9e9a7bb215c33d091b69e8bd5904fe39"
+          }
+        ]
+      },
+      "installed_bytes": 32246590,
+      "license": "Apache-2.0; UVDoc original code also MIT",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "textline-ori",
+      "source_model_id": "PaddlePaddle/PP-LCNet_x1_0_textline_ori",
+      "source_revision": "cd237a44b0e359d4fe38310a416203cf7403faa5",
+      "selected_directory": "model-work/source/textline-ori/cd237a44b0e359d4fe38310a416203cf7403faa5",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "F32": 146
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-textline-ori-original-development.json",
+      "development_evidence_sha256": "8a10ad3e295150e098a8090bcea8fb88404741612ae6f0aa82544dca655ed72e",
+      "candidate_decisions": [
+        {
+          "evidence": "quality-textline-ori-ort-int8-development.json",
+          "sha256": "8b0a98fd98e798ab2086259d6162f16e1b165620441911792442444651c59f32",
+          "decision": "rejected",
+          "reason": "INT8 orientation accuracy regressed markedly on the fixed development screen"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "Paddle serialized PIR parameter type declarations; original pdiparams bytes unchanged",
+      "selected_artifact": {
+        "key": {
+          "model": "textline-ori",
+          "revision": "cd237a44b0e359d4fe38310a416203cf7403faa5",
+          "artifact": "86e3db6a1b59680be81eba8141c76d93c1a819f2aeac78517ab2ca23ced3f902",
+          "engine": "paddle_static-3.3.1",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/textline-ori",
+        "files": [
+          {
+            "path": "config.json",
+            "bytes": 2487,
+            "sha256": "c1a2576f9713adabdc4a58d9d654fcc9ea93b6efd0e2d3581d5aab409a33f14f"
+          },
+          {
+            "path": "inference.json",
+            "bytes": 104399,
+            "sha256": "b81929eeaff8e52db0fafb49c9fbfc5bc0572f81641fe0179cc52096323fb4d4"
+          },
+          {
+            "path": "inference.pdiparams",
+            "bytes": 6743918,
+            "sha256": "0de2bcf996cf553e2b848dd7b1769dafffc6917b1ccdf55c1d8efe7909fbf743"
+          },
+          {
+            "path": "inference.yml",
+            "bytes": 735,
+            "sha256": "8d5120d0e1a30a9df7ed46aa9119da3796ed066777089d1c1d705f132d5e90f9"
+          },
+          {
+            "path": "README.md",
+            "bytes": 3554,
+            "sha256": "c2de067422621e296f697b849b90b8f6cae090a8e0a27d8b04eeb8d68ffb8ce0"
+          }
+        ]
+      },
+      "installed_bytes": 6855093,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "ocr-rec",
+      "source_model_id": "PaddlePaddle/PP-OCRv6_medium_rec",
+      "source_revision": "e5a92bcbc5cc1b494628e458d267778f0704fd7c",
+      "selected_directory": "model-work/source/ocr-rec/e5a92bcbc5cc1b494628e458d267778f0704fd7c",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "F32": 161
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-ocr-rec-original-development.json",
+      "development_evidence_sha256": "03cbd3e31ea49942c9dc76af033336b8c08095465e528ded0b758c0ff28461bd",
+      "candidate_decisions": [
+        {
+          "evidence": "quality-ocr-rec-ort-int8-development.json",
+          "sha256": "be0b8b172c99be06ef9603c6917d74bf0de2c7600fb35e6b4ef5df317072548e",
+          "decision": "rejected",
+          "reason": "Nine development cases do not establish the design sub-percentage quality gates; retain original precision"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "Paddle serialized PIR parameter type declarations; original pdiparams bytes unchanged",
+      "selected_artifact": {
+        "key": {
+          "model": "ocr-rec",
+          "revision": "e5a92bcbc5cc1b494628e458d267778f0704fd7c",
+          "artifact": "d93ef6763c728c64fad173e3ab98fdfcd686f802ada54de46443f3826690da97",
+          "engine": "paddle_static-3.3.1",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/ocr-rec",
+        "files": [
+          {
+            "path": "inference.json",
+            "bytes": 221814,
+            "sha256": "0b2e25e990bd072f1bf77d59d67d508bce6c4bd44af6624e0fb27d6da2cd00e8"
+          },
+          {
+            "path": "inference.pdiparams",
+            "bytes": 76465087,
+            "sha256": "1b01c79a914587933f615569e75de54f2e638ebb5d3f3b3c1b38c24ede8c7319"
+          },
+          {
+            "path": "inference.yml",
+            "bytes": 150580,
+            "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
+          },
+          {
+            "path": "README.md",
+            "bytes": 23474,
+            "sha256": "75ff9c4853ed171f36224127805062f9bcd1cfbbcacae3d577344866df74f6d3"
+          }
+        ]
+      },
+      "installed_bytes": 76860955,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "doc-ori",
+      "source_model_id": "PaddlePaddle/PP-LCNet_x1_0_doc_ori",
+      "source_revision": "d3b95a6dff5fe8a94f2748e12b61cb26818a0df8",
+      "selected_directory": "model-work/source/doc-ori/d3b95a6dff5fe8a94f2748e12b61cb26818a0df8",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "F32": 146
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-doc-ori-original-development.json",
+      "development_evidence_sha256": "7b30fad286a7c85ec72dd73073faa636b7a1501422ec1104a990f2c9b56ba610",
+      "candidate_decisions": [
+        {
+          "evidence": "quality-doc-ori-ort-int8-development.json",
+          "sha256": "fec181187ab54aedb6d9299a3b544afe32173016aa795f72ed491344b32edbed",
+          "decision": "rejected",
+          "reason": "Nine development cases do not establish the design sub-percentage quality gates; retain original precision"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "Paddle serialized PIR parameter type declarations; original pdiparams bytes unchanged",
+      "selected_artifact": {
+        "key": {
+          "model": "doc-ori",
+          "revision": "d3b95a6dff5fe8a94f2748e12b61cb26818a0df8",
+          "artifact": "ed66193d035337c6b852e98decdd4c905eef88f81f4adf0cb00839d6308e0c9a",
+          "engine": "paddle_static-3.3.1",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/doc-ori",
+        "files": [
+          {
+            "path": "config.json",
+            "bytes": 2561,
+            "sha256": "e49f6be2fe4034232b05fb80d983a7b9bde4592d4a52812129c9a348057d3147"
+          },
+          {
+            "path": "inference.json",
+            "bytes": 104441,
+            "sha256": "3580978602f309c3554508dd85d4fe09b73a7e0d80d7f9e63258f5b72c390c69"
+          },
+          {
+            "path": "inference.pdiparams",
+            "bytes": 6754166,
+            "sha256": "e8d6e7c5d264507e40e58a655779059d616b20d7441ea22047d829eb3931989c"
+          },
+          {
+            "path": "inference.yml",
+            "bytes": 766,
+            "sha256": "9e195eb729a8173588cd0e8a852c8b373aa606e79e77b4ac7d8346f5426caf26"
+          },
+          {
+            "path": "README.md",
+            "bytes": 6850,
+            "sha256": "e38ea9c16eba0e14e12216418085e8974481d7c0fc3aed4e7df5cf1869c2c97a"
+          }
+        ]
+      },
+      "installed_bytes": 6868784,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    },
+    {
+      "model_id": "asr",
+      "source_model_id": "Qwen/Qwen3-ASR-0.6B-hf",
+      "source_revision": "7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c",
+      "selected_directory": "model-work/source/asr/7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c",
+      "selected_variant": "original",
+      "storage_tensor_dtypes": {
+        "BF16": 611
+      },
+      "compute_profile": "CPU float32; no GPU provider",
+      "development_evidence": "quality-asr-original-development.json",
+      "development_evidence_sha256": "33d15c7840795155f8cabd4cec749224dd3dcb8560cf72778dc2711014c59e49",
+      "candidate_decisions": [
+        {
+          "evidence": "asr-w4-pilot.json",
+          "sha256": "531acee70e6334ebd41d60913cdb37d690af59bed3a40a613861b7748f773159",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        },
+        {
+          "evidence": "asr-w8-pilot.json",
+          "sha256": "195667741419f6d8b96fb1d909db8c98c5d4eb04586ea87e829db3d18e80e1bd",
+          "decision": "rejected",
+          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
+        }
+      ],
+      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
+      "storage_dtype_evidence": "safetensors tensor header, without loading or converting weights",
+      "selected_artifact": {
+        "key": {
+          "model": "asr",
+          "revision": "7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c",
+          "artifact": "c437718857f6f83a80aea3d7113ed8f7f69feb9a804d23270e72c584efc17c68",
+          "engine": "transformers-5.20.0-torch-2.14.1-cpu",
+          "device": "cpu",
+          "profile": "source-storage-cpu-fp32-threads4"
+        },
+        "directory": "resources/models/asr",
+        "files": [
+          {
+            "path": "chat_template.jinja",
+            "bytes": 1434,
+            "sha256": "f50e6b694fbf4a683206e37869990d68333fe95d285730f084c838a34b0d98c2"
+          },
+          {
+            "path": "config.json",
+            "bytes": 2398,
+            "sha256": "9eecf6f1b383e343889c2e6010e632590fa57d4bc678e151c7d6a160a0dfb04a"
+          },
+          {
+            "path": "generation_config.json",
+            "bytes": 165,
+            "sha256": "9939fc9388b79bd70757f938b87381e817173d6a6158f5af6506c0b73e775c3c"
+          },
+          {
+            "path": "model.safetensors",
+            "bytes": 1564928088,
+            "sha256": "d3f212dd20abecd315d830bc54ae3865e56ebfc3276484e57b771288ba27fd35"
+          },
+          {
+            "path": "processor_config.json",
+            "bytes": 487,
+            "sha256": "bc0b230081b44e629dd5b9045b78495615c1831b4b9f4cffe97bd37e82a6156a"
+          },
+          {
+            "path": "README.md",
+            "bytes": 16538,
+            "sha256": "742006d0f99ce6475b1c5e7b66e4a2f166cce836dd7ce3d7f20707252859195a"
+          },
+          {
+            "path": "tokenizer.json",
+            "bytes": 11429653,
+            "sha256": "fe1fad59be22a41ee293363fcf95fdedbc7c93f3b49270b1d2e18bd1399a7a05"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "bytes": 998,
+            "sha256": "945e980986de2ca7768f3326bfdbb4fbea3406f972b8ae0be233089f2b253c11"
+          }
+        ]
+      },
+      "installed_bytes": 1576379761,
+      "license": "Apache-2.0",
+      "gpu_enabled": false
+    }
+  ],
+  "cpu_required": true,
+  "gpu_enabled": false
+}

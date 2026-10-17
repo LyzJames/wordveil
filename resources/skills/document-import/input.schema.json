@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "selection_id": {
+      "description": "核心签发的UI选择凭证，或已核验下载/离线知识包的ArtifactRef；绑定来源、哈希和范围，不能传路径/URL",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Selection Id",
+      "type": "string"
+    },
+    "target_ref": {
+      "description": "核心核验的MatterRef或PublicKnowledgeCollectionRef；按真实目标选择写权限，不能将公共更新写入私密事务",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Target Ref",
+      "type": "string"
+    },
+    "import_mode": {
+      "description": "显式新增副本或新版本",
+      "enum": [
+        "copy",
+        "new_version"
+      ],
+      "title": "Import Mode",
+      "type": "string"
+    }
+  },
+  "required": [
+    "selection_id",
+    "target_ref",
+    "import_mode"
+  ],
+  "title": "document_import_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

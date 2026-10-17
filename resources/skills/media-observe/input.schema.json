@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "media_refs": {
+      "items": {
+        "pattern": "^ref_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "maxItems": 12,
+      "minItems": 1,
+      "title": "Media Refs",
+      "type": "array"
+    },
+    "question_id": {
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "observation_mode": {
+      "enum": [
+        "first_read",
+        "targeted_compare"
+      ],
+      "title": "Observation Mode",
+      "type": "string"
+    },
+    "comparison_ref": {
+      "anyOf": [
+        {
+          "pattern": "^ref_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Comparison Ref"
+    }
+  },
+  "required": [
+    "media_refs",
+    "question_id",
+    "observation_mode"
+  ],
+  "title": "MediaObserveInput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

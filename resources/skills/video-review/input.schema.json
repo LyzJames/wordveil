@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_ref": {
+      "description": "原视频版本/用户选择凭证",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Source Ref",
+      "type": "string"
+    },
+    "range_ref": {
+      "description": "选定时间/音轨范围",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Range Ref",
+      "type": "string"
+    },
+    "question_id": {
+      "description": "用户的具体问题",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "analysis_goal": {
+      "description": "text_only不请求原生媒体，analyze按实际能力复核",
+      "enum": [
+        "text_only",
+        "analyze"
+      ],
+      "title": "Analysis Goal",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_ref",
+    "range_ref",
+    "question_id",
+    "analysis_goal"
+  ],
+  "title": "video_review_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "source_ref": {
+      "description": "核心已登记媒体版本或用户选择凭证，不能传URL/任意路径",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Source Ref",
+      "type": "string"
+    },
+    "range_ref": {
+      "description": "任务获准的时间/声道范围",
+      "pattern": "^ref_[0-9a-f]{32}$",
+      "title": "Range Ref",
+      "type": "string"
+    },
+    "outputs": {
+      "description": "frames/audio/metadata的受限枚举",
+      "items": {
+        "enum": [
+          "frames",
+          "audio",
+          "metadata"
+        ],
+        "type": "string"
+      },
+      "title": "Outputs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "source_ref",
+    "range_ref",
+    "outputs"
+  ],
+  "title": "media_decode_Input",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

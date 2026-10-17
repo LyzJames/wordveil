@@ -1,0 +1,35 @@
+{
+  "id": "evidence-read",
+  "title": "原文读取与定位",
+  "kind": "capability",
+  "description": "按可信证据或文档版本 ID 读取原文、父条款、页码、段落及表格位置，检查引用是否真实可定位。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [],
+  "handler_binding": "builtin.evidence.read.v1",
+  "input_fields": [
+    {
+      "name": "evidence_ids",
+      "type": "EvidenceRef[]",
+      "required": true,
+      "rule": "核心证据目录中存在且获准"
+    },
+    {
+      "name": "context_mode",
+      "type": "enum(exact,parent_clause,page)",
+      "required": true,
+      "rule": "扩展仍在同版本与读取预算内"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

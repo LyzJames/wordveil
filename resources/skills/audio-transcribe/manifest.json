@@ -1,0 +1,43 @@
+{
+  "id": "audio-transcribe",
+  "title": "本地音频文字转写",
+  "kind": "capability",
+  "description": "使用固定Qwen/Qwen3-ASR-0.6B-hf对纯音频或视频音轨分段转写，保留原文、回放区间与不完整状态。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read",
+    "vault.write",
+    "local.asr"
+  ],
+  "children": [],
+  "handler_binding": "builtin.audio.transcribe.v1",
+  "input_fields": [
+    {
+      "name": "audio_segments",
+      "type": "AudioSegmentRef[]",
+      "required": true,
+      "rule": "由核心/解码Skill登记的PCM、原始时间及版本"
+    },
+    {
+      "name": "language_hint",
+      "type": "LanguageHintRef",
+      "required": false,
+      "rule": "用户选择或自动识别，不能编造语言"
+    },
+    {
+      "name": "vocabulary_ref",
+      "type": "ConfirmedVocabularyRef",
+      "required": false,
+      "rule": "仅用户确认的领域词，不含期待答案"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}

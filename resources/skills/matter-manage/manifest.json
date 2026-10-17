@@ -1,0 +1,41 @@
+{
+  "id": "matter-manage",
+  "title": "事务、事实与提醒",
+  "kind": "capability",
+  "description": "管理私密事务的资料关联、事实、金额记录、来源关系、时间线、待办、提醒和用户确认的长期记忆。",
+  "actors": [
+    "ui",
+    "agent",
+    "system"
+  ],
+  "direct_capabilities": [
+    "vault.read"
+  ],
+  "children": [],
+  "handler_binding": "builtin.matter.manage.v1",
+  "input_fields": [
+    {
+      "name": "matter_id",
+      "type": "MatterRef",
+      "required": true,
+      "rule": "当前空间"
+    },
+    {
+      "name": "operation",
+      "type": "enum(read,prepare_change,commit_change)",
+      "required": true,
+      "rule": "commit 依赖真实确认凭证"
+    },
+    {
+      "name": "change_ref",
+      "type": "PreparedChangeRef|null",
+      "required": false,
+      "rule": "含来源/版本和待变更项"
+    }
+  ],
+  "version": "0.1.0-m0",
+  "schema_version": "lvjin.skill/1",
+  "implementation_status": "contract-prototype",
+  "input_schema": "input.schema.json",
+  "output_schema": "output.schema.json"
+}
