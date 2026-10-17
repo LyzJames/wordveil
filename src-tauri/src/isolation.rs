@@ -202,6 +202,34 @@ impl IsolatedProcess {
         }
     }
 
+    /// Read stdout lines until the tool closes it (bounded), for one-shot tools
+    /// such as ffprobe/ffmpeg whose output is not line-delimited JSON.
+    pub fn read_until_eof(&mut self,cancellation:&AtomicBool,deadline:Instant,max_bytes:usize)->Result<Vec<u8>> {
+        let mut output=Vec::new();
+        loop {
+            match self.receive_line(cancellation,deadline) {
+                Ok(line)=>{
+                    if output.len()+line.len()+1>max_bytes { self.terminate()?; return Err(Error::Contract); }
+                    output.extend_from_slice(&line);output.push(b'\n');
+                }
+                Err(Error::Io(error)) if error.kind()==std::io::ErrorKind::UnexpectedEof=>return Ok(output),
+                Err(error)=>return Err(error),
+            }
+        }
+    }
+
+    /// Wait for the process to exit within the deadline; returns its exit code.
+    pub fn wait_exit(&mut self,cancellation:&AtomicBool,deadline:Instant)->Result<u32> {
+        loop {
+            if cancellation.load(Ordering::Acquire) || Instant::now()>=deadline { self.terminate()?; return Err(Error::Cancelled); }
+            if unsafe { WaitForSingleObject(self.process,25) }==WAIT_OBJECT_0 {
+                let mut code=0u32;
+                if unsafe { windows_sys::Win32::System::Threading::GetExitCodeProcess(self.process,&mut code) }==0 { return Err(std::io::Error::last_os_error().into()); }
+                return Ok(code);
+            }
+        }
+    }
+
     pub fn memory(&self)->Result<crate::model_pool::ModelMemory> {
         use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo,PROCESS_MEMORY_COUNTERS_EX};
         let mut counters:PROCESS_MEMORY_COUNTERS_EX=unsafe {std::mem::zeroed()};

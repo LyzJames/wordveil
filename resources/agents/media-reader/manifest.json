@@ -10,7 +10,7 @@
     "audio-review",
     "media-decode"
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "tool_input_constraints": {
     "image-review": {
       "mode": "extract_text"

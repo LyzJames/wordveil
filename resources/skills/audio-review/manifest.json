@@ -11,6 +11,7 @@
   "direct_capabilities": [
     "vault.read"
   ],
+  "conditional_capabilities": [],
   "children": [
     "media-decode",
     "audio-transcribe",
@@ -52,9 +53,9 @@
       "rule": "仅转写不外发；独立analyze执行相应原生首读与最终文字分析，视频子任务固定text_only"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local-generation-pending",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

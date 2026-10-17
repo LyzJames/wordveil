@@ -75,6 +75,23 @@ impl DenseIndex {
         Ok(found.keys.into_iter().zip(found.distances).collect())
     }
     pub fn remove(&self,key:u64)->Result<bool> {Ok(self.index.remove(key).map_err(|_|Error::Integrity)?!=0)}
+    /// Top-k inside a trusted scope predicate (matter/version/deletion filter),
+    /// so scope filtering happens before the per-query limit of 25 (design 9.6).
+    pub fn search_within<F:Fn(u64)->bool>(&self,identity:&SnapshotIdentity,query:&[f32],count:usize,allowed:F)->Result<Vec<(u64,f32)>> {
+        if identity!=&self.identity {return Err(Error::Denied);}
+        Self::vector(query)?;
+        if count==0 || count>25 {return Err(Error::Contract);}
+        let found=self.index.filtered_search(query,count,allowed).map_err(|_|Error::Integrity)?;
+        Ok(found.keys.into_iter().zip(found.distances).collect())
+    }
+    pub fn len(&self)->usize {self.index.size()}
+    pub fn is_empty(&self)->bool {self.index.size()==0}
+    pub fn identity(&self)->&SnapshotIdentity {&self.identity}
+    /// Incremental additions move the snapshot to a new generation (AAD-bound).
+    pub fn set_generation(&mut self,generation:u64)->Result<()> {
+        if generation<=self.identity.generation {return Err(Error::Conflict);}
+        self.identity.generation=generation;Ok(())
+    }
     /// No filename or mmap API is exposed. Only ciphertext can leave this type.
     pub fn encrypted_snapshot(&self,key:&SecretKey)->Result<Vec<u8>> {
         let size=self.index.serialized_length();
@@ -88,6 +105,23 @@ impl DenseIndex {
         if index.dimensions()!=1024 || index.metric_kind()!=MetricKind::Cos || index.scalar_kind()!=identity.precision.scalar() || index.multi() {return Err(Error::Integrity);}
         Ok(Self{identity,index})
     }
+}
+
+/// Common legal/finance terms kept whole by the search tokenizer.
+const DOMAIN_TERMS:&[&str]=&["押金","租金","违约金","借款人","出借人","借条","欠条","收据","提前解约","转租","分租","物业管理费","还款","本金","利息","逾期","担保","保证人","定金","订金","滞纳金","分期","年化利率","服务费","手续费","退款","转账","租赁期限","争议解决","人民法院","仲裁委员会","不可抗力","维修责任","违约责任","解除合同","书面通知"];
+
+/// Process-wide search tokenizer: jieba search mode over the embedded MIT
+/// dictionary plus fixed domain terms; deterministic and offline.
+pub fn search_tokens(text:&str)->Vec<String> {
+    static JIEBA:std::sync::OnceLock<Jieba>=std::sync::OnceLock::new();
+    let jieba=JIEBA.get_or_init(||{let mut jieba=Jieba::new();for term in DOMAIN_TERMS {jieba.add_word(term,Some(50000),None);}jieba});
+    jieba.cut_for_search(text,false).into_iter().map(|token|token.word.trim().to_lowercase()).filter(|token|!token.is_empty() && token.chars().any(char::is_alphanumeric)).collect()
+}
+
+/// Quote every token so user text never becomes FTS5 query syntax.
+pub fn fts_query(tokens:&[String])->Option<String> {
+    if tokens.is_empty() {return None;}
+    Some(tokens.iter().map(|word|format!("\"{}\"",word.replace('"',"\"\""))).collect::<Vec<_>>().join(" OR "))
 }
 
 /// FTS5 lives inside the same SQLCipher connection, including token text and

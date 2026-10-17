@@ -25,6 +25,12 @@ _ARABIC_AMOUNT = re.compile(
 _CHINESE_AMOUNT = re.compile(
     r'(?P<prefix>人民币|大写[:：]?\s*)?(?P<number>[' + _CN_NUM + r']+)\s*'
     r'(?P<unit>元整|元|圆整|圆|块钱|块)(?P<fraction>(?:[' + _CN_NUM + r']角)?(?:[' + _CN_NUM + r']分)?)')
+# A number directly after a money label (for example a table cell under the
+# header "金额（元）") is a candidate even without 元/¥; it still needs review.
+_LABELED_AMOUNT = re.compile(
+    r'(?P<label>金额|价款|总价|租金|押金|保证金|借款|欠款|还款|本金|利息|违约金|费用)\s*'
+    r'(?:[（(]\s*(?:人民币|元|RMB|CNY)\s*[)）])?\s*[:：]?\s*'
+    r'(?P<number>\d{1,3}(?:[,，]\d{3})+(?:\.\d{1,4})?|\d+(?:\.\d{1,4})?)(?![\d.%年月日号])')
 _DATE_ARABIC = re.compile(r'(?P<y>(?:19|20)\d{2})\s*(?:年|[-/.])\s*(?P<m>\d{1,2})\s*(?:月|[-/.])\s*(?P<d>\d{1,2})\s*日?')
 _DATE_CHINESE = re.compile(r'(?P<y>[〇○零一二三四五六七八九]{4})年(?P<m>[一二三四五六七八九十]{1,3})月(?P<d>[一二三四五六七八九十]{1,3})[日号]')
 
@@ -87,6 +93,14 @@ def _amount_candidates(text: str):
         start = match.start('prefix') if match.group('prefix') else match.start('number')
         yield {'type': 'amount', 'value': format(value.normalize(), 'f'), 'currency': 'CNY', 'start': start, 'end': match.end(),
                'raw': text[start:match.end()], 'basis': 'chinese_numerals'}
+    for match in _LABELED_AMOUNT.finditer(text):
+        try:
+            value = Decimal(match.group('number').replace(',', '').replace('，', ''))
+        except InvalidOperation:
+            continue
+        start = match.start('label')
+        yield {'type': 'amount', 'value': format(value.normalize(), 'f'), 'currency': 'CNY', 'start': start, 'end': match.end(),
+               'raw': text[start:match.end()], 'basis': 'labeled'}
 
 
 def _date_candidates(text: str):

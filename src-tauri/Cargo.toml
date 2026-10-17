@@ -1,6 +1,6 @@
 [package]
 name = "lvjin-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 autotests = false
 
@@ -15,6 +15,8 @@ desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
 # Development and test builds may launch the Python worker from source under
 # docs. Production desktop builds use only the frozen, hash-pinned worker.
 dev-worker = []
+# Test-only desktop build: exposes the WebView2 DevTools port for docs/tests/m1 e2e.
+e2e = ["desktop"]
 
 [dependencies]
 aes-gcm = "0.10.3"
@@ -95,3 +97,18 @@ required-features = ["m0-harness"]
 name = "m0_frozen_diagnostic"
 path = "../../docs/tests/m0/frozen_diagnostic.rs"
 required-features = ["m0-harness"]
+
+[[test]]
+name = "m1_vault"
+path = "../../docs/tests/m1/vault.rs"
+required-features = ["m0-harness"]
+
+[[test]]
+name = "m1_contracts"
+path = "../../docs/tests/m1/contracts.rs"
+required-features = ["m0-harness", "dev-worker"]
+
+[[test]]
+name = "m1_pipeline"
+path = "../../docs/tests/m1/pipeline.rs"
+required-features = ["m0-harness", "dev-worker"]

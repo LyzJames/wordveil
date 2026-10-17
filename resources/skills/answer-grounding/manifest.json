@@ -12,6 +12,7 @@
     "vault.read",
     "local.grounding"
   ],
+  "conditional_capabilities": [],
   "children": [],
   "handler_binding": "builtin.answer.grounding.v1",
   "input_fields": [
@@ -40,9 +41,9 @@
       "rule": "数字对照依据"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m2-generation",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

@@ -24,7 +24,7 @@ impl Installation {
         let value:Self=serde_json::from_slice(&bytes)?;
         let identities:std::collections::BTreeSet<_>=value.artifacts.iter().map(|v|v.key.model.as_str()).collect();
         let fixed:std::collections::BTreeSet<_>=["embedding","reranker","grounding","ocr-det","uvdoc","textline-ori","ocr-rec","doc-ori","asr"].into_iter().collect();
-        if value.schema_version!="lvjin.installation/1" || value.milestone!="M0" || !value.cpu_only || value.artifacts.len()!=9 || identities!=fixed || value.worker_directory!="runtimes/worker" || value.runtime_files.is_empty(){return Err(Error::Integrity);}
+        if value.schema_version!="lvjin.installation/1" || !matches!(value.milestone.as_str(),"M0"|"M1") || !value.cpu_only || value.artifacts.len()!=9 || identities!=fixed || value.worker_directory!="runtimes/worker" || value.runtime_files.is_empty(){return Err(Error::Integrity);}
         Ok(value)
     }
     pub fn pool(self,root:&Path,work:&Path)->Result<ModelPool> {

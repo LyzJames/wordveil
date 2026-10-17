@@ -7,5 +7,5 @@ fn main() {
         println!("cargo:rustc-link-lib=advapi32");
     }
     #[cfg(feature="desktop")]
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&["installation_status"]))).expect("desktop build resources failed");
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&["app_status", "touch", "vault_create", "vault_unlock", "vault_lock", "vault_restore", "change_passphrase", "run_skill", "start_skill", "tasks", "task_cancel", "create_object", "import_files", "resume_import", "commit_change", "export_commit", "backup", "privacy", "view"]))).expect("desktop build resources failed");
 }

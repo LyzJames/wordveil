@@ -13,6 +13,7 @@
     "index.read",
     "local.embedding"
   ],
+  "conditional_capabilities": [],
   "children": [],
   "handler_binding": "builtin.knowledge.search.v1",
   "input_fields": [
@@ -35,9 +36,9 @@
       "rule": "固定资料/索引 generation"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

@@ -10,6 +10,7 @@
   "direct_capabilities": [
     "vault.read"
   ],
+  "conditional_capabilities": [],
   "children": [
     "document-import",
     "matter-manage",
@@ -45,9 +46,9 @@
       "rule": "预算分析目标"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local-generation-pending",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

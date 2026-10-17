@@ -14,6 +14,12 @@
     "file.selection.read",
     "vault.read"
   ],
+  "conditional_capabilities": [
+    "vault.write",
+    "public_knowledge.write",
+    "file.selection.read",
+    "vault.read"
+  ],
   "children": [
     "document-ocr",
     "knowledge-index"
@@ -39,9 +45,9 @@
       "rule": "显式新增副本或新版本"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

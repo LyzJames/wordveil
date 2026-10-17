@@ -12,6 +12,7 @@
     "vault.read",
     "generation.request"
   ],
+  "conditional_capabilities": [],
   "children": [],
   "handler_binding": "builtin.media.observe.v1",
   "input_fields": [
@@ -40,9 +41,9 @@
       "rule": "targeted_compare时需有效来源/版本"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m2-generation",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

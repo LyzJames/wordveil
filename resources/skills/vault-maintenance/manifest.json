@@ -10,6 +10,9 @@
   "direct_capabilities": [
     "vault.maintenance"
   ],
+  "conditional_capabilities": [
+    "file.backup"
+  ],
   "children": [],
   "handler_binding": "builtin.vault.maintenance.v1",
   "input_fields": [
@@ -26,9 +29,9 @@
       "rule": "核心签发目标/来源选择，不含口令"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

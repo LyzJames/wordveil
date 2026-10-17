@@ -11,6 +11,9 @@
   "direct_capabilities": [
     "vault.read"
   ],
+  "conditional_capabilities": [
+    "file.export"
+  ],
   "children": [],
   "handler_binding": "builtin.report.export.v1",
   "input_fields": [
@@ -45,9 +48,9 @@
       "rule": "commit 时必填；核心签发目标/覆盖确认凭证"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

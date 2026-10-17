@@ -1,17 +1,32 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "律金智库 M0",
-  "version": "0.1.0",
+  "productName": "律金智库",
+  "version": "0.2.0",
   "identifier": "cn.lvjin.desktop",
   "build": {
     "frontendDist": "../../docs/build/frontend"
   },
   "app": {
-    "windows": [{"label":"main","title":"律金智库 · M0 验证原型","width":1080,"height":760,"minWidth":800,"minHeight":600}],
+    "windows": [
+      {
+        "label": "main",
+        "title": "律金智库",
+        "width": 1280,
+        "height": 760,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "dragDropEnabled": false
+      }
+    ],
     "security": {
       "freezePrototype": true,
-      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self'; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: http://lvjin.localhost; media-src http://lvjin.localhost; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     }
   },
-  "bundle": {"active":false,"icon":["../../docs/build/icons/icon.ico"]}
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../docs/build/icons/icon.ico"
+    ]
+  }
 }

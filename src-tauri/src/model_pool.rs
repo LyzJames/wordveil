@@ -15,6 +15,39 @@ impl ModelKey {
     fn large(&self) -> bool { !matches!(self.model.as_str(),"doc-ori"|"textline-ori") }
 }
 
+/// Large-model residency (active plus idle). Default: one large owner. With at
+/// least 16 GiB installed memory the embedding/reranker pair may stay resident
+/// together (user decision 2026-10-17); heavy stages remain serialized.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResidencyPolicy { pub max_large: usize, pub coresident: Vec<String> }
+impl Default for ResidencyPolicy {
+    fn default() -> Self { Self { max_large: 1, coresident: vec![] } }
+}
+impl ResidencyPolicy {
+    pub const TIER_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+    pub fn for_installed_memory(bytes: Option<u64>) -> Self {
+        match bytes {
+            Some(value) if value >= Self::TIER_BYTES => Self { max_large: 2, coresident: vec!["embedding".into(), "reranker".into()] },
+            _ => Self::default(),
+        }
+    }
+    fn may_add(&self, existing: &[String], model: &str) -> bool {
+        existing.is_empty()
+            || (existing.len() < self.max_large
+                && self.coresident.iter().any(|m| m == model)
+                && existing.iter().all(|e| self.coresident.iter().any(|m| m == e)))
+    }
+    fn max_idle(&self) -> usize { if self.max_large >= 2 { 2 } else { 1 } }
+}
+
+/// Installed (not OS-visible) physical memory, matching the user-facing size.
+#[cfg(windows)]
+pub fn installed_memory_bytes() -> Option<u64> {
+    let mut kilobytes = 0u64;
+    let ok = unsafe { windows_sys::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory(&mut kilobytes) };
+    if ok != 0 && kilobytes > 0 { Some(kilobytes * 1024) } else { None }
+}
+
 #[derive(Clone)]
 pub struct AllowedArtifact {
     pub model: String, pub revision: String, pub artifact: String,
@@ -36,7 +69,7 @@ type Factory = dyn Fn(&ModelKey,&AtomicBool,Instant) -> Result<Box<dyn ManagedMo
 type Owner = (String,String,String);
 struct Resident { key:ModelKey, leases:usize, idle_since:Option<Instant>, model:Arc<Mutex<Box<dyn ManagedModel>>>, failed:bool }
 struct State { residents:BTreeMap<Owner,Resident>, faulted:bool }
-struct Inner { state:Mutex<State>, heavy:Mutex<()>, changed:Condvar, factory:Box<Factory>, allowed:Vec<AllowedArtifact>, idle_ttl:Duration }
+struct Inner { state:Mutex<State>, heavy:Mutex<()>, changed:Condvar, factory:Box<Factory>, allowed:Vec<AllowedArtifact>, idle_ttl:Duration, residency:ResidencyPolicy }
 
 #[derive(Clone)]
 pub struct ModelPool { inner:Arc<Inner> }
@@ -46,21 +79,25 @@ impl ModelPool {
     /// Test-only policy pools never create production owners.
     #[cfg(feature="m0-harness")]
     pub fn new(allowed:Vec<AllowedArtifact>, factory:Box<Factory>) -> Self {
-        Self::new_inner(allowed,factory)
+        Self::new_inner(allowed,factory,ResidencyPolicy::default())
+    }
+    #[cfg(feature="m0-harness")]
+    pub fn new_with(allowed:Vec<AllowedArtifact>, factory:Box<Factory>, residency:ResidencyPolicy) -> Self {
+        Self::new_inner(allowed,factory,residency)
     }
     /// All production installations in this core process share one coordinator.
     /// A different manifest cannot create a parallel owner with another engine.
-    pub(crate) fn production(allowed:Vec<AllowedArtifact>,identity:String,factory:Box<Factory>)->Result<Self> {
+    pub(crate) fn production(allowed:Vec<AllowedArtifact>,identity:String,residency:ResidencyPolicy,factory:Box<Factory>)->Result<Self> {
         static GLOBAL:std::sync::OnceLock<Mutex<Option<(String,Arc<Inner>)>>>=std::sync::OnceLock::new();
         let mut global=GLOBAL.get_or_init(||Mutex::new(None)).lock().map_err(|_|Error::Integrity)?;
         if let Some((existing,inner))=global.as_ref() {
             return if existing==&identity {Ok(Self{inner:inner.clone()})} else {Err(Error::Conflict)};
         }
-        let pool=Self::new_inner(allowed,factory);
+        let pool=Self::new_inner(allowed,factory,residency);
         *global=Some((identity,pool.inner.clone()));Ok(pool)
     }
-    fn new_inner(allowed:Vec<AllowedArtifact>, factory:Box<Factory>) -> Self {
-        let inner=Arc::new(Inner { state:Mutex::new(State { residents:BTreeMap::new(),faulted:false }),heavy:Mutex::new(()),changed:Condvar::new(),factory,allowed,idle_ttl:Duration::from_secs(60) });
+    fn new_inner(allowed:Vec<AllowedArtifact>, factory:Box<Factory>, residency:ResidencyPolicy) -> Self {
+        let inner=Arc::new(Inner { state:Mutex::new(State { residents:BTreeMap::new(),faulted:false }),heavy:Mutex::new(()),changed:Condvar::new(),factory,allowed,idle_ttl:Duration::from_secs(60),residency });
         let weak=Arc::downgrade(&inner);
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(1));
@@ -98,12 +135,14 @@ impl ModelPool {
                     continue;
                 }
             } else {
-                let old_large=state.residents.iter().find(|(_,resident)|resident.key.large()).map(|(owner,resident)|(owner.clone(),resident.leases));
-                if key.large() && old_large.as_ref().is_some_and(|(_,leases)|*leases>0) {
+                let large:Vec<(Owner,usize,String)>=state.residents.iter().filter(|(_,resident)|resident.key.large()).map(|(owner,resident)|(owner.clone(),resident.leases,resident.key.model.clone())).collect();
+                let names:Vec<String>=large.iter().map(|(_,_,model)|model.clone()).collect();
+                let coresides=!key.large() || self.inner.residency.may_add(&names,&key.model);
+                if !coresides && large.iter().any(|(_,leases,_)|*leases>0) {
                     // Another active owner must release before a different large load.
                 } else {
-                    if key.large() {
-                        if let Some((owner,_))=old_large { evict(&mut state,&owner)?; }
+                    if !coresides {
+                        for (owner,_,_) in &large { evict(&mut state,owner)?; }
                     }
                     // Holding this core gate makes loading singleflight and serializes
                     // heavy inference/load. No second serving owner can escape the gate.
@@ -200,7 +239,7 @@ impl Drop for ModelLease {
             }
             let mut idle:Vec<_>=state.residents.iter().filter_map(|(owner,resident)|resident.idle_since.map(|time|(owner.clone(),time))).collect();
             idle.sort_by_key(|(_,time)|*time);
-            let excess=idle.len().saturating_sub(1);
+            let excess=idle.len().saturating_sub(self.inner.residency.max_idle());
             for (owner,_) in idle.into_iter().take(excess) { if evict(&mut state,&owner).is_err() { break; } }
             self.inner.changed.notify_all();
         }

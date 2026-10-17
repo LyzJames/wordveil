@@ -13,6 +13,9 @@
     "index.write",
     "local.embedding"
   ],
+  "conditional_capabilities": [
+    "graph.write"
+  ],
   "children": [],
   "handler_binding": "builtin.knowledge.index.v1",
   "input_fields": [
@@ -29,9 +32,9 @@
       "rule": "remove 需已确认删除事件或明确用户动作"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m1-local",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

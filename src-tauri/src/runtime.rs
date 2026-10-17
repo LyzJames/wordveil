@@ -30,6 +30,11 @@ pub struct Skill {
     pub description: String,
     pub actors: Vec<String>,
     pub direct_capabilities: Vec<String>,
+    /// Capabilities that only specific operations need (design catalog
+    /// `conditional_capabilities`). They widen the ceiling, never the grants:
+    /// the core grants them only to explicitly confirmed or protected roots.
+    #[serde(default)]
+    pub conditional_capabilities: Vec<String>,
     pub children: Vec<String>,
     pub handler_binding: String,
     pub input_fields: Vec<InputField>,
@@ -237,6 +242,7 @@ impl Registry {
         let mut result = BTreeSet::new();
         if let Some(skill) = self.skills.get(id) {
             result.extend(skill.direct_capabilities.iter().cloned());
+            result.extend(skill.conditional_capabilities.iter().cloned());
             for child in &skill.children {
                 result.extend(self.capability_closure(child));
             }
@@ -249,6 +255,21 @@ impl Registry {
 pub struct UserAction {
     scope: String,
     capabilities: Vec<String>,
+    action: String,
+}
+
+impl UserAction {
+    /// Only trusted native code paths (UI command handlers, confirmed jobs)
+    /// inside the core crate construct actions. `action` records how the root
+    /// was authorised: ui, confirm (explicit user confirmation), session (read
+    /// views), protected (passphrase/backup flows) or system (confirmed jobs).
+    pub(crate) fn trusted(scope: &str, capabilities: &[&str], action: &str) -> Self {
+        UserAction {
+            scope: scope.into(),
+            capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
+            action: action.into(),
+        }
+    }
 }
 pub struct RootHandle {
     id: String,
@@ -278,6 +299,16 @@ impl Invocation {
     pub fn id(&self) -> &str {
         &self.id
     }
+    pub fn root_id(&self) -> &str {
+        &self.root
+    }
+    pub fn skill(&self) -> &str {
+        &self.skill
+    }
+    pub fn depth(&self) -> u32 {
+        self.depth
+    }
+
     pub fn parent_id(&self) -> Option<&str> {
         self.parent.as_deref()
     }
@@ -309,7 +340,7 @@ impl Runtime {
             revision: 1,
         };
         self.ledger
-            .create_root(&root.id, &action.scope, &action.capabilities)?;
+            .create_root(&root.id, &action.scope, &action.capabilities, &action.action)?;
         Ok(root)
     }
 
@@ -731,6 +762,45 @@ impl Runtime {
     pub fn cancel(&mut self, root: &RootHandle) -> Result<()> {
         self.ledger.stop(&root.id)
     }
+
+    pub fn cancel_root(&mut self, root: &str) -> Result<()> {
+        self.ledger.stop(root)
+    }
+
+    pub(crate) fn root_action(&self, root: &str) -> Result<String> {
+        Ok(self.ledger.db.query_row("SELECT action FROM roots WHERE id=?", [root], |r| r.get(0))?)
+    }
+
+    pub fn handle(&self, root: &str) -> Result<RootHandle> {
+        let revision: i64 = self.ledger.db.query_row("SELECT revision FROM roots WHERE id=? AND cancelled=0", [root], |r| r.get(0))?;
+        Ok(RootHandle { id: root.into(), revision })
+    }
+
+    /// Core-built result envelope. Authority fields come from the invocation,
+    /// never from a handler or worker; the closed output schema is enforced.
+    pub fn envelope(&self, invocation: &Invocation, outcome: &EnvelopeParts) -> Result<Value> {
+        self.ledger.db.execute(
+            "INSERT INTO audit(root,invocation,code) VALUES(?,?,?)",
+            params![invocation.root, invocation.id, format!("skill.{}.{}", invocation.skill, outcome.status)],
+        )?;
+        let audit = self.ledger.db.last_insert_rowid();
+        let skill = self.registry.skills.get(&invocation.skill).ok_or(Error::Integrity)?;
+        let value = serde_json::json!({
+            "status": outcome.status,
+            "root_task_id": invocation.root,
+            "invocation_id": invocation.id,
+            "skill_id": invocation.skill,
+            "skill_version": skill.version,
+            "data_ref": outcome.data_ref,
+            "evidence_refs": outcome.evidence_refs,
+            "warnings": outcome.warnings.iter().map(|(code, message)| serde_json::json!({"code": code, "message": message})).collect::<Vec<_>>(),
+            "coverage": {"processed_refs": outcome.processed, "omitted_refs": outcome.omitted, "limitations": outcome.limitations},
+            "usage": {"generation_attempts": 0, "native_media_attempts": 0, "grounding_units": 0},
+            "audit_id": format!("audit_{audit}"),
+        });
+        self.validate_result_envelope(invocation, &value)?;
+        Ok(value)
+    }
     pub fn revoke(&mut self, root: &RootHandle, capability: &str) -> Result<()> {
         self.ledger.revoke(&root.id, capability)
     }
@@ -803,7 +873,9 @@ impl Runtime {
                         "ImportTargetRef" => &["MatterRef", "PublicKnowledgeCollectionRef"],
                         "MediaOrSelectionRef" => &["MediaVersionRef", "SelectionRef"],
                         "ImageOrPageRef" => &["ImageRef", "PageRef"],
-                        "EvidenceOrNodeRef" => &["EvidenceRef", "NodeRef"],
+                        "EvidenceOrNodeRef" => &["EvidenceRef", "NodeRef", "DocumentVersionRef", "FactRef", "FinancialInputRef", "MatterRef"],
+                        "KnownConstraintRef" => &["KnownConstraintRef", "FactRef"],
+                        "ResultRef" => RESULT_KINDS,
                         "ComponentOrTaskRef" => &["ComponentRef", "TaskRef"],
                         _ => &[expected.as_str()],
                     };
@@ -818,15 +890,30 @@ impl Runtime {
     }
 }
 
+/// Typed result objects that report-export may reference as ResultRef.
+pub const RESULT_KINDS: &[&str] = &["ResultRef", "ImportResultRef", "OcrResultRef", "IndexResultRef", "CandidateSetRef", "EvidenceBundleRef", "EvidenceReadRef", "GraphResultRef", "CalculationRef", "MatterSnapshotRef", "ChangeResultRef", "MediaResultRef", "TranscriptResultRef", "ReviewResultRef", "RetrievalResultRef", "DiagnosticsResultRef", "MaintenanceResultRef"];
+
+/// Handler outcome before the core seals it into the closed SkillResult schema.
+#[derive(Clone, Debug, Default)]
+pub struct EnvelopeParts {
+    pub status: String,
+    pub data_ref: Option<String>,
+    pub evidence_refs: Vec<String>,
+    pub warnings: Vec<(String, String)>,
+    pub processed: Vec<String>,
+    pub omitted: Vec<String>,
+    pub limitations: Vec<String>,
+}
+
 #[cfg(feature = "m0-harness")]
 pub mod harness {
     use super::*;
-    /// Compiled only for synthetic M0 tests. Not in production builds or worker IPC.
+    /// Compiled only for synthetic tests. Not in production builds or worker IPC.
     pub fn ui_action(scope: &str, capabilities: &[&str]) -> UserAction {
-        UserAction {
-            scope: scope.into(),
-            capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
-        }
+        UserAction::trusted(scope, capabilities, "ui")
+    }
+    pub fn action(scope: &str, capabilities: &[&str], kind: &str) -> UserAction {
+        UserAction::trusted(scope, capabilities, kind)
     }
     pub fn register_object(runtime: &Runtime, scope: &str, kind: &str) -> Result<String> {
         let id = format!("ref_{}", Uuid::new_v4().simple());

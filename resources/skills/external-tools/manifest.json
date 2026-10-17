@@ -11,6 +11,7 @@
   "direct_capabilities": [
     "connector.read"
   ],
+  "conditional_capabilities": [],
   "children": [],
   "handler_binding": "builtin.external.tools.v1",
   "input_fields": [
@@ -27,9 +28,9 @@
       "rule": "按该 binding 专用 JSON Schema 校验"
     }
   ],
-  "version": "0.1.0-m0",
+  "version": "0.2.0-m1",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "contract-prototype",
+  "implementation_status": "m2-network",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

@@ -61,6 +61,8 @@ impl Ledger {
             #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic SQL: {}",statement.trim().chars().take(65).collect::<String>());
             db.execute_batch(statement)?;
         }
+        // Every ledger database carries the current (M1) vault schema.
+        crate::store::migrate(&db)?;
         Ok(Self { db })
     }
 
@@ -69,13 +71,14 @@ impl Ledger {
         root: &str,
         scope: &str,
         capabilities: &[String],
+        action: &str,
     ) -> Result<()> {
         let tx = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute(
-            "INSERT INTO roots(id,scope,revision) VALUES(?,?,1)",
-            params![root, scope],
+            "INSERT INTO roots(id,scope,revision,action,created_at) VALUES(?,?,1,?,?)",
+            params![root, scope, action, crate::vault::now_rfc3339()],
         )?;
         for capability in capabilities {
             tx.execute(
@@ -84,8 +87,8 @@ impl Ledger {
             )?;
         }
         tx.execute(
-            "INSERT INTO audit(root,code) VALUES(?,'root.created.ui')",
-            [root],
+            "INSERT INTO audit(root,code) VALUES(?,?)",
+            params![root, format!("root.created.{action}")],
         )?;
         tx.commit()?;
         Ok(())
