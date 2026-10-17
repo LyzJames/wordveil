@@ -11,10 +11,16 @@ path = "src/lib.rs"
 [features]
 default = []
 m0-harness = []
-desktop = ["dep:tauri", "dep:tauri-build"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
+# Development and test builds may launch the Python worker from source under
+# docs. Production desktop builds use only the frozen, hash-pinned worker.
+dev-worker = []
 
 [dependencies]
 aes-gcm = "0.10.3"
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "zeroize"] }
+hkdf = "0.12.4"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 base64 = "0.22.1"
 jsonschema = { version = "0.33", default-features = false }
 rand = "0.8.5"
@@ -28,13 +34,14 @@ zeroize = { version = "1", features = ["derive"] }
 jieba-rs = "=0.11.0"
 usearch = { version = "=2.26.4", default-features = false }
 tauri = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
 
 [build-dependencies]
 cc = "1"
 tauri-build = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Security_Credentials"] }

@@ -41,6 +41,12 @@ class ImageRequest(StrictModel):
     png_base64: Annotated[str, StringConstraints(min_length=1, max_length=16_777_216)]
 
 
+class ImageBatchRequest(StrictModel):
+    kind: Literal['ocr-rec', 'doc-ori', 'textline-ori']
+    images: Annotated[list[Annotated[str, StringConstraints(min_length=1, max_length=4_194_304)]], Field(min_length=1, max_length=64)]
+    rotate180: list[bool] | None = None
+
+
 class AudioRequest(StrictModel):
     kind: Literal['asr']
     samples_f32_base64: Annotated[str, StringConstraints(min_length=1, max_length=2_560_000)]
@@ -108,6 +114,8 @@ class CpuModel:
         if payload.get('kind') != self.identity:
             raise ValueError('Model/request identity mismatch')
         if self.identity in PADDLE_MODELS:
+            if 'images' in payload:
+                return self.image_batch(ImageBatchRequest.model_validate(payload))
             return self.image(ImageRequest.model_validate(payload))
         if self.identity == 'asr':
             return self.audio(AudioRequest.model_validate(payload))
@@ -189,6 +197,31 @@ class CpuModel:
         # Do not exchange channels a second time when encoding a PIL PNG.
         Image.fromarray(output.astype('uint8')).save(encoded, format='PNG')
         return {'png_base64': base64.b64encode(encoded.getvalue()).decode('ascii'), 'shape': list(output.shape), 'geometry_mapping_verified': False}
+
+    def image_batch(self, request: ImageBatchRequest) -> dict:
+        """Batched line recognition/orientation. Order is preserved exactly."""
+        import numpy as np
+        from PIL import Image
+        if request.rotate180 is not None and (request.kind != 'ocr-rec' or len(request.rotate180) != len(request.images)):
+            raise ValueError('rotate180 must align with recognition crops')
+        arrays = []
+        for index, encoded in enumerate(request.images):
+            image = Image.open(io.BytesIO(base64.b64decode(encoded, validate=True)))
+            if image.width * image.height > 4_194_304:
+                raise ValueError('Image pixel budget exceeded')
+            image = image.convert('RGB')
+            if request.rotate180 and request.rotate180[index]:
+                image = image.transpose(Image.Transpose.ROTATE_180)
+            arrays.append(np.asarray(image)[:, :, ::-1].copy())
+        predictions = list(self.model.predict(input=arrays, batch_size=min(len(arrays), 16)))
+        if len(predictions) != len(arrays):
+            raise ValueError('Unexpected Paddle output cardinality')
+        def value(result, name):
+            item = result.get(name)
+            return item.tolist() if hasattr(item, 'tolist') else item
+        if self.identity == 'ocr-rec':
+            return {'results': [{'text': value(r, 'rec_text'), 'score': value(r, 'rec_score')} for r in predictions]}
+        return {'results': [{'class_ids': value(r, 'class_ids'), 'labels': value(r, 'label_names'), 'scores': value(r, 'scores')} for r in predictions]}
 
     def audio(self, request: AudioRequest) -> dict:
         import numpy as np

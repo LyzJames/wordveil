@@ -26,11 +26,19 @@ def emit(protocol, value):
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--model',required=True)
-    parser.add_argument('--artifact',type=Path,required=True)
+    parser.add_argument('--model')
+    parser.add_argument('--artifact',type=Path)
+    parser.add_argument('--service',choices=['local'],help='Run the non-model local service (parsing, OCR geometry, chunking, finance).')
+    parser.add_argument('--tokenizer',type=Path,help='Core-selected read-only Qwen tokenizer.json for chunk token counts.')
     parser.add_argument('--diagnose-installation',action='store_true',help='Return model-load diagnostics before accepting any business input (M0 verification).')
     parser.add_argument('--installation-fixture',type=Path,help='With installation diagnostics, run one core-selected synthetic fixture and exit without reading stdin.')
     args=parser.parse_args()
+    if args.service:
+        if args.model or args.artifact or args.installation_fixture:
+            parser.error('The local service takes no model arguments')
+        return serve_local(args.tokenizer)
+    if not args.model or not args.artifact:
+        parser.error('--model and --artifact are required')
     if args.installation_fixture and not args.diagnose_installation:
         parser.error('Installation fixtures require explicit installation diagnostics')
     os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK='True',CUDA_VISIBLE_DEVICES='',TOKENIZERS_PARALLELISM='false')
@@ -76,6 +84,31 @@ def main():
                 emit(protocol,{'event':'result','data':result})
             except Exception:
                 emit(protocol,{'event':'error','code':'invalid_or_failed_inference'})
+
+
+def serve_local(tokenizer):
+    os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',CUDA_VISIBLE_DEVICES='',TOKENIZERS_PARALLELISM='false')
+    protocol=sys.stdout.buffer
+    with open(os.devnull,'w',encoding='utf-8') as sink:
+        from agent_core.local_service import LocalService,ServiceError
+        service=LocalService(str(tokenizer) if tokenizer else None)
+        emit(protocol,{'event':'ready','service':'local'})
+        while True:
+            line=sys.stdin.buffer.readline(MAX_REQUEST+1)
+            if not line:
+                return 0
+            if len(line)>MAX_REQUEST or not line.endswith(b'\n'):
+                emit(protocol,{'event':'error','code':'input_budget'})
+                return 1
+            try:
+                request=json.loads(line)
+                with contextlib.redirect_stdout(sink),contextlib.redirect_stderr(sink):
+                    result=service.handle(request)
+                emit(protocol,{'event':'result','data':result})
+            except ServiceError as error:
+                emit(protocol,{'event':'error','code':error.code})
+            except Exception:
+                emit(protocol,{'event':'error','code':'invalid_or_failed_request'})
 
 
 if __name__=='__main__':
