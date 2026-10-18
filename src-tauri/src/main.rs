@@ -428,11 +428,14 @@ fn main() {
     let lock_core = core.as_ref().ok().cloned();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .register_asynchronous_uri_scheme_protocol("lvjin", move |_ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol("lvjin", move |ctx, request, responder| {
+            // Capabilities guard IPC, not custom schemes: serve only the main
+            // window, and only unexpired random tokens issued by the core.
+            let main_window = ctx.webview_label() == "main";
             let core = protocol_core.clone();
             std::thread::spawn(move || {
                 let token = request.uri().path().trim_start_matches('/').to_owned();
-                let served = core.as_ref().filter(|_| token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())).and_then(|c| c.serve_token(&token).ok());
+                let served = core.as_ref().filter(|_| main_window && token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())).and_then(|c| c.serve_token(&token).ok());
                 let response = match served {
                     Some((bytes, mime)) => tauri::http::Response::builder().header("Content-Type", mime).header("Cache-Control", "no-store").header("X-Content-Type-Options", "nosniff").body(bytes),
                     None => tauri::http::Response::builder().status(404).header("Cache-Control", "no-store").body(Vec::new()),

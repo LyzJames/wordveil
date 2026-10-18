@@ -1,6 +1,6 @@
 {
   "schema_version": "lvjin.installation/1",
-  "milestone": "M0",
+  "milestone": "M1",
   "cpu_only": true,
   "worker_directory": "runtimes/worker",
   "artifacts": [
@@ -535,8 +535,8 @@
     },
     {
       "path": "_internal/accelerate-1.15.0.dist-info/RECORD",
-      "bytes": 19929,
-      "sha256": "0a8a36d84a23160477d7a655e354e251059e0015ff34076d2105eebdaea5c431"
+      "bytes": 8537,
+      "sha256": "9f9f51b28934c51866a9bf216f329bafde474605b8a568d6d7a403e1e5f9706d"
     },
     {
       "path": "_internal/accelerate-1.15.0.dist-info/REQUESTED",
@@ -570,8 +570,8 @@
     },
     {
       "path": "_internal/aiohappyeyeballs-2.7.1.dist-info/RECORD",
-      "bytes": 1548,
-      "sha256": "3bd12a521487928d870070f0d9382ba590b7722e98191c3a3b08b2672fcd1be7"
+      "bytes": 941,
+      "sha256": "4656fb6a6fc412d0bcf5e90c077e08ead3535b6250e85b3c85d67fab92078636"
     },
     {
       "path": "_internal/aiohappyeyeballs-2.7.1.dist-info/WHEEL",
@@ -620,8 +620,8 @@
     },
     {
       "path": "_internal/aiohttp-3.14.5.dist-info/RECORD",
-      "bytes": 12461,
-      "sha256": "0d4da46751c34eaf26533e8d325f326f4d253f06eefda57c26acdf4075730fbe"
+      "bytes": 6120,
+      "sha256": "36420a60a4969db970db06912a49ac7382d9cd756f8bc775612d74fedc85d944"
     },
     {
       "path": "_internal/aiohttp-3.14.5.dist-info/top_level.txt",
@@ -650,8 +650,8 @@
     },
     {
       "path": "_internal/aiosignal-1.4.0.dist-info/RECORD",
-      "bytes": 769,
-      "sha256": "f20a4571757dc771a783cf305c7594762a6b4c5260b2b2d149d9f0ca944d37d4"
+      "bytes": 653,
+      "sha256": "2289545f36189cef648b33546b92801c62ff894fd5626dacc5aa74f23aa82e98"
     },
     {
       "path": "_internal/aiosignal-1.4.0.dist-info/top_level.txt",
@@ -685,8 +685,8 @@
     },
     {
       "path": "_internal/aistudio_sdk-0.3.9.dist-info/RECORD",
-      "bytes": 5909,
-      "sha256": "0aab0485c9709aa3397c1672d55e5336c1f2b9b7665faf1871af5d10b26f2afd"
+      "bytes": 2754,
+      "sha256": "2bfbe1823fdc1dfa120fa6ca199ea78e55056d92d22c8075b082013411c5341f"
     },
     {
       "path": "_internal/aistudio_sdk-0.3.9.dist-info/top_level.txt",
@@ -715,8 +715,8 @@
     },
     {
       "path": "_internal/altgraph-0.17.5.dist-info/RECORD",
-      "bytes": 1928,
-      "sha256": "a8e1e42f9695a81c63a2950abf6e362f97e79e61c72f645730c9786fb20372c3"
+      "bytes": 1125,
+      "sha256": "1edb12a2bc25e6f8b3887489604f987877ca439f306a9847aecbc4d01feed310"
     },
     {
       "path": "_internal/altgraph-0.17.5.dist-info/top_level.txt",
@@ -755,8 +755,8 @@
     },
     {
       "path": "_internal/annotated_doc-0.0.5.dist-info/RECORD",
-      "bytes": 1000,
-      "sha256": "aac978cff8c623825700aa9b35ca36d4278faa4da2b5fac765434cde9926f3d5"
+      "bytes": 764,
+      "sha256": "7033d910fa753de3ff1fe8cf5083f8c2757f4ecb60542e28112f0739dbe89ace"
     },
     {
       "path": "_internal/annotated_doc-0.0.5.dist-info/WHEEL",
@@ -780,8 +780,8 @@
     },
     {
       "path": "_internal/annotated_types-0.8.0.dist-info/RECORD",
-      "bytes": 934,
-      "sha256": "629bba4cda513db6915b5b41777ecf66b78950f9cba767d761d68fa80e834f1e"
+      "bytes": 688,
+      "sha256": "398d8159217b9bff2a614693476f17cc4f0dfd5723b393e33f5c099ccef56225"
     },
     {
       "path": "_internal/annotated_types-0.8.0.dist-info/WHEEL",
@@ -810,8 +810,8 @@
     },
     {
       "path": "_internal/anyio-4.15.1.dist-info/RECORD",
-      "bytes": 9832,
-      "sha256": "a49a2d38c0c6e0b1c9dab220c2e8737da828024f7fe84ef47a90c9e5c888f46f"
+      "bytes": 4390,
+      "sha256": "94017ec43173a9bf278f7f91eaef0cb6c039440a5bd29dea045f1c64bd311d13"
     },
     {
       "path": "_internal/anyio-4.15.1.dist-info/top_level.txt",
@@ -822,221 +822,6 @@
       "path": "_internal/anyio-4.15.1.dist-info/WHEEL",
       "bytes": 91,
       "sha256": "61532836a2b3111b7ec23519c09df7c41180c27165fb872a6d8913b566b88ad1"
-    },
-    {
-      "path": "_internal/api-ms-win-core-console-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "015bd08815c7b934a8952c3a7578e9ce59f21136e8a880d42bbd414bec2c6058"
-    },
-    {
-      "path": "_internal/api-ms-win-core-datetime-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "5534812cdbdae94ba45cb216e5eb9af686b853948df54365103555abbbaf9d9a"
-    },
-    {
-      "path": "_internal/api-ms-win-core-debug-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "837d2b1b2cd03e03fc6ccb050698b6b5763af17c201304872342a5eae9e0a2d2"
-    },
-    {
-      "path": "_internal/api-ms-win-core-errorhandling-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "de43b165f568c276c00e95acd454e3092f352a18e95874595f4f4658c06d2ec7"
-    },
-    {
-      "path": "_internal/api-ms-win-core-fibers-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "3cebc45bf479ad74cfabf2c6bfd4994d7ad639ed1221025981d19cedf9ce0416"
-    },
-    {
-      "path": "_internal/api-ms-win-core-fibers-l1-1-1.dll",
-      "bytes": 22872,
-      "sha256": "5ef70308bcca628ce6b0e2856b15b1c7ae340c3f9bbbc4c1071d8c191a34a5c3"
-    },
-    {
-      "path": "_internal/api-ms-win-core-file-l1-1-0.dll",
-      "bytes": 27008,
-      "sha256": "250ac829f2617bcac1c6e5b8c4f630462e20765863ba573526a3e11bbfb94a9a"
-    },
-    {
-      "path": "_internal/api-ms-win-core-file-l1-2-0.dll",
-      "bytes": 22888,
-      "sha256": "ae14079a114733f60ce87b92cba42acd8083c2cd67594e53bc37dc0b97a4b465"
-    },
-    {
-      "path": "_internal/api-ms-win-core-file-l2-1-0.dll",
-      "bytes": 22912,
-      "sha256": "914bf26a298713119477ea0a8e7bd43171b91344ebe24fb47ad77c49686e3d87"
-    },
-    {
-      "path": "_internal/api-ms-win-core-handle-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "ab5489955e371b15f77906c08ec3c7affe2c7a46a08c514ca628768b4478974b"
-    },
-    {
-      "path": "_internal/api-ms-win-core-heap-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "c70f9644d8377fa39c5b71f2e9734c1400d7598904fdeb772e8502099982dcb7"
-    },
-    {
-      "path": "_internal/api-ms-win-core-interlocked-l1-1-0.dll",
-      "bytes": 22888,
-      "sha256": "f8129710188e407bb0e6f46d30aeba277d67b947ece5fe09e883fde2323f3ae6"
-    },
-    {
-      "path": "_internal/api-ms-win-core-kernel32-legacy-l1-1-1.dll",
-      "bytes": 22888,
-      "sha256": "5200b16cb2ddc61cfc07373a9a84aa85a3ab50806ca96c879c883275832944c1"
-    },
-    {
-      "path": "_internal/api-ms-win-core-libraryloader-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "48786fb88b001dcd1f63acea903d3ca9cc0b3060d5a325e3f2f3cbc3bfd53166"
-    },
-    {
-      "path": "_internal/api-ms-win-core-localization-l1-2-0.dll",
-      "bytes": 22872,
-      "sha256": "9ec3898f7eba91faa28b51616c211a2689e3a13aeef8de6e13cb674e49d689eb"
-    },
-    {
-      "path": "_internal/api-ms-win-core-memory-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "3a6cbc524c99e1cd80d5368f5601402a37ad602528b1ab628093573ef638eb3b"
-    },
-    {
-      "path": "_internal/api-ms-win-core-namedpipe-l1-1-0.dll",
-      "bytes": 22888,
-      "sha256": "97145ef89c44949fcf0f04ac834a8bc7d687ef49ee73ae9fc32f3c11136b7201"
-    },
-    {
-      "path": "_internal/api-ms-win-core-processenvironment-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "8bc7c10b1851aea644e9c9f381cdb935e091fee6b0be3d3aedc6fffaac96adb7"
-    },
-    {
-      "path": "_internal/api-ms-win-core-processthreads-l1-1-0.dll",
-      "bytes": 22912,
-      "sha256": "d8030b777617c71f0f94564607699dbf7561487d779db9756aed378c5675213f"
-    },
-    {
-      "path": "_internal/api-ms-win-core-processthreads-l1-1-1.dll",
-      "bytes": 22872,
-      "sha256": "f5e676713340f73a03a3d41a6ec9883b431da7d16c7f07bd0a920fb80e6c0753"
-    },
-    {
-      "path": "_internal/api-ms-win-core-profile-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "f023d47e44d3eea6b0743580f57e8c6ba81e79d5ebfa7da26250076c647b980e"
-    },
-    {
-      "path": "_internal/api-ms-win-core-rtlsupport-l1-1-0.dll",
-      "bytes": 22888,
-      "sha256": "9746d8930704153578a628c010638a5f818ffe5a927e25591b108e256dc6afca"
-    },
-    {
-      "path": "_internal/api-ms-win-core-string-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "7c53ae24c982d16ffd1bf7f918d115b11b7f30e57bc7feaa18cb9781e4abb926"
-    },
-    {
-      "path": "_internal/api-ms-win-core-synch-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "56d9d62ca5dba79a6581b8d574a7d8b2a64a5ecb71e47dcf06ed0285708b1859"
-    },
-    {
-      "path": "_internal/api-ms-win-core-synch-l1-2-0.dll",
-      "bytes": 22888,
-      "sha256": "f6482bbec5612c39ecb4822787a333f2b7570f7a5f922a4059be41ba957bb372"
-    },
-    {
-      "path": "_internal/api-ms-win-core-sysinfo-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "272d02765fdd3582618236c2d309abba069642f9bc1062ede069d0c144e17007"
-    },
-    {
-      "path": "_internal/api-ms-win-core-sysinfo-l1-2-0.dll",
-      "bytes": 22912,
-      "sha256": "8a0900788859d0eb51c2f48f50cc6ed376a120b518100fa20e11d7702ccde260"
-    },
-    {
-      "path": "_internal/api-ms-win-core-timezone-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "ff35de6c03812b332e140f17dade25c5dd4775156da9eeb1eaae3fddd27236ec"
-    },
-    {
-      "path": "_internal/api-ms-win-core-util-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "191ef3e98641a57296f19d572d8eb62489470ff1ef6030d136af170c2f835173"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-conio-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "54ee5ec719a051496ff60aa00dbeaa94b9a7d2cdac27fe9b7317f1a666b6a2aa"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-convert-l1-1-0.dll",
-      "bytes": 26992,
-      "sha256": "8b94662429171019fcd63c70bbf2095a075170599704a5e7dcdbe3da13f3a429"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-environment-l1-1-0.dll",
-      "bytes": 22912,
-      "sha256": "39e5929593709e8af3bc9e0a75ec1155778d6f4a247f4cdfc58928ad6db88434"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-filesystem-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "5a8ecebac32edf4e1f3c5c6c1c8ea1a1add6cda4f9c9cb26f752fb295bea6865"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-heap-l1-1-0.dll",
-      "bytes": 22872,
-      "sha256": "c71080cbcb43bf1f8f3e391deb12a582eb0abefc80946f340675a2c616e4feb4"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-locale-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "6c68648e524187e03c4ad9aaa4a99113c6ee9f29fb39cc0ed93f951975138e63"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-math-l1-1-0.dll",
-      "bytes": 31064,
-      "sha256": "d4fbcccbe29371cbce431e43b2eb4f7ba9a6f04a3d740a071f02457a505e9dc8"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-private-l1-1-0.dll",
-      "bytes": 76120,
-      "sha256": "29bf3d90617d3781d19b332d6ceb9f20ba5ce082ec74bf6c34d5d4aee56e48a1"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-process-l1-1-0.dll",
-      "bytes": 22896,
-      "sha256": "47c1935942e3ac0812e4dcf18c0e265e565f0194a3349111c299712f5565f7ac"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-runtime-l1-1-0.dll",
-      "bytes": 26968,
-      "sha256": "72adc1b3677e0814d9c4ebf0964000e84bb2acf67336c8963061665e44f78029"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-stdio-l1-1-0.dll",
-      "bytes": 26968,
-      "sha256": "900afc3989673c9bb1a687ed38c192f46db9e6ba6d11a668898a539e7fc23798"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-string-l1-1-0.dll",
-      "bytes": 26968,
-      "sha256": "fcf12466cc12fd3b73611fc0763a5a1f9d44e90349513c34a0c83b0f36421793"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-time-l1-1-0.dll",
-      "bytes": 22912,
-      "sha256": "886e57c4a6adb299b38f02945369f590a67da4e79a798359fc60aaa067212d7c"
-    },
-    {
-      "path": "_internal/api-ms-win-crt-utility-l1-1-0.dll",
-      "bytes": 22912,
-      "sha256": "5f8f26b216ade615b67a41f6fbbb910972fc6153315a65bb8f09912be50215b1"
     },
     {
       "path": "_internal/attrs-26.1.0.dist-info/INSTALLER",
@@ -1055,8 +840,8 @@
     },
     {
       "path": "_internal/attrs-26.1.0.dist-info/RECORD",
-      "bytes": 4810,
-      "sha256": "84249b48d1aaefd5c04c7b92be0d4a080d72c1182a260dc1c54a9ddaa780099b"
+      "bytes": 2692,
+      "sha256": "b1288b5736c1985d7ddd7a5c5ad9e1645b125db6666d6ea253fc7fc3c064c49c"
     },
     {
       "path": "_internal/attrs-26.1.0.dist-info/WHEEL",
@@ -1066,7 +851,7 @@
     {
       "path": "_internal/base_library.zip",
       "bytes": 1333717,
-      "sha256": "d94d88a91e605c7a019d9bb72cd6d83c125b4b25a8e6f7777a905e5e876ccfc6"
+      "sha256": "32336fea9fcc2cee49889116b03b23f3a779396e8b73bbf37817d4dec49e1e40"
     },
     {
       "path": "_internal/bce_python_sdk-0.9.79.dist-info/INSTALLER",
@@ -1080,8 +865,8 @@
     },
     {
       "path": "_internal/bce_python_sdk-0.9.79.dist-info/RECORD",
-      "bytes": 47621,
-      "sha256": "3d9b63bb62c34fcc2f7c8248405df59213eeced21ff03dec1c05e57640a5dc33"
+      "bytes": 20108,
+      "sha256": "f4a6952b0674f117c4681d8c67b6a81b1b7d6777d56a612c6ee608c8be3a6bd4"
     },
     {
       "path": "_internal/bce_python_sdk-0.9.79.dist-info/top_level.txt",
@@ -1125,8 +910,8 @@
     },
     {
       "path": "_internal/certifi-2026.7.22.dist-info/RECORD",
-      "bytes": 1631,
-      "sha256": "66afb56ce9e16c4d4475c3df16c7fc864e9bdeeab75fbc2c780e2195d72c149a"
+      "bytes": 1049,
+      "sha256": "d384b553cae1498cf360edea102d81459705864f0a98c950a02e8581383aa789"
     },
     {
       "path": "_internal/certifi-2026.7.22.dist-info/top_level.txt",
@@ -1160,8 +945,8 @@
     },
     {
       "path": "_internal/cffi-2.1.1.dist-info/RECORD",
-      "bytes": 4831,
-      "sha256": "b5c6ddb3c1cedfa48b69e5cd6138800a3c52fa43598316fc1a64df7ab08bb399"
+      "bytes": 2486,
+      "sha256": "8ccfea79cbcf2a5de6c1a26d84243494f046234060487486362116d4417f2962"
     },
     {
       "path": "_internal/cffi-2.1.1.dist-info/top_level.txt",
@@ -1350,8 +1135,8 @@
     },
     {
       "path": "_internal/chardet-7.6.0.dist-info/RECORD",
-      "bytes": 9795,
-      "sha256": "8fcfb36205631fc189574cea41ac66887c960895a599f4c2d5f493bcc74c1907"
+      "bytes": 6137,
+      "sha256": "2b3133993cde6df9b2d169fee277fd0257e140d8ee1510e109fa56ae0b0d91b5"
     },
     {
       "path": "_internal/chardet-7.6.0.dist-info/WHEEL",
@@ -1390,8 +1175,8 @@
     },
     {
       "path": "_internal/charset_normalizer-3.5.2.dist-info/RECORD",
-      "bytes": 3561,
-      "sha256": "47908f354affe6ae8269a3dce3d82cfcbe5279568337eddb9a78f917ebcade1d"
+      "bytes": 1990,
+      "sha256": "762934c579b18c53f23787461dc6244f961b255e355aa09ee37a245ec472c768"
     },
     {
       "path": "_internal/charset_normalizer-3.5.2.dist-info/top_level.txt",
@@ -1420,8 +1205,8 @@
     },
     {
       "path": "_internal/click-8.5.0.dist-info/RECORD",
-      "bytes": 3655,
-      "sha256": "5eddec8cf91aa188db5583c73c039b366b5bceb1d265cfe0ee949277ea3ff6d9"
+      "bytes": 1748,
+      "sha256": "dbf07b08101f8ccb083bb1c7cc3ebfedae3532a3f9ba62acefef2a7da117b5ba"
     },
     {
       "path": "_internal/click-8.5.0.dist-info/WHEEL",
@@ -1445,8 +1230,8 @@
     },
     {
       "path": "_internal/cloudpickle-3.1.2.dist-info/RECORD",
-      "bytes": 1033,
-      "sha256": "ddd34a623d003bf46de768ef384ffec66e1e228774920859a00dd034f58b666c"
+      "bytes": 668,
+      "sha256": "ff8a98546804eae8c9d8a61463d3d70753f81eda9cf29ad01d385a7618e6326c"
     },
     {
       "path": "_internal/cloudpickle-3.1.2.dist-info/WHEEL",
@@ -1470,8 +1255,8 @@
     },
     {
       "path": "_internal/colorama-0.4.6.dist-info/RECORD",
-      "bytes": 3032,
-      "sha256": "dbb50f98c5eaaaf55a912438292762bf5f3caef9f4972ad735976b0c5823da7d"
+      "bytes": 1478,
+      "sha256": "2ea6ec422e396dac1ddad2c9e48dde11c73c3c0cc3b1adc2b42c9edd2113261d"
     },
     {
       "path": "_internal/colorama-0.4.6.dist-info/WHEEL",
@@ -1495,8 +1280,8 @@
     },
     {
       "path": "_internal/colorlog-6.12.0.dist-info/RECORD",
-      "bytes": 1354,
-      "sha256": "74ff9bb748ab26d825c3e8a4de09e056e7c402263bef8b7f754e71dc2636b371"
+      "bytes": 889,
+      "sha256": "aa88505f19f81aae77cf47a545e3b3569555302ce698a730d81f76d67ad667cb"
     },
     {
       "path": "_internal/colorlog-6.12.0.dist-info/top_level.txt",
@@ -1550,8 +1335,8 @@
     },
     {
       "path": "_internal/crc32c-2.9.post0.dist-info/RECORD",
-      "bytes": 2822,
-      "sha256": "22d9c26b99e5fd7aa51d49e6d823c2582a9eaec3df63178ec9b71b53f3ddc2cc"
+      "bytes": 2287,
+      "sha256": "9c0aeb41449c493835d241361ace984c188bf37eaf16d7a8a8f61bb8746c3127"
     },
     {
       "path": "_internal/crc32c-2.9.post0.dist-info/top_level.txt",
@@ -1810,8 +1595,8 @@
     },
     {
       "path": "_internal/cryptography-50.0.2.dist-info/RECORD",
-      "bytes": 23107,
-      "sha256": "f87266de1ab4e1e595ae3d2c2541e291c943c934a9bc737bdfb46a0fb6996761"
+      "bytes": 12394,
+      "sha256": "b1f4539597ec4c29eed8143cee948fa23f10c0d327a1c5df9abd4a1ea21593f2"
     },
     {
       "path": "_internal/cryptography-50.0.2.dist-info/REQUESTED",
@@ -1920,8 +1705,8 @@
     },
     {
       "path": "_internal/decorator-5.3.1.dist-info/RECORD",
-      "bytes": 853,
-      "sha256": "65c438f78bb6d62f08c020e70923d6d2e5ed37ce675623d3844ddd35d9902446"
+      "bytes": 737,
+      "sha256": "e710aa7d74ff9ea1b1792d80a10742499169c8bc69a1a9d2d861e832b3f3ca4e"
     },
     {
       "path": "_internal/decorator-5.3.1.dist-info/top_level.txt",
@@ -1932,6 +1717,676 @@
       "path": "_internal/decorator-5.3.1.dist-info/WHEEL",
       "bytes": 91,
       "sha256": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/INSTALLER",
+      "bytes": 4,
+      "sha256": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/LICENSE",
+      "bytes": 2409,
+      "sha256": "b80ce9da8c42a1f91079627fbbe2bf27210ae108a0ffe5f077d5b08e076c24c8"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/METADATA",
+      "bytes": 32518,
+      "sha256": "369d3cef64870daf849fba711cb8d05a7efe3c8d9ab0f763adc34079fe378bb1"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/RECORD",
+      "bytes": 2029,
+      "sha256": "bfeccb2f283733a690e2c5b5f809566da8ab8479e3209bd4b8c5d70f62397498"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/REQUESTED",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/top_level.txt",
+      "bytes": 11,
+      "sha256": "4061daf74179d2954a856485944448d23b522ada83886c9f7995fb750359000c"
+    },
+    {
+      "path": "_internal/defusedxml-0.7.1.dist-info/WHEEL",
+      "bytes": 110,
+      "sha256": "9064fbe0b5b245466b2f85602e1ebf835d8879597ff6ef5956169dae05d95046"
+    },
+    {
+      "path": "_internal/docx/__init__.py",
+      "bytes": 1832,
+      "sha256": "fcda35a3fee0a7c9e2b09713a74b274cea562a2b28dcc2f9250d4e05bd074012"
+    },
+    {
+      "path": "_internal/docx/api.py",
+      "bytes": 1350,
+      "sha256": "d77539ea23d2336b4c44311bd373a64994240c03e6c068dfc68b189164b6b5c7"
+    },
+    {
+      "path": "_internal/docx/blkcntnr.py",
+      "bytes": 3525,
+      "sha256": "ff17bb533dd1042cf84cf297a48cd1c6d1a0fb560f6f78001bd62fb12532a0b5"
+    },
+    {
+      "path": "_internal/docx/comments.py",
+      "bytes": 6385,
+      "sha256": "32668fed4f6664e505b1185a64d21b5dab6a38e03cfa9382e9496a580b931ec7"
+    },
+    {
+      "path": "_internal/docx/dml/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/dml/color.py",
+      "bytes": 4439,
+      "sha256": "3bbc5e570b426ce3d6d5a34a487101a9cc6962739414c8ca2afdaf736ae2246a"
+    },
+    {
+      "path": "_internal/docx/document.py",
+      "bytes": 11194,
+      "sha256": "b54354a7f068191e37dc9b4256480f0222665b60d22951f365402b0a7b46d9ce"
+    },
+    {
+      "path": "_internal/docx/drawing/__init__.py",
+      "bytes": 2243,
+      "sha256": "84c6fe615dd015df236b77973f059c327b6959046ff0e91e6ace3b457354df37"
+    },
+    {
+      "path": "_internal/docx/enum/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/enum/base.py",
+      "bytes": 5070,
+      "sha256": "ae1ea6168c14e2a0baba7867e97bdfe79aed63734787d43e024d140054cceb96"
+    },
+    {
+      "path": "_internal/docx/enum/dml.py",
+      "bytes": 3346,
+      "sha256": "0eaaa4631974f625d0803359c7197fc22fe7f6b03b993a2475ed53a4edf28265"
+    },
+    {
+      "path": "_internal/docx/enum/section.py",
+      "bytes": 2391,
+      "sha256": "98d375905d66748250f365c51599dddf25d79c2bb999f9d7ce8a5a96798f0aaa"
+    },
+    {
+      "path": "_internal/docx/enum/shape.py",
+      "bytes": 396,
+      "sha256": "0ca426e89dc8b36d39d1b4f946c794a703c765997d6add0e0108d4d616b61f88"
+    },
+    {
+      "path": "_internal/docx/enum/style.py",
+      "bytes": 10137,
+      "sha256": "67d70147b377982999e789ca2712aa3e147848ccbf86a2511f6c9a6c3c512e8f"
+    },
+    {
+      "path": "_internal/docx/enum/table.py",
+      "bytes": 3943,
+      "sha256": "ecfb90fbe3c69d268d884d01bb8549f6de8b3a033e84d366284725fb74b67949"
+    },
+    {
+      "path": "_internal/docx/enum/text.py",
+      "bytes": 10276,
+      "sha256": "a3a6dda49a2dda2638d149e7050d6e19f744f281c59b776d5d4ae6b7d78c96f1"
+    },
+    {
+      "path": "_internal/docx/exceptions.py",
+      "bytes": 454,
+      "sha256": "59688ccb766db1f2914b7d56bf4f5e80b667a4f917d07eba07c26438f082dc53"
+    },
+    {
+      "path": "_internal/docx/image/__init__.py",
+      "bytes": 664,
+      "sha256": "ca07a6f978f328fdeea3efbe661b1321930b12da2e35b2044f1800dd892bc3b2"
+    },
+    {
+      "path": "_internal/docx/image/bmp.py",
+      "bytes": 1347,
+      "sha256": "c3f261bba841c8072424dc8a848df31ce2ac1f289b1e0c4322388f23d7afef4e"
+    },
+    {
+      "path": "_internal/docx/image/constants.py",
+      "bytes": 3466,
+      "sha256": "63e304f59d8a0cbb231500ee9fc5f1857acbe87357864519a861ee0875c431fe"
+    },
+    {
+      "path": "_internal/docx/image/exceptions.py",
+      "bytes": 383,
+      "sha256": "ffaae48d75dc6c5c5bfc7f89d242b843527d45a2f1dd3550e61a0e54436f41a2"
+    },
+    {
+      "path": "_internal/docx/image/gif.py",
+      "bytes": 1118,
+      "sha256": "d11ecbd2bee48dff38e2976937a50a1084ac110cce3c0c80ddc8215d77495b6b"
+    },
+    {
+      "path": "_internal/docx/image/helpers.py",
+      "bytes": 3089,
+      "sha256": "8f2d1f401a887ecb69f44c5f2b0ddd18d2a8ce7ef846799203f6309a896c0ea3"
+    },
+    {
+      "path": "_internal/docx/image/image.py",
+      "bytes": 8005,
+      "sha256": "c2599628b6da9e90e1273646dca7ee051957c370c50ae5171c8fc271e7185f21"
+    },
+    {
+      "path": "_internal/docx/image/jpeg.py",
+      "bytes": 15386,
+      "sha256": "90698af18f83970446c38f8f2be39d32025431daa188a3a0071ac52b87975715"
+    },
+    {
+      "path": "_internal/docx/image/png.py",
+      "bytes": 8214,
+      "sha256": "846a45ecdafbac1502904f4da07b5022b28cf21a6205a2575a2a36f2f7d9b345"
+    },
+    {
+      "path": "_internal/docx/image/tiff.py",
+      "bytes": 10379,
+      "sha256": "2d9c7e3f6b8c4b381dcc77c8591a91aad9db86e22a58163f70b931f7f1d3acfb"
+    },
+    {
+      "path": "_internal/docx/opc/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/opc/constants.py",
+      "bytes": 17026,
+      "sha256": "cf0ce03fecc1a1b27f2e359da65940e187e744a6d4c9a48e7d302f355aef3b8c"
+    },
+    {
+      "path": "_internal/docx/opc/coreprops.py",
+      "bytes": 3468,
+      "sha256": "21f41ea82e68e24f4e6e3fe443864a7c597a20bede226edd7080b5019915bda7"
+    },
+    {
+      "path": "_internal/docx/opc/exceptions.py",
+      "bytes": 264,
+      "sha256": "a6a6b51ae1713251990c180606a9ed67ff1a0c834bc28da0b4fb8d470003cf23"
+    },
+    {
+      "path": "_internal/docx/opc/oxml.py",
+      "bytes": 8325,
+      "sha256": "204dc7e05f835abf104998b4a7173bebb6a9537364f818454ecec78930f9724d"
+    },
+    {
+      "path": "_internal/docx/opc/package.py",
+      "bytes": 8727,
+      "sha256": "450c3f96ea860da100ca5853a7ea2530267d3bdcefbfa49ef79221ed4a52b155"
+    },
+    {
+      "path": "_internal/docx/opc/packuri.py",
+      "bytes": 3729,
+      "sha256": "d7eb910308c87ed978ef99e8cefb2c1284bed04073d30fa826f4fe7cd61cc7da"
+    },
+    {
+      "path": "_internal/docx/opc/part.py",
+      "bytes": 9025,
+      "sha256": "be2d13dc9886d525249eae5a41d34bf592529c363c077f37d9d89247f99a489e"
+    },
+    {
+      "path": "_internal/docx/opc/parts/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/opc/parts/coreprops.py",
+      "bytes": 1775,
+      "sha256": "541733747f82223fad704e1b075d4bc7099990518cd801b5055ca22760369826"
+    },
+    {
+      "path": "_internal/docx/opc/phys_pkg.py",
+      "bytes": 4005,
+      "sha256": "f9e3590c16cb4a11e8dd6d628257f50b037f9e42bcaa79935a9e80060efb7230"
+    },
+    {
+      "path": "_internal/docx/opc/pkgreader.py",
+      "bytes": 9588,
+      "sha256": "8943d9ec16b890d5e33c1faad664043b8e1e5666e73f4f29a385851fe1c3d881"
+    },
+    {
+      "path": "_internal/docx/opc/pkgwriter.py",
+      "bytes": 4524,
+      "sha256": "b210deb81b56d816c53931eb5f1f11f7b3d615a1ff7c4dfb25805f6f0e90591b"
+    },
+    {
+      "path": "_internal/docx/opc/rel.py",
+      "bytes": 5600,
+      "sha256": "4d1ebff72e9b826aa50d9aae45fffd89946a37ff7c53f2c427bc5fa4c5b55489"
+    },
+    {
+      "path": "_internal/docx/opc/shared.py",
+      "bytes": 996,
+      "sha256": "667d9abe0da0d09d9f906e588057c26e5d77f205dec7cb2d47e43054972e4886"
+    },
+    {
+      "path": "_internal/docx/opc/spec.py",
+      "bytes": 638,
+      "sha256": "18ff1811bedb4a6650d22df7f0cde54025599bac949e45219b73c5295816f1b4"
+    },
+    {
+      "path": "_internal/docx/oxml/__init__.py",
+      "bytes": 8243,
+      "sha256": "088b1ae226528ead902bbfd5d7160533a1f5df22e1f6ea036772df8c6584c7b2"
+    },
+    {
+      "path": "_internal/docx/oxml/comments.py",
+      "bytes": 4912,
+      "sha256": "83815901abcdddda43fbb18bd1685e5e4fcc6dfb1e6b76b97cf5cd8ce8d8d5ef"
+    },
+    {
+      "path": "_internal/docx/oxml/coreprops.py",
+      "bytes": 10768,
+      "sha256": "1a40d1c68c5f3aeb20368689d44c343442e1518856385ac9b3ad7fbcf537d7d5"
+    },
+    {
+      "path": "_internal/docx/oxml/document.py",
+      "bytes": 3593,
+      "sha256": "0eb8ba65adfff45d78b958283fe12cd953a2b22c4faea05ebba411fc0a9eae20"
+    },
+    {
+      "path": "_internal/docx/oxml/drawing.py",
+      "bytes": 397,
+      "sha256": "264aa22aad879a1742f2a597fe96af108b239816f666b064a151a7484b2d4a28"
+    },
+    {
+      "path": "_internal/docx/oxml/exceptions.py",
+      "bytes": 261,
+      "sha256": "bf851212d79ea5ce4495d5a40368e16f9d37acb4c32c2afc65d47521b20a31d7"
+    },
+    {
+      "path": "_internal/docx/oxml/ns.py",
+      "bytes": 3779,
+      "sha256": "8ec923c35bbd89137911451963e345f06fa4bc6203fd6d8588c0260e07b382b0"
+    },
+    {
+      "path": "_internal/docx/oxml/numbering.py",
+      "bytes": 3965,
+      "sha256": "fcb0e2cfbc5b4c8f945277c16521f9b50efa7f88eeda6d5e1e7c1f089f7e3c2c"
+    },
+    {
+      "path": "_internal/docx/oxml/parser.py",
+      "bytes": 2324,
+      "sha256": "666e771a85a8e8abc8608caaeb8b3c927cbf573528a33bc6aeae96b16513ab15"
+    },
+    {
+      "path": "_internal/docx/oxml/section.py",
+      "bytes": 20395,
+      "sha256": "9f2e9f84ee69e17135e828e65e0b15d9ffcb521c88fddd2f7e7c726339eadc8e"
+    },
+    {
+      "path": "_internal/docx/oxml/settings.py",
+      "bytes": 4264,
+      "sha256": "79ac94fc13c0ebf486bc813ebbb9675aeb8ae5eb1256b062e97e549ea687947b"
+    },
+    {
+      "path": "_internal/docx/oxml/shape.py",
+      "bytes": 8883,
+      "sha256": "be1ab576209db7f4d0c3003a4313e8cc80ffab0754fc0423226ade4e6f46649c"
+    },
+    {
+      "path": "_internal/docx/oxml/shared.py",
+      "bytes": 1857,
+      "sha256": "880a8339ccbe0e73a6e461ac4995cb49e98d7a34aa0a3973841f3a94f12d0d83"
+    },
+    {
+      "path": "_internal/docx/oxml/simpletypes.py",
+      "bytes": 13019,
+      "sha256": "da90f8be01194e1269081e0cf8bf213fbb932178259dd95945d36bbaf0d9c26d"
+    },
+    {
+      "path": "_internal/docx/oxml/styles.py",
+      "bytes": 10643,
+      "sha256": "d54db891c0bd861ccc3f335c835f51542509975fea59ab970892071bf2a9d08a"
+    },
+    {
+      "path": "_internal/docx/oxml/table.py",
+      "bytes": 33610,
+      "sha256": "a92e3a6bf4ecdcaccdca050d794c5a4c854d0c965b6d6349a8cb1ea376556910"
+    },
+    {
+      "path": "_internal/docx/oxml/text/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/oxml/text/font.py",
+      "bytes": 10882,
+      "sha256": "974eff74d110e8e69f78abeab72861592a041d65bab82bc8dad589b5f702c256"
+    },
+    {
+      "path": "_internal/docx/oxml/text/hyperlink.py",
+      "bytes": 1467,
+      "sha256": "b71e9242261a6b5db7f9ad097d44bcd26b4008e630368cb6e13ae06b64a1827f"
+    },
+    {
+      "path": "_internal/docx/oxml/text/pagebreak.py",
+      "bytes": 11192,
+      "sha256": "d622b5d86028c19a454635409a767f329aa7eced0fa8f4ab55cda6c9473828ce"
+    },
+    {
+      "path": "_internal/docx/oxml/text/paragraph.py",
+      "bytes": 3538,
+      "sha256": "a29e02cb82e37122310c3d4240829e45b52c04be4005547c71829bdcaca79664"
+    },
+    {
+      "path": "_internal/docx/oxml/text/parfmt.py",
+      "bytes": 12221,
+      "sha256": "e536027fe41f730944097524acb49815f7b0140d4989e2864ed9b75f4d5fbbae"
+    },
+    {
+      "path": "_internal/docx/oxml/text/run.py",
+      "bytes": 11014,
+      "sha256": "be98349fe24fc012de6a4caeb4f790e301d11a92f63e3a9628cceb8162a26e15"
+    },
+    {
+      "path": "_internal/docx/oxml/xmlchemy.py",
+      "bytes": 25458,
+      "sha256": "af31312da2606df6917f79ed9da4fa67abc45cf43fcf9cefc614bbf5cbe9e471"
+    },
+    {
+      "path": "_internal/docx/package.py",
+      "bytes": 3971,
+      "sha256": "6ed9c824430906603bcf298ee37bdb36a0c3166d59a04881e27376b209fab2e8"
+    },
+    {
+      "path": "_internal/docx/parts/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/parts/comments.py",
+      "bytes": 1760,
+      "sha256": "0e6c61fe2f000d1a3ec0b7cef4b5742f2868e570bfefaa14d4d24df22b70f257"
+    },
+    {
+      "path": "_internal/docx/parts/document.py",
+      "bytes": 6417,
+      "sha256": "0ea6a46e07b9fdd89e1923897c603e3a93cca0b3b63ac4db73deec738dc38a14"
+    },
+    {
+      "path": "_internal/docx/parts/hdrftr.py",
+      "bytes": 1709,
+      "sha256": "fd4d0f0a35642ba116c24c996fda13ba794d6fac79e6b1020f5c450f3c1494f3"
+    },
+    {
+      "path": "_internal/docx/parts/image.py",
+      "bytes": 2739,
+      "sha256": "73e0c5e5816fa75a954f1ed9a27fb1397c34a8f73fdcba1e5fda8c4853ecea6a"
+    },
+    {
+      "path": "_internal/docx/parts/numbering.py",
+      "bytes": 1054,
+      "sha256": "b260ac704e08bbd5a161308d7f975a1c8ada958a0fae4e8abcbd3278588b88b8"
+    },
+    {
+      "path": "_internal/docx/parts/settings.py",
+      "bytes": 1717,
+      "sha256": "96a703cc334b11cf0497198d30ac32eae36039eb1f61cbc10e12b3eee50c9dbe"
+    },
+    {
+      "path": "_internal/docx/parts/story.py",
+      "bytes": 3857,
+      "sha256": "fe1aeaed9fae219b70154acadcf28c98684e72efd882e7a3d7136bfaa6c9b2c2"
+    },
+    {
+      "path": "_internal/docx/parts/styles.py",
+      "bytes": 1391,
+      "sha256": "2f2eda2723e0b704364d1230b94b47cffc75674147f494edb0da219a5d7eca43"
+    },
+    {
+      "path": "_internal/docx/py.typed",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/section.py",
+      "bytes": 18412,
+      "sha256": "af648b3fa1170ad1cf9aff0fb5a4ee6198355b2f25f4ca151e503d2474f74a20"
+    },
+    {
+      "path": "_internal/docx/settings.py",
+      "bytes": 1082,
+      "sha256": "b562543a3dca001824ff76d7a318481d55956391e698a2a5dadb2a89cd9837f7"
+    },
+    {
+      "path": "_internal/docx/shape.py",
+      "bytes": 2969,
+      "sha256": "e5a81ab2b7971ec54839d775cfc77eddeacfbe5b1b0512508c743420b49f79a2"
+    },
+    {
+      "path": "_internal/docx/shared.py",
+      "bytes": 13506,
+      "sha256": "37a60824a8907affb45c80b4343f5f260d5e56dd661bf3042e74dac1ffdefbd8"
+    },
+    {
+      "path": "_internal/docx/styles/__init__.py",
+      "bytes": 1406,
+      "sha256": "68226a847e09846fdc226de2c15246b56a565b4017271dd031a83b30e466add2"
+    },
+    {
+      "path": "_internal/docx/styles/latent.py",
+      "bytes": 7211,
+      "sha256": "10305c81dfb58ca996fb01b3eb81af7064a8a673ae3d01b58a7534a671d1b100"
+    },
+    {
+      "path": "_internal/docx/styles/style.py",
+      "bytes": 8051,
+      "sha256": "0681974114b238398f237f1b00458f8135c43f0857c9561967d9d26314521cf3"
+    },
+    {
+      "path": "_internal/docx/styles/styles.py",
+      "bytes": 5608,
+      "sha256": "8eaebf1f3827dd7885f8da35d24c2abc31d3607a1b5f7f34f77f6c416aa4c062"
+    },
+    {
+      "path": "_internal/docx/table.py",
+      "bytes": 19477,
+      "sha256": "105c5b543dda11b2cea9d7ace5ca46b77c576cfcdb64b146d1297938f1d2ae16"
+    },
+    {
+      "path": "_internal/docx/templates/default-comments.xml",
+      "bytes": 734,
+      "sha256": "b23c2e04f586507f561e3c557876b52eea8e9b7a3e94d899030cd557491a8c8c"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/[Content_Types].xml",
+      "bytes": 1782,
+      "sha256": "888a7cd9d95d0998436a499759f30530350ce1acf84d3c07ef47ed6aba489e9e"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/_rels/.rels",
+      "bytes": 748,
+      "sha256": "f8bc20b7e1d59262abbdc48f9ffa6aca57468688bbd40dc627817732732526b3"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/customXml/_rels/item1.xml.rels",
+      "bytes": 300,
+      "sha256": "32fa6ddf5bdffdeec97e77d0805928f4d2411f23a3335d1ee0449b740ce1d84d"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/customXml/item1.xml",
+      "bytes": 262,
+      "sha256": "a86086ffc5d8e83ebd6c71a55d1d2efaa31b137977f5f3a752366e1023612144"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/customXml/itemProps1.xml",
+      "bytes": 354,
+      "sha256": "c542307b13ec29a8b546217bb37936ab4822e044b265d2952985ec3d6afed24e"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/docProps/app.xml",
+      "bytes": 1132,
+      "sha256": "be664981c3141cddfc59362beb287ebf20d0773660e2dd6faac5968a5930a081"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/docProps/core.xml",
+      "bytes": 753,
+      "sha256": "10bfd20ea5d9c8ab0236a2f4e49f99cdb207aac6711e4780cf7a390b322a1d40"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/docProps/thumbnail.jpeg",
+      "bytes": 8324,
+      "sha256": "96367138dc44ce09bf2c8f0f8e49348a1478d2c5c0af69bbc2bbc38b63cdcead"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/_rels/document.xml.rels",
+      "bytes": 1253,
+      "sha256": "4f2b7b47d8a7d10d44e3bad6d03829ba2e755cc8b29a2d35a49eef79ed7b11d6"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/document.xml",
+      "bytes": 1594,
+      "sha256": "f5154b3c5dae749abb0e381e10ea02e19e137650065c4b1f11b059c6d75340bf"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/fontTable.xml",
+      "bytes": 2811,
+      "sha256": "79385fb7f60247507ecaffc292e9ebd52ea0657b8634f629ba6fccc54011d6bb"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/numbering.xml",
+      "bytes": 6747,
+      "sha256": "ca605d64e9ba232fd8ff401d700669f7b5c4351865b1c16b91fd5a4aac9be249"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/settings.xml",
+      "bytes": 2749,
+      "sha256": "31522d2d3c366aec5714c921ce556b4838ca7faa33fa795a66dc32575c710b27"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/styles.xml",
+      "bytes": 438677,
+      "sha256": "09e350b95e121e7b63841485a6adacf2facd496c189297b2dba634bbb2898a88"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/stylesWithEffects.xml",
+      "bytes": 438131,
+      "sha256": "463ae0928cf0d84775dbf8cf18d6c3029f6707c81bf590f6d6dd8757a5e93f15"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/theme/theme1.xml",
+      "bytes": 10939,
+      "sha256": "e3a8ab7db9ca7afca56f5f2820a56e8b660016c647773555b060b0a02ac76941"
+    },
+    {
+      "path": "_internal/docx/templates/default-docx-template/word/webSettings.xml",
+      "bytes": 438,
+      "sha256": "349d36de7434d09f86987ff671d8814964a0588c1e630c06e562cda7e75e9f95"
+    },
+    {
+      "path": "_internal/docx/templates/default-footer.xml",
+      "bytes": 1395,
+      "sha256": "57d1a47f62777f11d53698581d7d857f1b92747521d7fb40ac7bf56655070315"
+    },
+    {
+      "path": "_internal/docx/templates/default-header.xml",
+      "bytes": 1395,
+      "sha256": "a0c1c9e66afa49dd4f664984404278966afb542c19885380be6252b0e28ae142"
+    },
+    {
+      "path": "_internal/docx/templates/default-settings.xml",
+      "bytes": 1640,
+      "sha256": "79738b945e28e1ea8338b7848b9aa3c13bf99a60e4dd5e4232c7900fbfdb0ae8"
+    },
+    {
+      "path": "_internal/docx/templates/default-styles.xml",
+      "bytes": 15823,
+      "sha256": "5a78ed3992ec0a73f885849a62131f47b256e22c43c5172bdde04f23c411c7de"
+    },
+    {
+      "path": "_internal/docx/templates/default.docx",
+      "bytes": 38116,
+      "sha256": "2094b5bddffe9cf973d61fe03388413804f034160718494a65db7e98da40d35d"
+    },
+    {
+      "path": "_internal/docx/text/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/docx/text/font.py",
+      "bytes": 13605,
+      "sha256": "c431e1e4a05c3c0cc3357b94e812f2f605c268ce43a275e8ef982d9a53d1808a"
+    },
+    {
+      "path": "_internal/docx/text/hyperlink.py",
+      "bytes": 5257,
+      "sha256": "1fb606087f398bb10370f41c6282e1e0c3b1ff0fb1352b9c0396c0808dc7b554"
+    },
+    {
+      "path": "_internal/docx/text/pagebreak.py",
+      "bytes": 4950,
+      "sha256": "b08d72315a2d901b67d6ee4327d2f4e05902d3542803073255276018f0242486"
+    },
+    {
+      "path": "_internal/docx/text/paragraph.py",
+      "bytes": 6828,
+      "sha256": "37717adbf25141961aba6ba86895ca0839d14b0d832223b0cf230f57625dec62"
+    },
+    {
+      "path": "_internal/docx/text/parfmt.py",
+      "bytes": 10339,
+      "sha256": "ef433be47168ef2769aa621d663915ef5d66bb2aec04676be1666c705dd85496"
+    },
+    {
+      "path": "_internal/docx/text/run.py",
+      "bytes": 10282,
+      "sha256": "caeafcc5ee50be34282da55827feac16e29c5740534e43090bb8fb7a15a04efe"
+    },
+    {
+      "path": "_internal/docx/text/tabstops.py",
+      "bytes": 3896,
+      "sha256": "6c937df06596db67f84aa8347506f251c9ee3a7eb97c7b0d66e086b30234dff7"
+    },
+    {
+      "path": "_internal/docx/types.py",
+      "bytes": 848,
+      "sha256": "0609d79514beae83da345d696d05f864ed401ea2088c837ba8cc0071a0e78921"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/AUTHORS.txt",
+      "bytes": 82,
+      "sha256": "7f038029ea5463605dd2278d300099a381bce9e90dda83ccab2042346b6c8107"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/INSTALLER",
+      "bytes": 4,
+      "sha256": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/LICENCE.python",
+      "bytes": 14688,
+      "sha256": "4ccdaaebc0f44b83720ec0399bb7ab329adce067dd62f73c5535a2dc05628ab2"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/LICENCE.rst",
+      "bytes": 1131,
+      "sha256": "0c84bb42f5d367e5ebf9fc2dde35b16141df5ee0fdc189250858bc6c5560f69e"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/METADATA",
+      "bytes": 2711,
+      "sha256": "0e97d7ea909ed0fbe03d88bc8b6f58677cee1b07bd3353ce361cd2405915204e"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/RECORD",
+      "bytes": 1102,
+      "sha256": "f5d4caac240da585f132d2b01af2ba967ecca65376790111698b67c2ef555100"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/top_level.txt",
+      "bytes": 11,
+      "sha256": "df8fbbe1de4d3404604ec3f108cb5ae68dbc5e904d992374882661b66c76164f"
+    },
+    {
+      "path": "_internal/et_xmlfile-2.0.0.dist-info/WHEEL",
+      "bytes": 91,
+      "sha256": "1e20998f3bb2e83c3485d5f94772c214f0e6152e015a5f07fbc5b7f577e6817e"
     },
     {
       "path": "_internal/filelock-3.32.3.dist-info/INSTALLER",
@@ -1950,8 +2405,8 @@
     },
     {
       "path": "_internal/filelock-3.32.3.dist-info/RECORD",
-      "bytes": 4579,
-      "sha256": "ec0045f8d34a1eb936f5006c7aac58facbec2f05f6093b59029c009b4f0135fc"
+      "bytes": 2143,
+      "sha256": "c7d4d46836462faaff33de7e25df96710d7a9022a12ef1bd61ce9eae06ece1ad"
     },
     {
       "path": "_internal/filelock-3.32.3.dist-info/WHEEL",
@@ -1970,8 +2425,8 @@
     },
     {
       "path": "_internal/flatbuffers-25.12.19.dist-info/RECORD",
-      "bytes": 2402,
-      "sha256": "9d055be2b292040b2d46195b64eba8279c0f73f3311ddb46b36488aaa056a048"
+      "bytes": 1229,
+      "sha256": "c689983a12cf4926cfc6c3640eaf7e6f3747e95150ae0ce197578504e6e6d8cf"
     },
     {
       "path": "_internal/flatbuffers-25.12.19.dist-info/top_level.txt",
@@ -2005,8 +2460,8 @@
     },
     {
       "path": "_internal/frozenlist-1.8.0.dist-info/RECORD",
-      "bytes": 1046,
-      "sha256": "3d1ed8b6d5cbd51f2603a09306f37e5459b760cd0020cd646bad8cd05a3d80a1"
+      "bytes": 929,
+      "sha256": "ed8a97fc3d4807eef4a44729ea9feea22b093d14dedb38122bbe4163eab0d2b8"
     },
     {
       "path": "_internal/frozenlist-1.8.0.dist-info/top_level.txt",
@@ -2035,8 +2490,8 @@
     },
     {
       "path": "_internal/fsspec-2026.7.0.dist-info/RECORD",
-      "bytes": 12091,
-      "sha256": "646a15f124e5653a9c42dd54e8f95175eeafcfbbb6980eab501b1861f54ff888"
+      "bytes": 5203,
+      "sha256": "5b680485008f584bd4c7665bd8feabd3887a64559f9baafaa170a6c771fde773"
     },
     {
       "path": "_internal/fsspec-2026.7.0.dist-info/WHEEL",
@@ -2065,8 +2520,8 @@
     },
     {
       "path": "_internal/future-1.0.0.dist-info/RECORD",
-      "bytes": 44569,
-      "sha256": "f93026fa9ef6fde7e1506bae0443405c3c9dcb84b9ff8d96f58f2d6d781681d2"
+      "bytes": 19456,
+      "sha256": "6ee81917271437870fdc2ebd50c77b167c90a6a8d5534f80df2da57fb00a067c"
     },
     {
       "path": "_internal/future-1.0.0.dist-info/top_level.txt",
@@ -2100,8 +2555,8 @@
     },
     {
       "path": "_internal/h11-0.16.0.dist-info/RECORD",
-      "bytes": 2556,
-      "sha256": "43051c9d991fd48b17a5f68fd3937661234986c39462520a42203ea62a421673"
+      "bytes": 1346,
+      "sha256": "a7b163107b40ae57d77b221b3027d4036f156fb4d26d617edd34b6558f793c0c"
     },
     {
       "path": "_internal/h11-0.16.0.dist-info/top_level.txt",
@@ -2135,8 +2590,8 @@
     },
     {
       "path": "_internal/hf_xet-1.7.0.dist-info/RECORD",
-      "bytes": 767,
-      "sha256": "e0935142966fa767a9b1420b3016b3a99d99feef706e4ef428d5dd1af366da42"
+      "bytes": 654,
+      "sha256": "75d520a28b928d47f8f58ce6edf96a037a867f57caf245188ee61d0edce2ac4c"
     },
     {
       "path": "_internal/hf_xet-1.7.0.dist-info/sboms/hf_xet.cyclonedx.json",
@@ -2165,8 +2620,8 @@
     },
     {
       "path": "_internal/httpcore-1.0.9.dist-info/RECORD",
-      "bytes": 6808,
-      "sha256": "f21976a7a95bf422d8e8699f2fd8cfad8f6840dbb51463e04b9d06c48acee015"
+      "bytes": 3072,
+      "sha256": "1638ef146df750aed0a8770490f882ef11acae7c24027f022aad247975f07f87"
     },
     {
       "path": "_internal/httpcore-1.0.9.dist-info/WHEEL",
@@ -2190,8 +2645,8 @@
     },
     {
       "path": "_internal/httpcore2-2.13.1.dist-info/RECORD",
-      "bytes": 6881,
-      "sha256": "7b9fc015fe2c59a62a2ca66e85cedb2eab08352eb71bb1a4c91d92fd54335d94"
+      "bytes": 3114,
+      "sha256": "bb9fda407ec5ff081f9295f3f8ccbe72bebf9134489d9a4edc23bf79d928c258"
     },
     {
       "path": "_internal/httpcore2-2.13.1.dist-info/WHEEL",
@@ -2220,8 +2675,8 @@
     },
     {
       "path": "_internal/httpx-0.28.1.dist-info/RECORD",
-      "bytes": 5048,
-      "sha256": "314d5a604bcabaffef18bc1fefb1e447ca0603e146cdeb41a5f1e1024ca11a98"
+      "bytes": 2339,
+      "sha256": "fbcdbd8c6689b34097044ec69a31b471763c95b4388a9d225dbf81adece4749d"
     },
     {
       "path": "_internal/httpx-0.28.1.dist-info/WHEEL",
@@ -2250,8 +2705,8 @@
     },
     {
       "path": "_internal/httpx2-2.13.1.dist-info/RECORD",
-      "bytes": 6522,
-      "sha256": "b9c85186d8ec8f9cd1fc6d1482705c7ab3e9e0885c011e4ea8d659542d51e6ab"
+      "bytes": 2951,
+      "sha256": "dae5811d0dae3e298cf151ed55e71d467cca7f0f1d15812276ad81866d4e02f7"
     },
     {
       "path": "_internal/httpx2-2.13.1.dist-info/WHEEL",
@@ -2280,8 +2735,8 @@
     },
     {
       "path": "_internal/huggingface_hub-2.2.0.dist-info/RECORD",
-      "bytes": 43843,
-      "sha256": "711022d6e66a8d2c76a8e6dd987b8fed4916ce63299183444a4bb74cff4147ee"
+      "bytes": 19030,
+      "sha256": "b22648f3c5206de587714cb5453e5247009f1689eb4d69ce507a72ea7726375b"
     },
     {
       "path": "_internal/huggingface_hub-2.2.0.dist-info/REQUESTED",
@@ -2320,8 +2775,8 @@
     },
     {
       "path": "_internal/idna-3.20.dist-info/RECORD",
-      "bytes": 2453,
-      "sha256": "68cb09fc6015ef62737535f0259b264eb8beb5a23dbe4df04436cc60e7151a58"
+      "bytes": 1269,
+      "sha256": "2be7ecda3f34be2299a512cc8f698b4ff30c899bea12e59fbfb21fce11924ca1"
     },
     {
       "path": "_internal/idna-3.20.dist-info/WHEEL",
@@ -2345,8 +2800,8 @@
     },
     {
       "path": "_internal/imagesize-2.0.1.dist-info/RECORD",
-      "bytes": 896,
-      "sha256": "372a7308f1fbae89a81a93815c1df7520336ccb566ac34c52c5d2de5f388bdb8"
+      "bytes": 663,
+      "sha256": "d08bf339ceaa34d559f369569d4746a286f4fea954b52f11503458da0d1e98f5"
     },
     {
       "path": "_internal/imagesize-2.0.1.dist-info/top_level.txt",
@@ -2525,8 +2980,8 @@
     },
     {
       "path": "_internal/jieba-0.42.1.dist-info/RECORD",
-      "bytes": 8013,
-      "sha256": "c383b5270fef0f22222223516dc00cb54119f170ac9fc1ea4ed193eb574f2b4f"
+      "bytes": 5261,
+      "sha256": "3dadff3fd2df951dfee9d4e4dc0a132e30735cee1110ce8fa879afab5d491b12"
     },
     {
       "path": "_internal/jieba-0.42.1.dist-info/REQUESTED",
@@ -2565,8 +3020,8 @@
     },
     {
       "path": "_internal/jinja2-3.1.6.dist-info/RECORD",
-      "bytes": 5269,
-      "sha256": "ba35c726474eb6ce58f60740463500b7856c64b8812def71f54a03a385833d2e"
+      "bytes": 2458,
+      "sha256": "3ee8ec0f0396a3e759194be07497be31264d3ec2fb6c0e0f5d0b93f584d2c4c5"
     },
     {
       "path": "_internal/jinja2-3.1.6.dist-info/WHEEL",
@@ -2590,8 +3045,8 @@
     },
     {
       "path": "_internal/joblib-1.6.0.dist-info/RECORD",
-      "bytes": 23223,
-      "sha256": "8e6199ca90b23846351dc4976a6adcc25419844e324c37a51da23e5f54aca0f0"
+      "bytes": 14274,
+      "sha256": "5d38bfe677c1889bab5cc5849469ac35a69601dbd7fbe4b78337f550a16dac6d"
     },
     {
       "path": "_internal/joblib-1.6.0.dist-info/top_level.txt",
@@ -2625,8 +3080,8 @@
     },
     {
       "path": "_internal/jsonschema-4.26.0.dist-info/RECORD",
-      "bytes": 8865,
-      "sha256": "fb47625a04cb5a2c7c9b94917c6b470a44322d02b032c6588213bb0bd772713e"
+      "bytes": 4054,
+      "sha256": "e51cb9ac4ac5b8f6014fcadbb83d9135dd5526fd1dbbfb8ad2fc57c6669e381f"
     },
     {
       "path": "_internal/jsonschema-4.26.0.dist-info/REQUESTED",
@@ -2655,8 +3110,8 @@
     },
     {
       "path": "_internal/jsonschema_specifications-2025.9.1.dist-info/RECORD",
-      "bytes": 3920,
-      "sha256": "fb45f5772f47eb4b99183a0631d26d935cea9f43265c92f8d1d3133f4619ee97"
+      "bytes": 3361,
+      "sha256": "93478e10125a131dd733b37e655f568fa7b9ac406794e9b8608f31a57c2e5440"
     },
     {
       "path": "_internal/jsonschema_specifications-2025.9.1.dist-info/WHEEL",
@@ -2680,8 +3135,8 @@
     },
     {
       "path": "_internal/lazy_loader-0.6.dist-info/RECORD",
-      "bytes": 703,
-      "sha256": "fbd89194ce905d986f8c2be9b089dff940f79c45f2574eea42e4e95c9d5c58b6"
+      "bytes": 585,
+      "sha256": "26cdca866c0602640cf0065c845b3dd540e544acde2bb5cf8ba6ee0053dc46f8"
     },
     {
       "path": "_internal/lazy_loader-0.6.dist-info/top_level.txt",
@@ -2760,8 +3215,8 @@
     },
     {
       "path": "_internal/librosa-1.0.0.dist-info/RECORD",
-      "bytes": 8191,
-      "sha256": "21589283880890d43883bede4197b3014636b2060cd66ad5a024cc4fbb5f6704"
+      "bytes": 4085,
+      "sha256": "13005ad8e69c77466715f6ea9d4c16396765637da0ad2294208f19faa2241a1c"
     },
     {
       "path": "_internal/librosa-1.0.0.dist-info/REQUESTED",
@@ -2815,8 +3270,8 @@
     },
     {
       "path": "_internal/llvmlite-0.50.0.dist-info/RECORD",
-      "bytes": 8703,
-      "sha256": "88a524c11d45aa025605494c94908893eaf1bb64d03e268befafa5d78bd22865"
+      "bytes": 4109,
+      "sha256": "9473bcbf525245a127b07a59414d3cb8d4a5640d454d13d942dd9de065c3f6f3"
     },
     {
       "path": "_internal/llvmlite-0.50.0.dist-info/top_level.txt",
@@ -2832,6 +3287,121 @@
       "path": "_internal/llvmlite.libs/msvcp140-8f141b4454fa78db34bc1f28c571b4da.dll",
       "bytes": 557648,
       "sha256": "8f141b4454fa78db34bc1f28c571b4da0e00cd2c43f7ad0e282f313036826aae"
+    },
+    {
+      "path": "_internal/lxml/_elementpath.cp312-win_amd64.pyd",
+      "bytes": 147456,
+      "sha256": "02d38ab4cc4ac2ed7398828990dd7a0a9f70b0b9e06ad6aabdc485181beb9b5a"
+    },
+    {
+      "path": "_internal/lxml/builder.cp312-win_amd64.pyd",
+      "bytes": 88064,
+      "sha256": "d5b94837735c1c2876ac31ee21db2aed6dcdb8fb6908869c8ce2e03b92276ecc"
+    },
+    {
+      "path": "_internal/lxml/etree.cp312-win_amd64.pyd",
+      "bytes": 4035584,
+      "sha256": "b42ee5cb764ab38afb290d5aa62fa4c81ee0bdbe09b1bf06d906b02d9a56e170"
+    },
+    {
+      "path": "_internal/lxml/html/_difflib.cp312-win_amd64.pyd",
+      "bytes": 365056,
+      "sha256": "e97ae331afc8c9725469656b7438704cdeab0b70e3471a6e96d52c120f156e6d"
+    },
+    {
+      "path": "_internal/lxml/html/diff.cp312-win_amd64.pyd",
+      "bytes": 230912,
+      "sha256": "7e949b2749bcb20a3c8f53d8fd3b2d0466b92b74965dc75a94d3f69058ef6331"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/rng/iso-schematron.rng",
+      "bytes": 19046,
+      "sha256": "702338aa97ee4d8015b6e923c65a1b3cc949f2767e6aeec380e352da0e2b60ee"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_abstract_expand.xsl",
+      "bytes": 12015,
+      "sha256": "492519900916845606fd8347bd6f5453a5fcb6630e1f5bdda519b3aaed25e103"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_dsdl_include.xsl",
+      "bytes": 41116,
+      "sha256": "659f9def6af14250027ebb381266836316916f177480f6be0cf2d195557a4118"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_schematron_message.xsl",
+      "bytes": 2069,
+      "sha256": "3506a5e33dc4b99ff9415a0c15b26a99ad922a0e3e8739bf0dbdbcdfed25d245"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_schematron_skeleton_for_xslt1.xsl",
+      "bytes": 73560,
+      "sha256": "568d45e7bea875191d2c19ae1045ab2dae4b17748c4d7f41e841069f151bbfff"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/iso-schematron-xslt1/iso_svrl_for_xslt1.xsl",
+      "bytes": 20970,
+      "sha256": "508ef11f1d2578d5d2f41694e9cc90e021de7e5b9f2a6004fb38ceae286e1fe1"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/iso-schematron-xslt1/readme.txt",
+      "bytes": 3310,
+      "sha256": "3862e216cc2e2c9116e443d828e7a86aeb8224512d55aea3cb3044d4e70923df"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/RNG2Schtrn.xsl",
+      "bytes": 3247,
+      "sha256": "832f84eb1476a77e522bdc1715386b68f24423d35da084cd1dde319aacbba316"
+    },
+    {
+      "path": "_internal/lxml/isoschematron/resources/xsl/XSD2Schtrn.xsl",
+      "bytes": 4563,
+      "sha256": "430791ac820cfb315c820f7c19703609a59f21b8151345ca11e6127efbfaec0d"
+    },
+    {
+      "path": "_internal/lxml/objectify.cp312-win_amd64.pyd",
+      "bytes": 1744896,
+      "sha256": "5b982fc392ca4873adf97eb6c22df0b76402be9bae680e441ce99ea9723ff790"
+    },
+    {
+      "path": "_internal/lxml/sax.cp312-win_amd64.pyd",
+      "bytes": 120320,
+      "sha256": "370ae45beb6468ac769299ec6fa7130d74f66d3bfbe5e0a082328b85bc04be69"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/INSTALLER",
+      "bytes": 4,
+      "sha256": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/licenses/LICENSE.txt",
+      "bytes": 1538,
+      "sha256": "e7c3ce8d76331b0101cc46790ab43958ea90a364bcf962ed8763d5a818340e69"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/licenses/LICENSES.txt",
+      "bytes": 6348,
+      "sha256": "df682c668de65321677b5e4861dca4128a8bad8067f230956e9da3f985b3d398"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/METADATA",
+      "bytes": 3368,
+      "sha256": "4038f4e4decac1c15eb5fd883abf1370f2df9b176b53bd172dd709d4542e2a48"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/RECORD",
+      "bytes": 17002,
+      "sha256": "0a57067788984fcb25224fc66f829c9d05a7b4758dc27c48355bf70b18451b2c"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/top_level.txt",
+      "bytes": 5,
+      "sha256": "3630fdf3cc2a68aab9d769ec84d74bb7eb83c6c8e4a78061e759ba37e76152b9"
+    },
+    {
+      "path": "_internal/lxml-6.1.3.dist-info/WHEEL",
+      "bytes": 101,
+      "sha256": "547199cfb31450578b25778938b82f94e190e69e750e6c850e3b6d657fa1a30f"
     },
     {
       "path": "_internal/markdown_it_py-4.2.0.dist-info/entry_points.txt",
@@ -2860,8 +3430,8 @@
     },
     {
       "path": "_internal/markdown_it_py-4.2.0.dist-info/RECORD",
-      "bytes": 15211,
-      "sha256": "87e973ffc81e7bdf2a61e0a7d4a10d406a2a1a81aff94d6ee5e384a47ed9e227"
+      "bytes": 6734,
+      "sha256": "b0f6b33ef5f293fdab54361860e223620c42bb8707bb4edbe0c2c02b081a5bdb"
     },
     {
       "path": "_internal/markdown_it_py-4.2.0.dist-info/WHEEL",
@@ -2890,8 +3460,8 @@
     },
     {
       "path": "_internal/markupsafe-3.0.3.dist-info/RECORD",
-      "bytes": 1236,
-      "sha256": "99fa7fc59241dd4ec8257657dedc2b0138d7b1aafb6c9836b4aee500c1ed72b3"
+      "bytes": 1003,
+      "sha256": "e88d15b3bb00e53125d459e72f282ef1dca4a150d0111916bdc33b657fb6fbe8"
     },
     {
       "path": "_internal/markupsafe-3.0.3.dist-info/top_level.txt",
@@ -2920,8 +3490,8 @@
     },
     {
       "path": "_internal/mdurl-0.1.2.dist-info/RECORD",
-      "bytes": 1548,
-      "sha256": "b3eed814e7b0f979b03a359e056ebc3cf228fac2576e768d930c51824a5269b9"
+      "bytes": 885,
+      "sha256": "fac1fa1c52a6e12543ba43a09f87185478740deb020f8262126123dd84233b56"
     },
     {
       "path": "_internal/mdurl-0.1.2.dist-info/WHEEL",
@@ -2960,8 +3530,8 @@
     },
     {
       "path": "_internal/ml_dtypes-0.6.0.dist-info/RECORD",
-      "bytes": 1483,
-      "sha256": "c99bee648124de03c302c2e588594ef583415b71b74f35d74352e1f952bd5c50"
+      "bytes": 1139,
+      "sha256": "97cff7d42964e1f7c6ac50e6e27529238fdb66bc1e86834bc8d177de5a1536f9"
     },
     {
       "path": "_internal/ml_dtypes-0.6.0.dist-info/WHEEL",
@@ -2990,8 +3560,8 @@
     },
     {
       "path": "_internal/modelscope-1.40.2.dist-info/RECORD",
-      "bytes": 775150,
-      "sha256": "6e0ee632afb33b4b237f5b4d19d3d3223e35e24eda0d3c2ffb1b0f9cf0c49d67"
+      "bytes": 336780,
+      "sha256": "80fdfa9fb5e0c01e0c5ca3d861ebf67f0f26b674f4d3f6090f37ce84e09a059e"
     },
     {
       "path": "_internal/modelscope-1.40.2.dist-info/top_level.txt",
@@ -3025,8 +3595,8 @@
     },
     {
       "path": "_internal/modelscope_hub-0.4.6.dist-info/RECORD",
-      "bytes": 10544,
-      "sha256": "b1866d8b3d6d8a933e01bba9d24169ec05c0b65bcd26733514c049f5f788e1ce"
+      "bytes": 4632,
+      "sha256": "447109d7d738867fbd406202dca5e51e743a4edbe6aa96f022f3a4570a661547"
     },
     {
       "path": "_internal/modelscope_hub-0.4.6.dist-info/top_level.txt",
@@ -3055,8 +3625,8 @@
     },
     {
       "path": "_internal/mpmath-1.3.0.dist-info/RECORD",
-      "bytes": 18428,
-      "sha256": "84871e2bd03707e8bb7665df582d13813f58226e33fe8b402b8537deb3330d2b"
+      "bytes": 7856,
+      "sha256": "41dc964f04d132f5703eea4032d34748ea7eace518b4771fcb7251264bc982a8"
     },
     {
       "path": "_internal/mpmath-1.3.0.dist-info/top_level.txt",
@@ -3090,8 +3660,8 @@
     },
     {
       "path": "_internal/msgpack-1.2.3.dist-info/RECORD",
-      "bytes": 1343,
-      "sha256": "7de4839734cc262d1073dd6ae3f4d4a32144de0ab04d2bb6f222231be9aedaae"
+      "bytes": 890,
+      "sha256": "969662328a0c7fe33f9682af5d448a022014384ddeca347018969293d59e0992"
     },
     {
       "path": "_internal/msgpack-1.2.3.dist-info/top_level.txt",
@@ -3110,13 +3680,13 @@
     },
     {
       "path": "_internal/msvcp140.dll",
-      "bytes": 643512,
-      "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca"
+      "bytes": 553552,
+      "sha256": "def46aa6a8f72f27bafac0c43334419486a4d1dcdb6c479a8ef7034b3e1fa4cb"
     },
     {
       "path": "_internal/MSVCP140_ATOMIC_WAIT.dll",
-      "bytes": 57792,
-      "sha256": "3d0cbfaa1bf3eecf5a3f4491d2960ee803cb994f30292c6adc4a07c498f60e2b"
+      "bytes": 48800,
+      "sha256": "e7963645e0d1db08e300614d4c5fa7194bd8173e9ab7a5558859e6b232ed3241"
     },
     {
       "path": "_internal/multidict/_multidict.cp312-win_amd64.pyd",
@@ -3140,8 +3710,8 @@
     },
     {
       "path": "_internal/multidict-7.1.0.dist-info/RECORD",
-      "bytes": 1810,
-      "sha256": "857171f2b24224f6de456087e41fd5dafb7469e56856709d99759c8407491ab2"
+      "bytes": 1346,
+      "sha256": "48aa1757ec4ee254fa170bc60aa20a3da86dcd77cb13223570bd296048de4143"
     },
     {
       "path": "_internal/multidict-7.1.0.dist-info/top_level.txt",
@@ -3170,8 +3740,8 @@
     },
     {
       "path": "_internal/narwhals-2.27.1.dist-info/RECORD",
-      "bytes": 34188,
-      "sha256": "541e85f71fd663c2ca0cb46ae4e0efd73619e60a27ccd9df429adb019418c834"
+      "bytes": 14324,
+      "sha256": "51cf96d2dafcca3a46dab9041d21f40f65442d90f4a51042b5d81e44b1bcdca8"
     },
     {
       "path": "_internal/narwhals-2.27.1.dist-info/WHEEL",
@@ -3200,8 +3770,8 @@
     },
     {
       "path": "_internal/networkx-3.6.1.dist-info/RECORD",
-      "bytes": 140738,
-      "sha256": "e645278fdde15ddc74a9d506e2ac03db20f05acb82762c92cf1f72929ec4d9ed"
+      "bytes": 60825,
+      "sha256": "5fac52843acddcee81c4e0a25c5a18505c341755e714a3e1a0140ef175ccbc24"
     },
     {
       "path": "_internal/networkx-3.6.1.dist-info/top_level.txt",
@@ -3300,8 +3870,8 @@
     },
     {
       "path": "_internal/numba-0.68.0.dist-info/RECORD",
-      "bytes": 166953,
-      "sha256": "779d6cb584c9fcc388ac51a64f67d7b709e2b2351f43ba1815f7c82c228c6d79"
+      "bytes": 73504,
+      "sha256": "27870a1936b31e6b5f35f7474e372cb03152cfd07947ab09e37b44eb5f42404f"
     },
     {
       "path": "_internal/numba-0.68.0.dist-info/top_level.txt",
@@ -3405,8 +3975,8 @@
     },
     {
       "path": "_internal/numpy-2.3.5.dist-info/RECORD",
-      "bytes": 137479,
-      "sha256": "ada9dcc760e8420add0d213676ee438ed7ad177cff22cf6c957b1bc61ecfab6f"
+      "bytes": 85604,
+      "sha256": "2349247bc439a4a04222367476bd6b5a87452a42746391d0c6471a092a7f34bd"
     },
     {
       "path": "_internal/numpy-2.3.5.dist-info/WHEEL",
@@ -3445,8 +4015,8 @@
     },
     {
       "path": "_internal/opencv_contrib_python-4.10.0.84.dist-info/RECORD",
-      "bytes": 12635,
-      "sha256": "5b34675491c7d75ede5b28a06b46e81bf1d17f1b6d44ab93eb2bdd4b8238036c"
+      "bytes": 11150,
+      "sha256": "d8f997f54a0b13950a1be808adf3361b6d5637bd0c70fcebba06677236025987"
     },
     {
       "path": "_internal/opencv_contrib_python-4.10.0.84.dist-info/REQUESTED",
@@ -3462,6 +4032,41 @@
       "path": "_internal/opencv_contrib_python-4.10.0.84.dist-info/WHEEL",
       "bytes": 94,
       "sha256": "3dec1d9ec2f633d6eebaa9159e1a91e51d19a67dc62246ec2a43626a64f9a8c1"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/INSTALLER",
+      "bytes": 4,
+      "sha256": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/LICENCE.rst",
+      "bytes": 1131,
+      "sha256": "0c84bb42f5d367e5ebf9fc2dde35b16141df5ee0fdc189250858bc6c5560f69e"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/METADATA",
+      "bytes": 2510,
+      "sha256": "23f80ca9830dd89435da1710f26deda8f81e5409287e74540210c72627a4ad96"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/RECORD",
+      "bytes": 27747,
+      "sha256": "1c090d66dae3db301874398d4145fd12aa4b22eb7a4057d82ff73c242acf5cb9"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/REQUESTED",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/top_level.txt",
+      "bytes": 9,
+      "sha256": "98a24ee50140b14103b49fdcf7b17e21b995b476040f29aa0fb7795f450b915b"
+    },
+    {
+      "path": "_internal/openpyxl-3.1.5.dist-info/WHEEL",
+      "bytes": 110,
+      "sha256": "0d96a30f8a702d6b9eef40807dced86b14f5c0b51c88d06f37f4d372f5e996d1"
     },
     {
       "path": "_internal/opt_einsum-3.3.0.dist-info/INSTALLER",
@@ -3480,8 +4085,8 @@
     },
     {
       "path": "_internal/opt_einsum-3.3.0.dist-info/RECORD",
-      "bytes": 5774,
-      "sha256": "bb606d876e8e353131e6ac7ab8cbdd5ef23c265dc2474ebcaba7de524e7b15c7"
+      "bytes": 2718,
+      "sha256": "c7c83ebf7b922c6a3200d6a2df0836208c6f88fb76210453ba6adab2f73e7a16"
     },
     {
       "path": "_internal/opt_einsum-3.3.0.dist-info/top_level.txt",
@@ -3525,8 +4130,8 @@
     },
     {
       "path": "_internal/packaging-26.3.dist-info/RECORD",
-      "bytes": 5033,
-      "sha256": "3734479937fa01263a9115836f64c08a52fe285aa6b890178210d2b1f0aa4148"
+      "bytes": 2457,
+      "sha256": "c72404c2eacd53338f50eee4816eac21f053f0a25ff0bf984bf8d5cc5cca82b5"
     },
     {
       "path": "_internal/packaging-26.3.dist-info/WHEEL",
@@ -21390,8 +21995,8 @@
     },
     {
       "path": "_internal/paddleocr-3.7.0.dist-info/RECORD",
-      "bytes": 16581,
-      "sha256": "e766fa34b6fd345be0f0f7befc6ad746cb4c16004766451c6af9ddac06695f2b"
+      "bytes": 7258,
+      "sha256": "2c69f553911d3d3c872f8097e3be299d26edd6cfea3f96475a93f96dcc6f3050"
     },
     {
       "path": "_internal/paddleocr-3.7.0.dist-info/REQUESTED",
@@ -21430,8 +22035,8 @@
     },
     {
       "path": "_internal/paddlepaddle-3.3.1.dist-info/RECORD",
-      "bytes": 553068,
-      "sha256": "7d8019623fb27811f861598c41854805720aecf64731154032819c150bc1f8b5"
+      "bytes": 390650,
+      "sha256": "895519849ffb7a3a3f32bbb4cb2cb69e8aa132de7ca799d6ada57c503ae8a581"
     },
     {
       "path": "_internal/paddlepaddle-3.3.1.dist-info/REQUESTED",
@@ -28095,8 +28700,8 @@
     },
     {
       "path": "_internal/paddlex-3.7.2.dist-info/RECORD",
-      "bytes": 303372,
-      "sha256": "2533ddf4ebb71400b8681dd5ee90a83c3cbc28afdb1843f11bd43d5e22cb18d7"
+      "bytes": 155098,
+      "sha256": "3ade6eb61e1f80ae91ca5dfbbf8fdffc4533eff00149bdae7f1c2044fefca1dc"
     },
     {
       "path": "_internal/paddlex-3.7.2.dist-info/scm_file_list.json",
@@ -28410,8 +29015,8 @@
     },
     {
       "path": "_internal/pandas-3.0.6.dist-info/RECORD",
-      "bytes": 343114,
-      "sha256": "031811ae1ee0314d27b97664f08535c9fba79de79cde2ed709ecb622a3a29c3a"
+      "bytes": 152428,
+      "sha256": "3feff3472c4685c989273b767b0022b221bf627be756b5f8242914e5be037cbd"
     },
     {
       "path": "_internal/pandas-3.0.6.dist-info/WHEEL",
@@ -28440,8 +29045,8 @@
     },
     {
       "path": "_internal/pefile-2024.8.26.dist-info/RECORD",
-      "bytes": 1618,
-      "sha256": "5e56c7839aa43110f8b1217104229fbc6e83f6482581e2a5dca0ef469d37ecd4"
+      "bytes": 948,
+      "sha256": "554df760cc59ce23c6d4a29e774d757decd4ffa67ce23dc8d5b9ed2cd702707a"
     },
     {
       "path": "_internal/pefile-2024.8.26.dist-info/top_level.txt",
@@ -28505,8 +29110,8 @@
     },
     {
       "path": "_internal/pillow-12.3.0.dist-info/RECORD",
-      "bytes": 20736,
-      "sha256": "c472c9084ddc87f953b798e3b137121ff4434259ffa9265b485a24d476a1e70f"
+      "bytes": 9675,
+      "sha256": "f946579d78365ac9a910ec39f1ce0d687f805a45e97daf4d8a05bdb850ac834c"
     },
     {
       "path": "_internal/pillow-12.3.0.dist-info/REQUESTED",
@@ -28660,8 +29265,8 @@
     },
     {
       "path": "_internal/pip-26.2.1.dist-info/RECORD",
-      "bytes": 95663,
-      "sha256": "e876118b30234eb09a63d6d79e34b53105274ebaf9537412980b1db0f3c6dfc3"
+      "bytes": 43793,
+      "sha256": "d003a4e4685641e74908a51f430105909b97e639ef331169628caf9ad0d63a96"
     },
     {
       "path": "_internal/pip-26.2.1.dist-info/REQUESTED",
@@ -28695,8 +29300,8 @@
     },
     {
       "path": "_internal/platformdirs-4.13.3.dist-info/RECORD",
-      "bytes": 2978,
-      "sha256": "cb3634e4362593a967621a7b59da6b30fe24962dec125ed3d1e7e3b80b0ba592"
+      "bytes": 1570,
+      "sha256": "1631d42b862bf742ae016c52fcc4a3fd371d26fef16277f77c6d51d51a114426"
     },
     {
       "path": "_internal/platformdirs-4.13.3.dist-info/WHEEL",
@@ -28720,8 +29325,8 @@
     },
     {
       "path": "_internal/pluggy-1.7.0.dist-info/RECORD",
-      "bytes": 3002,
-      "sha256": "6a42ed8157647c76a815f26b64bef784f8e437cc771706e50fc052d98831c821"
+      "bytes": 1536,
+      "sha256": "3377aef8a5809114c868d4471d76b34aaf1d1f5ec58a3f19157e88e9dcfefc53"
     },
     {
       "path": "_internal/pluggy-1.7.0.dist-info/top_level.txt",
@@ -28755,8 +29360,8 @@
     },
     {
       "path": "_internal/pooch-1.9.0.dist-info/RECORD",
-      "bytes": 5384,
-      "sha256": "2a8f8aa02f2ad0e65731c7e4b9b4c192536582933f57fd48c1dadf21427824b9"
+      "bytes": 3393,
+      "sha256": "fa99b118f500aec48cc438cfbb4ecd906d7d0b0b7fcb7d8846a0b2e21841edda"
     },
     {
       "path": "_internal/pooch-1.9.0.dist-info/top_level.txt",
@@ -28795,8 +29400,8 @@
     },
     {
       "path": "_internal/propcache-0.5.4.dist-info/RECORD",
-      "bytes": 1630,
-      "sha256": "41593ed15ffab6b0383147c34b8c5c88644a61abafd290082ce98c54617829bd"
+      "bytes": 1168,
+      "sha256": "52b3e6ac4aebeaf1d2e86812eb65c8763a707c519f3237475ad3f0b7fa2f6914"
     },
     {
       "path": "_internal/propcache-0.5.4.dist-info/top_level.txt",
@@ -28825,8 +29430,8 @@
     },
     {
       "path": "_internal/protobuf-7.36.2.dist-info/RECORD",
-      "bytes": 13376,
-      "sha256": "7e4184277c70e78eb03057e5af80385a841a3db27727438f3707dfa019210315"
+      "bytes": 5855,
+      "sha256": "1328cf5104105dff2364a77bebfc57f8b0830e87c4ccc040436a89100510e6b6"
     },
     {
       "path": "_internal/protobuf-7.36.2.dist-info/WHEEL",
@@ -28855,8 +29460,8 @@
     },
     {
       "path": "_internal/psutil-7.2.2.dist-info/RECORD",
-      "bytes": 2535,
-      "sha256": "13e1eb287f69c43f58129affa3e73aa39249efa3916edd4bb156436ed9fe3167"
+      "bytes": 1410,
+      "sha256": "bf6c5f7a931f39948e348247e1abb1f62bd84c9002ad258054eff8ff679d1745"
     },
     {
       "path": "_internal/psutil-7.2.2.dist-info/REQUESTED",
@@ -28895,8 +29500,8 @@
     },
     {
       "path": "_internal/py_cpuinfo-9.0.0.dist-info/RECORD",
-      "bytes": 1247,
-      "sha256": "6d7737f93d226d22e6002379393165e76b72c739c29c52e6990908901197057b"
+      "bytes": 821,
+      "sha256": "f42a285c904bc6f003c485bb09a365936ef3025c30d5405f18a3381854bcad2b"
     },
     {
       "path": "_internal/py_cpuinfo-9.0.0.dist-info/top_level.txt",
@@ -28930,8 +29535,8 @@
     },
     {
       "path": "_internal/pyclipper-1.4.0.dist-info/RECORD",
-      "bytes": 989,
-      "sha256": "60766eaa4fcec053a42a3e9e32c27b8335de4dbb28ffec52787827fcd5931eda"
+      "bytes": 757,
+      "sha256": "7c45aa52327a2d4cedb21899b86c4c7af82f3e7d071503869a09421bcf557e95"
     },
     {
       "path": "_internal/pyclipper-1.4.0.dist-info/top_level.txt",
@@ -28960,8 +29565,8 @@
     },
     {
       "path": "_internal/pycparser-3.11.dist-info/RECORD",
-      "bytes": 1952,
-      "sha256": "383bb7366f359d22a44a3b960b84022abe0d024f8674ac185fb05aa0f58f526b"
+      "bytes": 1135,
+      "sha256": "a41b0dbb37ad1770f722f906489a00ce55f8ec671df46136d73a6f79c3ca4622"
     },
     {
       "path": "_internal/pycparser-3.11.dist-info/top_level.txt",
@@ -28990,8 +29595,8 @@
     },
     {
       "path": "_internal/pycryptodome-4.0.0.dist-info/RECORD",
-      "bytes": 50137,
-      "sha256": "6b713045f340bfbc9f91062f965bc8a752d81dd1dfddb9a8d8de7be5d9165b17"
+      "bytes": 23240,
+      "sha256": "602dffa77d30277f80c43737865d740fc298209f92fd828faf105edac94e7c99"
     },
     {
       "path": "_internal/pycryptodome-4.0.0.dist-info/top_level.txt",
@@ -29020,8 +29625,8 @@
     },
     {
       "path": "_internal/pydantic-2.14.1.dist-info/RECORD",
-      "bytes": 22459,
-      "sha256": "834780f6eed125890f021c760366bc0f02f22ef7cb12dfb76e833cb68e32c549"
+      "bytes": 9622,
+      "sha256": "91b66bccc42214088ef1bab4e62889fea15208db04a6e3242b4b4f98f2dd9b3d"
     },
     {
       "path": "_internal/pydantic-2.14.1.dist-info/REQUESTED",
@@ -29055,8 +29660,8 @@
     },
     {
       "path": "_internal/pydantic_core-2.50.1.dist-info/RECORD",
-      "bytes": 1360,
-      "sha256": "b155bb58f269f12c1b076e9b0e0557cf24181c62e1df1f98f5bae484e2bd0236"
+      "bytes": 1117,
+      "sha256": "cb2b05932d50074dea7b1e59a96de2bc02f25a067fecdddcac1a8debfcf13391"
     },
     {
       "path": "_internal/pydantic_core-2.50.1.dist-info/sboms/pydantic-core.cyclonedx.json",
@@ -29100,8 +29705,8 @@
     },
     {
       "path": "_internal/pygments-2.21.0.dist-info/RECORD",
-      "bytes": 70768,
-      "sha256": "637369147ba025b926e48d1e887ea7f3399a530c339d55d7089ab929a3564af8"
+      "bytes": 29350,
+      "sha256": "e06f62793bcc1f812bf806ba5c2d9e77df8a2c0deaae93610545f907a42cb95a"
     },
     {
       "path": "_internal/pygments-2.21.0.dist-info/WHEEL",
@@ -29125,8 +29730,8 @@
     },
     {
       "path": "_internal/pyparsing-3.3.3.dist-info/RECORD",
-      "bytes": 4024,
-      "sha256": "2d42dcbaee020bc77eba8961966858a489f636b6fd1f55235ea426ed22cb8fa0"
+      "bytes": 1980,
+      "sha256": "22797832e8001ac810fc25f728ffb719ec837a937650b8dce1c6a949248da857"
     },
     {
       "path": "_internal/pyparsing-3.3.3.dist-info/WHEEL",
@@ -29245,8 +29850,8 @@
     },
     {
       "path": "_internal/pypdfium2-5.14.0.dist-info/RECORD",
-      "bytes": 12584,
-      "sha256": "d38ca5add816cd3291b3689dbf1b335cbee8499c17946c478b0d07831cc8c7c3"
+      "bytes": 7049,
+      "sha256": "51455af1a2c82d7d1304283fc999c19c5ca1e84bd69da94b837f2573f2e17420"
     },
     {
       "path": "_internal/pypdfium2-5.14.0.dist-info/REQUESTED",
@@ -29320,8 +29925,8 @@
     },
     {
       "path": "_internal/python_bidi-0.6.11.dist-info/RECORD",
-      "bytes": 1888,
-      "sha256": "e8c1ab6c1ef761c42a59b28a30e1cfdabf42653db56e3139cf499a87ca2de1e9"
+      "bytes": 1362,
+      "sha256": "dcc3127ff59259e7f776db3a73fcbe107056c293e03686bad1bb22629d8160d7"
     },
     {
       "path": "_internal/python_bidi-0.6.11.dist-info/sboms/python-bidi.cyclonedx.json",
@@ -29350,8 +29955,8 @@
     },
     {
       "path": "_internal/python_dateutil-2.9.0.post0.dist-info/RECORD",
-      "bytes": 4313,
-      "sha256": "84fc9fcebbfac4c88cdc0fe2022203ed973135a41aa9b19ffaa6cdf97d5b3f0c"
+      "bytes": 2207,
+      "sha256": "2741b4797aafe04458706f32619a4b3e74b2eb72db59b1f8da8297394a688297"
     },
     {
       "path": "_internal/python_dateutil-2.9.0.post0.dist-info/top_level.txt",
@@ -29367,6 +29972,41 @@
       "path": "_internal/python_dateutil-2.9.0.post0.dist-info/zip-safe",
       "bytes": 1,
       "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/INSTALLER",
+      "bytes": 4,
+      "sha256": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/licenses/LICENSE",
+      "bytes": 1104,
+      "sha256": "7652f271e46d0d533e9dc463f3b5fcbdcacf4d6a9c8d6b554d15efd0f37f6132"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/METADATA",
+      "bytes": 2022,
+      "sha256": "4c4cc819ebe6de4aca44daccfd3f9173e6f46d9ed900ad1c388ff9efb7b6b1d7"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/RECORD",
+      "bytes": 15153,
+      "sha256": "849046fd5c3d0d1667b43abd999c0b319d6d67a0db65d00d6c219643903e972a"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/REQUESTED",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/top_level.txt",
+      "bytes": 5,
+      "sha256": "ce46eb0f7826caa1e90ff5e11deee509baf6339bd3db6f67278505a85e558c8b"
+    },
+    {
+      "path": "_internal/python_docx-1.2.0.dist-info/WHEEL",
+      "bytes": 91,
+      "sha256": "ff309ddcdd65ebd02bc724dbf2bcc4a0ff53a5b61792a44548d383e4ebb19d3b"
     },
     {
       "path": "_internal/pywin32_ctypes-0.2.3.dist-info/INSTALLER",
@@ -29385,8 +30025,8 @@
     },
     {
       "path": "_internal/pywin32_ctypes-0.2.3.dist-info/RECORD",
-      "bytes": 7895,
-      "sha256": "1efda8ee572c1a64b861a97e98ff01d51cf12a6fae6924ca653b136a88b826e0"
+      "bytes": 3571,
+      "sha256": "ef16d86726adf2eb78651dedd13882b46b4c86f3c49c97aaa433f97a7b6e338e"
     },
     {
       "path": "_internal/pywin32_ctypes-0.2.3.dist-info/top_level.txt",
@@ -29415,8 +30055,8 @@
     },
     {
       "path": "_internal/PyYAML-6.0.2.dist-info/RECORD",
-      "bytes": 3872,
-      "sha256": "ef0c62e4efcdad44298c08032d936157bc8169017dcde56582981b0158beb59e"
+      "bytes": 1888,
+      "sha256": "b5b3cae8a30cb0c99ad44c229c7a216dd358181fb946ae76a22737b37910ae49"
     },
     {
       "path": "_internal/PyYAML-6.0.2.dist-info/top_level.txt",
@@ -29460,8 +30100,8 @@
     },
     {
       "path": "_internal/pyzmq-27.2.0.dist-info/RECORD",
-      "bytes": 15708,
-      "sha256": "0558b937751df22d50fa5968b1476b1595d722e13d0f90320fc7682af22bea60"
+      "bytes": 7778,
+      "sha256": "bc85106cac9c2cc85d6d4441f720aad45e9c9c6616c1f607c9f3bb6781a99600"
     },
     {
       "path": "_internal/pyzmq-27.2.0.dist-info/WHEEL",
@@ -29485,8 +30125,8 @@
     },
     {
       "path": "_internal/referencing-0.37.0.dist-info/RECORD",
-      "bytes": 3297,
-      "sha256": "de097bb337ac34a6bd52d3f30c3fe34de08327263da451548a1cd66a5d0e0117"
+      "bytes": 1694,
+      "sha256": "2d48e9da3caca5ec22f31e50a1790902a464846ec6b1f5d1ff67d3d5fd58dcc6"
     },
     {
       "path": "_internal/referencing-0.37.0.dist-info/WHEEL",
@@ -29515,8 +30155,8 @@
     },
     {
       "path": "_internal/regex-2026.9.29.dist-info/RECORD",
-      "bytes": 1365,
-      "sha256": "ccc10b66a6a544196247e9acc53c30e5b2704e1103f2d3a66a4d130a8ab3d4bd"
+      "bytes": 909,
+      "sha256": "52d861653d647d1f61b64d8a4238479977ea00bb84c9410be38fe4a6ea36575f"
     },
     {
       "path": "_internal/regex-2026.9.29.dist-info/top_level.txt",
@@ -29550,8 +30190,8 @@
     },
     {
       "path": "_internal/requests-2.34.2.dist-info/RECORD",
-      "bytes": 4317,
-      "sha256": "ded2d267899dbffaf9f0594fe24b1a69c47f66de8b3a2111ca48071cd4ef5fd3"
+      "bytes": 2143,
+      "sha256": "a51707534f3524ac8664797fb5d8750cce4a04a69a43dde4dbefcd0949329595"
     },
     {
       "path": "_internal/requests-2.34.2.dist-info/top_level.txt",
@@ -29580,8 +30220,8 @@
     },
     {
       "path": "_internal/rich-15.0.0.dist-info/RECORD",
-      "bytes": 19722,
-      "sha256": "87da430e4deee9cfda571e1cc1ae39b8b8d06b13be458aaaaf6f2616c9b504ed"
+      "bytes": 8253,
+      "sha256": "cd4927a956ccca188970d455ef5b8699a018d2a89d672affb53de11b51da18fc"
     },
     {
       "path": "_internal/rich-15.0.0.dist-info/WHEEL",
@@ -29605,8 +30245,8 @@
     },
     {
       "path": "_internal/rpds_py-2026.9.1.dist-info/RECORD",
-      "bytes": 939,
-      "sha256": "c65d0a6a400df7127608d055800203f79ff5ae53de527b2746f552df31adb4c4"
+      "bytes": 828,
+      "sha256": "f357dae656e31b36125d18d4b52c885a4cf919dc448eab1580f766868fa0f427"
     },
     {
       "path": "_internal/rpds_py-2026.9.1.dist-info/sboms/rpds-py.cyclonedx.json",
@@ -29635,8 +30275,8 @@
     },
     {
       "path": "_internal/ruamel_yaml-0.19.1.dist-info/RECORD",
-      "bytes": 7155,
-      "sha256": "90ae2e4934250bd217d05d51dab241eb39814b8a44d58e6f8a544e6c543873fa"
+      "bytes": 3265,
+      "sha256": "bc61b2c84a71da07157c3fa7eebdcbbb93e90f5cf59d1be23050c424b71480b0"
     },
     {
       "path": "_internal/ruamel_yaml-0.19.1.dist-info/top_level.txt",
@@ -29670,8 +30310,8 @@
     },
     {
       "path": "_internal/safetensors-0.8.0.dist-info/RECORD",
-      "bytes": 2155,
-      "sha256": "8964920d95e38e2a94172826529ac4d43d00c2da10bbc589d4e8fb9359c76e5b"
+      "bytes": 1344,
+      "sha256": "bce576fc9fee743d0840221a2c32c9183ff9c1a4682dce0c9b78d1c5a34c3bc7"
     },
     {
       "path": "_internal/safetensors-0.8.0.dist-info/sboms/safetensors-python.cyclonedx.json",
@@ -29700,8 +30340,8 @@
     },
     {
       "path": "_internal/scikit_learn-1.9.1.dist-info/RECORD",
-      "bytes": 198724,
-      "sha256": "0d7e69be74fea1c49e164178b6be342f9fb11b285d68a9e96261bb91562180a9"
+      "bytes": 108786,
+      "sha256": "e3370739f2804d6d9750c8398451dcbab1c8af37723e2ec9014ef0c09b888937"
     },
     {
       "path": "_internal/scikit_learn-1.9.1.dist-info/WHEEL",
@@ -30205,8 +30845,8 @@
     },
     {
       "path": "_internal/scipy-1.18.1.dist-info/RECORD",
-      "bytes": 276239,
-      "sha256": "4e7cc71a8c069b6b929276cde6274c0e3e1ffbed1a3cb0f5d10ee45a92188e04"
+      "bytes": 148689,
+      "sha256": "85e3a2af24acdb1497946bc9f3183122c423f78cbd68cf152ee90f41e1ef06d7"
     },
     {
       "path": "_internal/scipy-1.18.1.dist-info/REQUESTED",
@@ -30290,8 +30930,8 @@
     },
     {
       "path": "_internal/setuptools-78.1.0.dist-info/RECORD",
-      "bytes": 99208,
-      "sha256": "ca49a0001d7d64931e693a38f8b8f0348f87eb2bbd0fd2c3180fb3c9ab2df9c4"
+      "bytes": 51584,
+      "sha256": "9da89bc2e3fa556801684fbe78d15d5c70f86f4a106442d6568462c1a50f40f0"
     },
     {
       "path": "_internal/setuptools-78.1.0.dist-info/top_level.txt",
@@ -30350,8 +30990,8 @@
     },
     {
       "path": "_internal/shapely-2.2.0.dist-info/RECORD",
-      "bytes": 30241,
-      "sha256": "4afaed47a52d3d7368c488bf8357f4c399006e9d3949d51fd28567a9c4e884f7"
+      "bytes": 14295,
+      "sha256": "7c3721fb9413c04370eacbf075cc8aa2786c61af63497b0f9181c6f1ddcfbd3c"
     },
     {
       "path": "_internal/shapely-2.2.0.dist-info/WHEEL",
@@ -30390,8 +31030,8 @@
     },
     {
       "path": "_internal/shellingham-1.5.4.dist-info/RECORD",
-      "bytes": 1987,
-      "sha256": "ddb20a20c75309d7b7b84a1558123bf1c52d1bcf4ae46ace51af3f34d5368623"
+      "bytes": 1159,
+      "sha256": "95688ac069256b0f891e61f4462136f06498aa191639fce0b3798a59e18c61ee"
     },
     {
       "path": "_internal/shellingham-1.5.4.dist-info/top_level.txt",
@@ -30425,8 +31065,8 @@
     },
     {
       "path": "_internal/six-1.17.0.dist-info/RECORD",
-      "bytes": 627,
-      "sha256": "e54963bfe3928e3d61c7b15e4d5c4205a49ea1983df578e916c57f3859f4d888"
+      "bytes": 526,
+      "sha256": "dff90eff60f019e02174f76614a8248fac9ccd5f8462bb5dd231e9038a3261d5"
     },
     {
       "path": "_internal/six-1.17.0.dist-info/top_level.txt",
@@ -31655,8 +32295,8 @@
     },
     {
       "path": "_internal/soundfile-0.14.0.dist-info/RECORD",
-      "bytes": 1414,
-      "sha256": "f79b7858e0beef6e7cea209936ab871e7336693327696181747625614738e5cc"
+      "bytes": 1077,
+      "sha256": "b35c3c44a1d35b584cd524003f5c6e635f0df3328e6304508263a08d93e5c224"
     },
     {
       "path": "_internal/soundfile-0.14.0.dist-info/REQUESTED",
@@ -31710,8 +32350,8 @@
     },
     {
       "path": "_internal/soxr-1.1.0.dist-info/RECORD",
-      "bytes": 1218,
-      "sha256": "d7879f054a3fe81fe7c90bcf961b985991d703e3812e92e1f1caa82cf2fd254e"
+      "bytes": 996,
+      "sha256": "3c165934f7e63cc06fd30b69d17581a9e9035fc5e0cdd88c39dbe8b2f230f0df"
     },
     {
       "path": "_internal/soxr-1.1.0.dist-info/WHEEL",
@@ -31750,8 +32390,8 @@
     },
     {
       "path": "_internal/sympy-1.14.0.dist-info/RECORD",
-      "bytes": 346769,
-      "sha256": "750cef5127f90b1c55d1da897131a14610be4d2854c30863a9faae4432096e45"
+      "bytes": 146932,
+      "sha256": "fce3249a7c47fb544a9f1cfbf4b33abde840cc30eb6231636fec1dbd56c0a48f"
     },
     {
       "path": "_internal/sympy-1.14.0.dist-info/top_level.txt",
@@ -31780,8 +32420,8 @@
     },
     {
       "path": "_internal/threadpoolctl-3.7.0.dist-info/RECORD",
-      "bytes": 612,
-      "sha256": "e02a4adc6e5673491d0c795b54631b3af9aa8301065b07aa4ded6fd1386aefe8"
+      "bytes": 501,
+      "sha256": "98cc03f7629e982dc7ea530292394f631bfc3dcf2377d4b1a8ce6c73b02063bb"
     },
     {
       "path": "_internal/threadpoolctl-3.7.0.dist-info/WHEEL",
@@ -31805,8 +32445,8 @@
     },
     {
       "path": "_internal/tokenizers-0.23.3.dist-info/RECORD",
-      "bytes": 5030,
-      "sha256": "ea3d5798f97391cf171b76dc4c3ecb3b65d0a6555feb9f0e1300ab692177ced5"
+      "bytes": 2923,
+      "sha256": "1b3a4e08e1a71914128f5a072cc04bfd09405316d8c871c49f7bdb92906191cb"
     },
     {
       "path": "_internal/tokenizers-0.23.3.dist-info/sboms/tokenizers-python.cyclonedx.json",
@@ -44250,8 +44890,8 @@
     },
     {
       "path": "_internal/torch-2.14.1+cpu.dist-info/RECORD",
-      "bytes": 1631183,
-      "sha256": "9d13a62fbf9b507872e61fe33e844a17ac84de0b1da0e271ebb80d81d0d829b2"
+      "bytes": 1304546,
+      "sha256": "c1874f8a8d71aed9dd715a0a61b92a42a49a944c2992e1dccacbe34b6dfb2d4f"
     },
     {
       "path": "_internal/torch-2.14.1+cpu.dist-info/REQUESTED",
@@ -44285,8 +44925,8 @@
     },
     {
       "path": "_internal/tqdm-4.70.1.dist-info/RECORD",
-      "bytes": 6597,
-      "sha256": "9940b8b816433759ba82e615af3d3bde6504f361c2e99911fd852416dede7d7d"
+      "bytes": 3037,
+      "sha256": "29dc575780a8d553f81dc796d81a93f24c9cc6c5ffafea156c39a6cdf917b57f"
     },
     {
       "path": "_internal/tqdm-4.70.1.dist-info/top_level.txt",
@@ -58125,8 +58765,8 @@
     },
     {
       "path": "_internal/transformers-5.20.0.dist-info/RECORD",
-      "bytes": 701528,
-      "sha256": "1dcdfa9a7faad2c6928b3a61c62533cf5103a0287a9f9bf156b494efad9c996a"
+      "bytes": 300707,
+      "sha256": "0103c759caa4e9603d95e27093cacad5788eaa273ac71df5b5b30c332aa365f5"
     },
     {
       "path": "_internal/transformers-5.20.0.dist-info/REQUESTED",
@@ -58160,8 +58800,8 @@
     },
     {
       "path": "_internal/truststore-0.10.5.dist-info/RECORD",
-      "bytes": 1674,
-      "sha256": "31b40d091e450964ab959a8dba3786f403b390b6dbee3eeeb856c67f5d536e21"
+      "bytes": 972,
+      "sha256": "f0145908bb041075385f1c6dc1fec5bdd6f4dd8378305e1b8f27bf0683e05c57"
     },
     {
       "path": "_internal/truststore-0.10.5.dist-info/WHEEL",
@@ -58190,8 +58830,8 @@
     },
     {
       "path": "_internal/typer-0.27.3.dist-info/RECORD",
-      "bytes": 7107,
-      "sha256": "ab8f7636136b791a6aa893ed237806c1bdd90a0c043e841b3b7d4c75b16e01b5"
+      "bytes": 3328,
+      "sha256": "0bdc25d94b52c9662371890276d5f135e3f248ecfffbe224869f1a15e20534cb"
     },
     {
       "path": "_internal/typer-0.27.3.dist-info/WHEEL",
@@ -58215,8 +58855,8 @@
     },
     {
       "path": "_internal/typing_extensions-4.16.0.dist-info/RECORD",
-      "bytes": 646,
-      "sha256": "2f75829d5fa7890c41b84e5049e4c58243302d211eac0c3ab80e36118c3f6cf1"
+      "bytes": 531,
+      "sha256": "df79b14d51e84a4e19976bb06cecb42d94d4f075a36209c4717e024a08e5598e"
     },
     {
       "path": "_internal/typing_extensions-4.16.0.dist-info/WHEEL",
@@ -58240,8 +58880,8 @@
     },
     {
       "path": "_internal/typing_inspection-0.4.4.dist-info/RECORD",
-      "bytes": 1274,
-      "sha256": "db752965f5d0f0a2aa46e0b7779d0ba21c115139db5752c49fe837f5e69d683e"
+      "bytes": 891,
+      "sha256": "b9cac4f3c874712a1b47a768067c83e0bd247649d2b060d02615874c28545aff"
     },
     {
       "path": "_internal/typing_inspection-0.4.4.dist-info/WHEEL",
@@ -61295,8 +61935,8 @@
     },
     {
       "path": "_internal/tzdata-2026.5.dist-info/RECORD",
-      "bytes": 58280,
-      "sha256": "09b3c44f16b3ea65b0b6247ca6290544a64ba356dbf2949eb2b78e140a3a862b"
+      "bytes": 55420,
+      "sha256": "56a20c1cce88e1cf7d99700b2d1ba1c024e4a09381bd625f8cf9d00759a584e0"
     },
     {
       "path": "_internal/tzdata-2026.5.dist-info/top_level.txt",
@@ -61307,11 +61947,6 @@
       "path": "_internal/tzdata-2026.5.dist-info/WHEEL",
       "bytes": 109,
       "sha256": "e1805f098347e3094ba6fde9cead616c4b8895703858969b28b16ead9ede4cbd"
-    },
-    {
-      "path": "_internal/ucrtbase.dll",
-      "bytes": 1362264,
-      "sha256": "3239227d27667ba20d10a880751924e5719de0078f9fce232d149d383f7681f6"
     },
     {
       "path": "_internal/ujson-6.0.0.dist-info/DELVEWHEEL",
@@ -61335,8 +61970,8 @@
     },
     {
       "path": "_internal/ujson-6.0.0.dist-info/RECORD",
-      "bytes": 1040,
-      "sha256": "14b9e7a6fcf2682950427e7626a7b6b779dd7b149c3cc943b70605e706a62ece"
+      "bytes": 922,
+      "sha256": "f08556a549f1930be920f11cc587973e3ea127061da548be7b90738d5e305a8d"
     },
     {
       "path": "_internal/ujson-6.0.0.dist-info/top_level.txt",
@@ -61375,8 +62010,8 @@
     },
     {
       "path": "_internal/urllib3-2.8.0.dist-info/RECORD",
-      "bytes": 7904,
-      "sha256": "d2fb7d4877ceb065a778fa722665668323972035bc3b965bd8f8dd200cc9c26c"
+      "bytes": 3581,
+      "sha256": "a452c1d2508f7416b55eaaeba33b67c4fe9376b153a6cc187c0c560cf3e38acd"
     },
     {
       "path": "_internal/urllib3-2.8.0.dist-info/WHEEL",
@@ -61405,8 +62040,8 @@
     },
     {
       "path": "_internal/usearch-2.26.4.dist-info/RECORD",
-      "bytes": 2130,
-      "sha256": "d5566fbbfdf49c79eefc3c7c14dac888d90a398a9bdfd81b3ce6f6254d0ebe3e"
+      "bytes": 1352,
+      "sha256": "ea402ee7eef65645e4b171cfe5f8d0a6465280b501bdfcc8a454eec3f448265c"
     },
     {
       "path": "_internal/usearch-2.26.4.dist-info/REQUESTED",
@@ -61425,8 +62060,8 @@
     },
     {
       "path": "_internal/VCOMP140.DLL",
-      "bytes": 212920,
-      "sha256": "95d4ce4a6802d1e18b5e0e1722cc30ea72ca7e033f83828f05c0b7b993fe7cbf"
+      "bytes": 213064,
+      "sha256": "31af29c03643f8396a6f26bcd601c6369d26493d7d78b714827ab2801bd284c7"
     },
     {
       "path": "_internal/vcruntime140.dll",
@@ -61437,11 +62072,6 @@
       "path": "_internal/vcruntime140_1.dll",
       "bytes": 49776,
       "sha256": "6a99bc0128e0c7d6cbbf615fcc26909565e17d4ca3451b97f8987f9c6acbc6c8"
-    },
-    {
-      "path": "_internal/VCRUNTIME140_THREADS.dll",
-      "bytes": 38840,
-      "sha256": "40f39e8cee5f5a531b4010e18b807e8fe265b908dc58f959ecb7ebc6ea6cb11a"
     },
     {
       "path": "_internal/wcwidth/_wcwidth_c.pyd",
@@ -61475,8 +62105,8 @@
     },
     {
       "path": "_internal/wcwidth-0.9.2.dist-info/RECORD",
-      "bytes": 11418,
-      "sha256": "da60441572fb7e3d89b0f9718ca53d1f03611dd90f3c91801fed9e70be19e273"
+      "bytes": 5196,
+      "sha256": "5c0cf4e73a707cdd0a3544a84c5e410434caea8b3d770cffdb9958ed8cfc341e"
     },
     {
       "path": "_internal/wcwidth-0.9.2.dist-info/top_level.txt",
@@ -61520,8 +62150,8 @@
     },
     {
       "path": "_internal/yarl-1.25.1.dist-info/RECORD",
-      "bytes": 2278,
-      "sha256": "dfb7cc8a446b208df963308a4867d643e23dec22f62c6b9c98c004630503665a"
+      "bytes": 1398,
+      "sha256": "6473603e88d2ccb1d604f211dcb34d3bcad4334fdfa1e58a05cfc756d3d62b0c"
     },
     {
       "path": "_internal/yarl-1.25.1.dist-info/top_level.txt",
@@ -61540,8 +62170,8 @@
     },
     {
       "path": "lvjin-worker.exe",
-      "bytes": 102646220,
-      "sha256": "893f464af8a96eaf62b6e934cd17a12401e1dfd35b5114ce1c261944dc7e9f24"
+      "bytes": 103638587,
+      "sha256": "770dd91c0547f86791221109ead5ba00c05c136979f60ed4ec0a9c6e55fae02d"
     },
     {
       "path": "msvcp140.dll",

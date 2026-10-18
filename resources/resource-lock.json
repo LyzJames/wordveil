@@ -155,7 +155,7 @@
     {
       "path": "models/embedding-space.json",
       "bytes": 2227,
-      "sha256": "b392e6a85a1470a1a3c4250302671e43f44e2c46c73ad2a071acc9c3d84366cf"
+      "sha256": "34c596e73ff6bf87c8f6d447095b8c51a75901e101d4cd7605620e752427aa83"
     },
     {
       "path": "models/manifest.json",
@@ -164,13 +164,13 @@
     },
     {
       "path": "runtime/installation.json",
-      "bytes": 2485120,
-      "sha256": "7c657b7bb5f141adb9b5d6970bf5abb75f7a8f139d0409aab8bd2a70db89d0fe"
+      "bytes": 2507545,
+      "sha256": "83ee5c8448dd4c67f5267159716bbc698a1de605c82f7a61d01567fc6035daa8"
     },
     {
       "path": "runtime/release.json",
-      "bytes": 11707,
-      "sha256": "e7cd078277d53509d557d21318bd1663ae82da97f935da6ffaa50421f9ed33f6"
+      "bytes": 12013,
+      "sha256": "a84cc1a8246fb3608b3b1c728bc1dde148115a0fe62f3521933043aa25a0b085"
     },
     {
       "path": "skills/answer-compose/input.schema.json",

@@ -2,13 +2,13 @@
   "schema_version": "lvjin.embedding-space/1",
   "profile": {
     "artifact_sha256": "4ba7b5e7ca486db246eb21885144c78be543973bd384785c8a6fea9ffdc9e2a5",
-    "processor_sha256": "b08ad71af74c0dbb91ac96b32a06ade66c51ef12b59710f02b32fdb231d66f15",
+    "processor_sha256": "c2695b88a5d2545a7a71847e6005d03e9fa999be8798217810233fbc281bbe7a",
     "instruction_version": "qwen3-official-query-instruction-v1",
     "pooling_version": "last-valid-token-l2-v1",
     "numerical_profile": "torch-2.14.1-cpu-transformers-5.20.0-fp32-eager-threads4",
     "truncation_tokens": 4096
   },
-  "embedding_space_id": "embedding-space-v1-073b7ed1bdcd4aa7e9fcfd48b4dff9f7f8203dc2d30f7ca650feafe9aa8213db",
+  "embedding_space_id": "embedding-space-v1-5ce65c0bd1072035e9745db7718657e5e40e4c28624d9693e581756c64341119",
   "default_index_precision": "F32",
   "gpu_enabled": false,
   "instruction_text": "Given a web search query, retrieve relevant passages that answer the query",

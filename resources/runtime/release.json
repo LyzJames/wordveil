@@ -1,11 +1,13 @@
 {
-  "schema_version": "lvjin.m0-release/1",
-  "version": "0.1.0-m0",
-  "milestone": "M0",
-  "business_workflows_implemented": false,
+  "schema_version": "lvjin.m1-release/1",
+  "version": "0.2.0-m1",
+  "milestone": "M1",
+  "business_workflows_implemented": "M1 local closed loop: import, five-model OCR, ASR and frame OCR text, matters, Decimal finance, hybrid retrieval and rerank, evidence, export, encrypted backup/restore",
+  "generation_connection": "not included in M1; analysis entries report requires_generation",
+  "network_requests": "none in M1; workers run in no-network AppContainers",
   "automatic_downloads": false,
-  "updates": "M0 uses whole offline installer; no updater/network or signing key is embedded",
-  "signing": "M0 internal prototype is unsigned; external release requires owned Authenticode certificate and signed whole media manifest",
+  "updates": "whole offline installer; no updater, network or signing key embedded",
+  "signing": "M1 internal build is unsigned; external release requires an owned Authenticode certificate and a signed media manifest",
   "cpu": "Windows x64, AVX2/FMA, CPU FP32, 4 threads; GPU disabled",
   "minimum_test_profile": {
     "os": "Windows 11 x64",
@@ -17,9 +19,20 @@
   "recommended_ram_bytes": 17179869184,
   "job_process_commit_limit_bytes": 8589934592,
   "large_residents_max": 1,
+  "resident_large_model_tiers": [
+    {
+      "min_physical_memory_gib": 16,
+      "max_resident_large_models": 2,
+      "coresident_large_models": [
+        "embedding",
+        "reranker"
+      ],
+      "max_concurrent_heavy_stages": 1
+    }
+  ],
   "heavy_stages_max": 1,
   "idle_ttl_seconds": 60,
-  "measured_host_profiles": [
+  "m0_measured_host_profiles": [
     {
       "inference_seconds": [
         0.3323505,
@@ -384,8 +397,7 @@
       "warm_max_seconds": 6.5671069
     }
   ],
-  "performance_scope": "Fixed synthetic minimum probes: cold load and three actual inference times/RAM per model; two warm observations are not a stable population P95. Quality latency under concurrent builds is not a performance guarantee.",
-  "clean_install_acceptance": "Final external release manifest and guest report identify the exact installer hash, measured guest hardware, installation space and nine-model results. No unperformed acceptance claim is embedded here.",
+  "performance_scope": "Model artefacts are unchanged from M0; the M0 cold-load/inference probes apply to the same files. M1 business-flow timings are in the M1 benchmark report, not embedded here.",
   "ffmpeg_version": "9.0.2",
   "webview2_fixed_version": "155.0.4283.60",
   "vc_runtime_version": "14.44.35112"
