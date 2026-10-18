@@ -17,6 +17,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+pub mod answers;
+pub mod connections;
 pub mod documents;
 pub mod indexing;
 pub mod matters;
@@ -61,16 +63,16 @@ pub fn completed(data_ref: Option<String>) -> EnvelopeParts {
     EnvelopeParts { status: "completed".into(), data_ref, ..Default::default() }
 }
 
-/// Generation-dependent or network skills are registered but not executable in
-/// M1: they report the precise reason instead of fabricating a result.
+/// Skills whose execution is not part of this version report the precise
+/// reason instead of fabricating a result.
 fn unavailable(skill: &str) -> EnvelopeParts {
     let (status, code, message) = match skill {
-        "query-plan" | "answer-compose" | "answer-grounding" | "media-observe" => (
+        "media-observe" => (
             "requires_generation",
-            "requires_generation",
-            "该功能需要用户配置的生成接口；当前版本（M1）只提供本地资料、检索与计算。",
+            "native_media_not_in_this_version",
+            "直接读取图片、音频或视频的原生复核将在后续版本接入；当前按本机识别与转写的文字处理。",
         ),
-        _ => ("needs_authorization", "network_capability_not_in_m1", "联网与外部连接在后续版本（M2）提供，当前不发起任何网络请求。"),
+        _ => ("needs_authorization", "network_capability_not_in_this_version", "联网检索、公共知识更新与外部工具在后续版本提供，当前不发起这类网络请求。"),
     };
     EnvelopeParts { status: status.into(), warnings: vec![(code.into(), message.into())], ..Default::default() }
 }
@@ -96,6 +98,10 @@ pub fn run(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
         "image-review" => mediaflow::image_review(ctx, invocation, input),
         "audio-review" => mediaflow::audio_review(ctx, invocation, input),
         "video-review" => mediaflow::video_review(ctx, invocation, input),
+        "query-plan" => answers::query_plan(ctx, invocation, input),
+        "answer-compose" => answers::answer_compose(ctx, invocation, input),
+        "answer-grounding" => answers::answer_grounding(ctx, invocation, input),
+        "connection-settings" => connections::settings(ctx, invocation, input),
         "lvjin-retrieval" => workflows::retrieval(ctx, invocation, input),
         "contract-review" | "loan-analysis" | "budget-analysis" => workflows::analysis(ctx, invocation, input),
         other => Ok(unavailable(other)),
@@ -107,12 +113,14 @@ pub fn failure(error: &Error) -> EnvelopeParts {
     let code = error.code();
     let (status, message) = match error {
         Error::Cancelled => ("cancelled", "任务已停止、撤销或空间已锁定。"),
+        Error::NeedsInput("api_key") => ("needs_input", "该连接没有可用的 API Key，请在“生成接口”中重新填写。"),
         Error::NeedsInput(_) => ("needs_input", "需要补充信息后才能继续。"),
         Error::Worker(code) if code == "password_required" || code == "password_incorrect" => ("needs_input", "该文件已加密，需要正确的打开密码。"),
         Error::Integrity => ("failed", "完整性校验失败：资源、数据或索引与记录不一致。"),
         Error::Denied => ("failed", "无权访问该对象，或对象不在当前范围内。"),
         Error::Contract => ("failed", "请求不符合正式合同。"),
         Error::Budget => ("partial", "已达到根任务预算上限。"),
+        Error::Remote(remote) => return EnvelopeParts { status: "failed".into(), warnings: vec![(code, answers::remote_message(remote))], ..Default::default() },
         _ => ("failed", "处理失败；已保留已完成的部分。"),
     };
     EnvelopeParts { status: status.into(), warnings: vec![(code, message.into())], ..Default::default() }

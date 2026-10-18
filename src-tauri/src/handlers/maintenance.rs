@@ -192,8 +192,10 @@ pub fn restore(package: &BackupPackage, keys: &VaultKeys, vaults_root: &Path) ->
         drop(source);
         let restored = Connection::open(target.join(vault::DB_FILE))?;
         apply_key(&restored, &keys.db)?;
-        // sqlcipher_export does not copy user_version; record the schema level.
-        restored.execute_batch(&format!("PRAGMA user_version={};", crate::store::SCHEMA_VERSION))?;
+        // sqlcipher_export does not copy user_version: record the level the
+        // backup was written at, so opening the vault applies newer migrations.
+        let level = manifest["schema_version"].as_i64().filter(|v| (1..=crate::store::SCHEMA_VERSION).contains(v)).ok_or(Error::Integrity)?;
+        restored.execute_batch(&format!("PRAGMA user_version={level};"))?;
         drop(restored);
         vault::write_header(&target, &package.header)?;
         Ok(())

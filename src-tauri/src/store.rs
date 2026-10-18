@@ -20,7 +20,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const M1_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -72,6 +72,17 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS root_usage(root TEXT NOT NULL, key TEXT NOT NULL, value REAL NOT NULL, PRIMARY KEY(root, key));
 CREATE TABLE IF NOT EXISTS ui_requests(id TEXT PRIMARY KEY REFERENCES objects(id), operation TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS ranges(id TEXT PRIMARY KEY REFERENCES objects(id), media_id TEXT NOT NULL, start_s REAL NOT NULL, end_s REAL, created_at TEXT NOT NULL);
+"#;
+
+/// M2: user-managed generation connections, capability records, request audit
+/// and destination-bound egress grants. Keys are not stored here (DPAPI files).
+const M2_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS connections(id TEXT PRIMARY KEY REFERENCES objects(id), name TEXT NOT NULL, provider TEXT NOT NULL, protocol TEXT NOT NULL, base_url TEXT NOT NULL, model_id TEXT NOT NULL, timeout_s INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL, proxy TEXT NOT NULL, credential TEXT, status TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, revoked_at TEXT);
+CREATE TABLE IF NOT EXISTS connection_drafts(id TEXT PRIMARY KEY REFERENCES objects(id), connection_id TEXT, profile TEXT NOT NULL, credential TEXT, created_at TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS capabilities(connection_id TEXT NOT NULL, capability TEXT NOT NULL, binding TEXT NOT NULL, status TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, tested_at TEXT NOT NULL, PRIMARY KEY(connection_id, capability));
+CREATE TABLE IF NOT EXISTS generation_requests(id TEXT PRIMARY KEY, root TEXT NOT NULL, invocation TEXT NOT NULL, connection_id TEXT NOT NULL, purpose TEXT NOT NULL, host TEXT NOT NULL, model_id TEXT NOT NULL, status TEXT NOT NULL, error TEXT, input_tokens INTEGER, output_tokens INTEGER, materials TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT);
+CREATE INDEX IF NOT EXISTS generation_requests_root ON generation_requests(root);
+CREATE TABLE IF NOT EXISTS egress_grants(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT, connection_id TEXT NOT NULL, host TEXT NOT NULL, purpose TEXT NOT NULL, scope_id TEXT NOT NULL, question_id TEXT NOT NULL, max_items INTEGER NOT NULL, max_requests INTEGER NOT NULL, preview TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, revoked_at TEXT);
 "#;
 
 /// An unlocked vault. Dropping it closes SQLCipher and zeroizes keys.
@@ -323,6 +334,14 @@ pub(crate) fn migrate(db: &Connection) -> Result<()> {
     }
     if version < 1 {
         let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M1_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m1-1');PRAGMA user_version=1;COMMIT;"));
+        if let Err(error) = applied {
+            let _ = db.execute_batch("ROLLBACK;");
+            return Err(error.into());
+        }
+    }
+    if version < 2 {
+        // Additive only: M1 data stays as it is; M2 tables start empty.
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M2_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=2;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());

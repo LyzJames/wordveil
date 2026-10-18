@@ -1,0 +1,39 @@
+{
+  "identifier": "main-window",
+  "description": "Main window: trusted-core commands and task/lock event listening only. No plugin dialog, fs, shell or http permissions are granted to the webview; network requests are made by the core after native confirmation.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-app-status",
+    "allow-touch",
+    "allow-vault-create",
+    "allow-vault-unlock",
+    "allow-vault-lock",
+    "allow-vault-restore",
+    "allow-change-passphrase",
+    "allow-run-skill",
+    "allow-start-skill",
+    "allow-tasks",
+    "allow-task-cancel",
+    "allow-create-object",
+    "allow-import-files",
+    "allow-resume-import",
+    "allow-commit-change",
+    "allow-export-commit",
+    "allow-backup",
+    "allow-privacy",
+    "allow-view",
+    "allow-connections",
+    "allow-connection-save",
+    "allow-connection-probe",
+    "allow-connection-revoke",
+    "allow-connection-default",
+    "allow-answer-preview",
+    "allow-answer-start",
+    "allow-answer-discard",
+    "allow-generation-requests"
+  ]
+}

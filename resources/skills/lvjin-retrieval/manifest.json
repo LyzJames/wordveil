@@ -50,9 +50,9 @@
       "rule": "无生成连接时仍可证据检索"
     }
   ],
-  "version": "0.2.0-m1",
+  "version": "0.3.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "m1-local-generation-pending",
+  "implementation_status": "local-generation",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

@@ -25,17 +25,22 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-/// Capabilities a user action may receive in M1 (local only). Network,
-/// generation and connector capabilities are never granted in this version.
+/// Capabilities any user action may receive (local only). Generation and
+/// probing are conditional and granted only to confirmed/protected roots.
 pub const LOCAL_CAPABILITIES: &[&str] = &[
     "vault.read", "vault.write", "file.selection.read", "local.ocr", "local.embedding", "local.rerank", "local.asr", "local.calc",
-    "index.read", "index.write", "graph.read", "media.decode", "diagnostics.redacted",
+    "index.read", "index.write", "graph.read", "media.decode", "diagnostics.redacted", "local.grounding",
 ];
-const PROTECTED_CAPABILITIES: &[&str] = &["vault.maintenance", "settings.privacy"];
-/// Conditional capabilities implemented in M1. They are granted only to roots
-/// created by an explicit confirmation or a protected flow, so a plain UI or
-/// agent root can read and preview but never commit, export or back up.
-const CONFIRMED_CAPABILITIES: &[&str] = &["vault.write", "graph.write", "file.export", "file.backup"];
+const PROTECTED_CAPABILITIES: &[&str] = &["vault.maintenance", "settings.privacy", "settings.connection"];
+/// Conditional capabilities. They are granted only to roots created by an
+/// explicit confirmation or a protected flow, so a plain UI or agent root can
+/// read and preview but never commit, export, back up, store a key, probe an
+/// endpoint or send anything to a generation service. Generation additionally
+/// needs an approved, destination-bound egress grant bound to the root.
+const CONFIRMED_CAPABILITIES: &[&str] = &["vault.write", "graph.write", "file.export", "file.backup", "credential.write", "network.probe", "generation.request"];
+/// Bounds of one approved answer task (design 7.5; root limit 7 requests).
+const EGRESS_MAX_ITEMS: i64 = 10;
+const EGRESS_MAX_REQUESTS: i64 = 7;
 const TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -453,6 +458,12 @@ impl CoreService {
     }
 
     fn begin(&self, skill: &str, input: &Value, action: &str) -> Result<(VaultHandle, crate::runtime::Invocation)> {
+        self.begin_with(skill, input, action, None)
+    }
+
+    /// `grant`: an approved egress grant to bind to the new root before the
+    /// first invocation runs (one grant, one root, never reused).
+    fn begin_with(&self, skill: &str, input: &Value, action: &str, grant: Option<&str>) -> Result<(VaultHandle, crate::runtime::Invocation)> {
         if !matches!(action, "ui" | "confirm" | "protected") {
             return Err(Error::Contract);
         }
@@ -462,6 +473,12 @@ impl CoreService {
             let scope = vault.id.clone();
             let capabilities = self.capabilities(skill, action, &vault.runtime.registry);
             let root = vault.runtime.begin_root(UserAction::trusted(&scope, &capabilities, action))?;
+            if let Some(grant) = grant {
+                let bound = vault.db().execute("UPDATE egress_grants SET root=? WHERE id=? AND root IS NULL AND approved_at IS NOT NULL AND revoked_at IS NULL", params![root.id(), grant])?;
+                if bound != 1 {
+                    return Err(Error::Denied);
+                }
+            }
             vault.runtime.invoke_ui(&root, skill, input)?
         };
         Ok((handle, invocation))
@@ -479,6 +496,10 @@ impl CoreService {
     /// Start a skill on a worker thread; progress/finish events go to the sink.
     pub fn start_skill(self: &Arc<Self>, skill: &str, input: Value, action: &str) -> Result<String> {
         let (handle, invocation) = self.begin(skill, &input, action)?;
+        self.spawn(skill, input, handle, invocation)
+    }
+
+    fn spawn(self: &Arc<Self>, skill: &str, input: Value, handle: VaultHandle, invocation: crate::runtime::Invocation) -> Result<String> {
         let task_id = format!("task_{}", uuid::Uuid::new_v4().simple());
         let cancel = Arc::new(AtomicBool::new(false));
         let state = TaskState { task_id: task_id.clone(), skill: skill.into(), root: invocation.root_id().into(), status: "running".into(), progress: None, envelope: None, started_at: now_rfc3339() };
@@ -724,6 +745,179 @@ impl CoreService {
     /// Trusted description of a prepared change for the native confirmation
     /// dialog: its type, the matter title and the impact computed at prepare
     /// time. The text shown to the user is built from these values only.
+    // ------------------------------------------------- generation connections
+
+    fn credential_store(&self) -> Result<crate::generation::credentials::CredentialStore> {
+        let handle = self.vault()?;
+        let vault_id = handle.lock().map_err(|_| Error::Integrity)?.id.clone();
+        crate::generation::credentials::CredentialStore::for_vault(&self.services.layout.data_root, &vault_id)
+    }
+
+    /// Secure input channel: the key is sealed with DPAPI immediately and only
+    /// its credential reference reaches the draft (never Skill input or logs).
+    pub fn connection_draft(&self, input: &Value, key: Option<Zeroizing<String>>) -> Result<String> {
+        let draft: crate::generation::connections::DraftInput = serde_json::from_value(input.clone()).map_err(|_| Error::Contract)?;
+        let profile = draft.validate()?;
+        let credential = match key.filter(|k| !k.trim().is_empty()) {
+            Some(key) => {
+                let key = Zeroizing::new(key.trim().to_owned());
+                if key.len() > 512 || key.chars().any(|c| c.is_control() || c.is_whitespace()) {
+                    return Err(Error::NeedsInput("api_key"));
+                }
+                let id = crate::generation::credentials::CredentialStore::new_id();
+                self.credential_store()?.put(&id, &key)?;
+                Some(id)
+            }
+            None if draft.connection_id.is_none() && !profile.endpoint.is_loopback() => return Err(Error::NeedsInput("api_key")),
+            None => None,
+        };
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        crate::generation::connections::create_draft(&vault, &draft, credential.as_deref())
+    }
+
+    /// A draft that refers to an existing connection unchanged (probe/revoke).
+    pub fn connection_reference(&self, connection: &str) -> Result<String> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let loaded = crate::generation::connections::load(&vault, connection)?;
+        if loaded.status != "active" {
+            return Err(Error::Denied);
+        }
+        let input = crate::generation::connections::DraftInput {
+            connection_id: Some(connection.into()), name: loaded.name.clone(), provider: loaded.profile.provider.as_str().into(), protocol: loaded.profile.protocol.as_str().into(),
+            base_url: loaded.profile.endpoint.base_url(), model_id: loaded.profile.model_id.clone(), timeout_s: loaded.profile.timeout_s, max_output_tokens: loaded.profile.max_output_tokens,
+            proxy: if loaded.profile.proxy == crate::generation::transport::ProxyMode::None { "none".into() } else { "system".into() },
+        };
+        crate::generation::connections::create_draft(&vault, &input, None)
+    }
+
+    pub fn connections(&self) -> Result<Vec<Value>> {
+        let store = self.credential_store()?;
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        crate::generation::connections::summary(&vault, &|id| store.exists(id))
+    }
+
+    pub fn set_default_connection(&self, connection: &str) -> Result<()> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        crate::generation::connections::set_default(&vault, connection)
+    }
+
+    /// What the native confirmation for a probe or revoke shows.
+    pub fn describe_connection(&self, connection: &str) -> Result<Value> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let loaded = crate::generation::connections::load(&vault, connection)?;
+        Ok(json!({"name": loaded.name, "host": loaded.profile.endpoint.display_host(), "model_id": loaded.profile.model_id, "loopback": loaded.profile.endpoint.is_loopback()}))
+    }
+
+    // ------------------------------------------------------- egress (answers)
+
+    /// Prepare an answer: run the local retrieval (no egress) to show what
+    /// would be sent, and register an unapproved grant bound to the question,
+    /// scope, connection and limits. Approval happens in a native dialog.
+    pub fn answer_preview(&self, text: &str, matters: &[String], connection: Option<&str>) -> Result<Value> {
+        let question = self.create_question(text)?;
+        let scope = self.create_scope(matters, &[])?;
+        let (connection_id, name, host, model, max_tokens) = {
+            let handle = self.vault()?;
+            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let id = match connection {
+                Some(id) => id.to_owned(),
+                None => crate::generation::connections::default_connection(&vault)?.ok_or(Error::NeedsInput("connection"))?,
+            };
+            let loaded = crate::generation::connections::load(&vault, &id)?;
+            if loaded.status != "active" {
+                return Err(Error::Denied);
+            }
+            if loaded.credential.is_none() && !loaded.profile.endpoint.is_loopback() {
+                return Err(Error::NeedsInput("api_key"));
+            }
+            (id, loaded.name, loaded.profile.endpoint.display_host(), loaded.profile.model_id, loaded.profile.max_output_tokens)
+        };
+        // Local-only retrieval for the preview (plain UI root, no generation).
+        let envelope = self.run_skill("lvjin-retrieval", json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "evidence_only"}), "ui")?;
+        let items = match envelope["data_ref"].as_str() {
+            Some(id) => self.result(id)?["payload"]["items"].clone(),
+            None => json!([]),
+        };
+        let excerpts: Vec<Value> = items.as_array().cloned().unwrap_or_default().iter().take(EGRESS_MAX_ITEMS as usize).map(|item| json!({
+            "evidence_id": item["evidence_id"], "display_name": item["document"]["display_name"], "unit_title": item["unit_title"],
+            "pages": item["pages"], "locators": item["locators"], "excerpt": item["exact_text"].as_str().unwrap_or("").chars().take(240).collect::<String>(),
+        })).collect();
+        let preview = json!({"question": text.trim(), "connection": {"id": connection_id, "name": name, "host": host, "model_id": model},
+            "purpose": "answer", "excerpts": excerpts, "max_items": EGRESS_MAX_ITEMS, "max_requests": EGRESS_MAX_REQUESTS, "max_output_tokens": max_tokens,
+            "validity": "this_task", "matters": matters.len()});
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let grant = vault.register("EgressGrantRef", "m2", Some(&question))?;
+        vault.db().execute(
+            "INSERT INTO egress_grants(id,connection_id,host,purpose,scope_id,question_id,max_items,max_requests,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            params![grant, connection_id, host, "answer", scope, question, EGRESS_MAX_ITEMS, EGRESS_MAX_REQUESTS, preview.to_string(), now_rfc3339()],
+        )?;
+        let mut out = preview;
+        out["grant_id"] = json!(grant);
+        out["question_id"] = json!(question);
+        out["scope_id"] = json!(scope);
+        Ok(out)
+    }
+
+    /// The real parameters of an unapproved grant (for the native dialog).
+    pub fn describe_grant(&self, grant: &str) -> Result<Value> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        vault.expect_kind(grant, &["EgressGrantRef"])?;
+        let (preview, approved, root): (String, Option<String>, Option<String>) =
+            vault.db().query_row("SELECT preview,approved_at,root FROM egress_grants WHERE id=? AND revoked_at IS NULL", [grant], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(Error::Denied)?;
+        if approved.is_some() || root.is_some() {
+            return Err(Error::Denied);
+        }
+        Ok(serde_json::from_str(&preview)?)
+    }
+
+    /// Called only after the native confirmation; then starts the answer task
+    /// under a confirmed root that holds generation.request and this grant.
+    pub fn answer_start(self: &Arc<Self>, grant: &str, excluded: &[String]) -> Result<String> {
+        let (question, scope) = {
+            let handle = self.vault()?;
+            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let (question, scope): (String, String) = vault.db().query_row("SELECT question_id,scope_id FROM egress_grants WHERE id=? AND approved_at IS NULL AND root IS NULL AND revoked_at IS NULL", [grant], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
+            if !excluded.is_empty() {
+                // Excluded excerpts tighten the grant: they are removed from the
+                // scope by version so they cannot be sent in this task.
+                let mut preview: Value = serde_json::from_str(&vault.db().query_row::<String, _, _>("SELECT preview FROM egress_grants WHERE id=?", [grant], |r| r.get(0))?)?;
+                preview["excluded"] = json!(excluded);
+                vault.db().execute("UPDATE egress_grants SET preview=? WHERE id=?", params![preview.to_string(), grant])?;
+            }
+            vault.db().execute("UPDATE egress_grants SET approved_at=? WHERE id=?", params![now_rfc3339(), grant])?;
+            (question, scope)
+        };
+        let input = json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "answer"});
+        let (handle, invocation) = self.begin_with("lvjin-retrieval", &input, "confirm", Some(grant))?;
+        self.services.log.event("egress.approved", &[("purpose", crate::logging::Field::Code("answer"))]);
+        self.spawn("lvjin-retrieval", input, handle, invocation)
+    }
+
+    pub fn answer_cancel_preview(&self, grant: &str) -> Result<()> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE id=? AND approved_at IS NULL", params![now_rfc3339(), grant])?;
+        Ok(())
+    }
+
+    /// Requests sent to generation services (audit view; no content).
+    pub fn generation_requests(&self, limit: u32) -> Result<Vec<Value>> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let mut statement = vault.db().prepare("SELECT r.purpose,r.host,r.model_id,r.status,r.error,r.input_tokens,r.output_tokens,r.materials,r.started_at,c.name FROM generation_requests r LEFT JOIN connections c ON c.id=r.connection_id ORDER BY r.started_at DESC LIMIT ?")?;
+        let rows = statement.query_map([limit.min(500)], |r| Ok(json!({"purpose": r.get::<_, String>(0)?, "host": r.get::<_, String>(1)?, "model_id": r.get::<_, String>(2)?, "status": r.get::<_, String>(3)?,
+            "error": r.get::<_, Option<String>>(4)?, "input_tokens": r.get::<_, Option<i64>>(5)?, "output_tokens": r.get::<_, Option<i64>>(6)?,
+            "materials": serde_json::from_str::<Value>(&r.get::<_, String>(7)?).unwrap_or(Value::Null), "started_at": r.get::<_, String>(8)?, "connection": r.get::<_, Option<String>>(9)?})))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     pub fn describe_change(&self, change_ref: &str) -> Result<Value> {
         let handle = self.vault()?;
         let vault = handle.lock().map_err(|_| Error::Integrity)?;

@@ -41,9 +41,9 @@
       "rule": "数字对照依据"
     }
   ],
-  "version": "0.2.0-m1",
+  "version": "0.3.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "m2-generation",
+  "implementation_status": "generation",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

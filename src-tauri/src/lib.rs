@@ -24,6 +24,8 @@ pub mod services;
 pub mod handlers;
 #[cfg(windows)]
 pub mod service;
+#[cfg(windows)]
+pub mod generation;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -54,6 +56,10 @@ pub enum Error {
     Worker(String),
     #[error("input needed: {0}")]
     NeedsInput(&'static str),
+    /// A stable code for a failed request to a user-configured remote service
+    /// (for example `auth_failed`, `rate_limited`); never the response body.
+    #[error("remote service reported {0}")]
+    Remote(String),
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -74,6 +80,7 @@ impl Error {
             Error::Locked => "locked".into(),
             Error::Worker(code) => format!("worker:{code}"),
             Error::NeedsInput(what) => format!("needs_input:{what}"),
+            Error::Remote(code) => format!("remote:{}", sanitize_code(code)),
         }
     }
 }

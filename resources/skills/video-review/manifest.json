@@ -49,9 +49,9 @@
       "rule": "text_only不请求原生媒体，analyze按实际能力复核"
     }
   ],
-  "version": "0.2.0-m1",
+  "version": "0.3.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "m1-local-generation-pending",
+  "implementation_status": "generation-pending",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

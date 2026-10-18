@@ -37,9 +37,9 @@
       "rule": "frames/audio/metadata的受限枚举"
     }
   ],
-  "version": "0.2.0-m1",
+  "version": "0.3.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "m1-local",
+  "implementation_status": "local",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

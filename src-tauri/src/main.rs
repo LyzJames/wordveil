@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use zeroize::Zeroizing;
 
-const MILESTONE: &str = "M1";
+const MILESTONE: &str = "M2";
 
 struct Shell {
     core: Result<Arc<CoreService>, String>,
@@ -36,7 +36,18 @@ fn message(error: &Error) -> String {
         Error::Integrity => "完整性校验失败：安装资源、数据或备份与记录不一致。",
         Error::Contract => "请求不符合正式合同。",
         Error::Budget => "已达到本次任务的预算上限。",
+        Error::NeedsInput("api_key") => "需要填写该连接的 API Key。",
+        Error::NeedsInput("connection") => "还没有可用的生成连接，请先在“生成接口”中添加并保存。",
+        Error::NeedsInput("base_url") => "服务地址格式不正确（应以 https:// 开头）。",
+        Error::NeedsInput("base_url_https") => "非本机服务必须使用 https:// 地址。",
+        Error::NeedsInput("base_url_operation_path") => "服务地址只填到根地址，不要包含 /chat/completions 等接口路径。",
+        Error::NeedsInput("model_id") => "请填写模型 ID。",
+        Error::NeedsInput("name") => "请填写显示名称（60 字以内）。",
+        Error::NeedsInput("protocol") => "所选服务不支持该协议。",
+        Error::NeedsInput("timeout_s") => "超时需在 5–600 秒之间。",
+        Error::NeedsInput("max_output_tokens") => "单次输出上限需在 256–65536 之间。",
         Error::NeedsInput(_) => "需要补充信息后才能继续。",
+        Error::Remote(_) => "生成接口请求失败。",
         Error::Worker(code) if code == "too_many_attempts" => "尝试次数过多，请稍等 30 秒后再试。",
         Error::Worker(_) => "本机处理失败。",
         _ => "操作失败。",
@@ -72,6 +83,114 @@ fn confirm(app: &AppHandle, title: &str, text: &str, accept: &str) -> bool {
 
 fn picked(path: Option<tauri_plugin_dialog::FilePath>) -> Result<Option<PathBuf>, String> {
     path.map(|p| p.into_path().map_err(|_| "无法读取所选位置".to_string())).transpose()
+}
+
+// ------------------------------------------------- generation connections
+
+#[tauri::command]
+async fn connections(shell: State<'_, Shell>) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.connections().map(Value::from).map_err(|e| message(&e))).await
+}
+
+/// Secure input channel for the API key: it goes straight to the core, which
+/// seals it with DPAPI; the protected settings Skill only sees a draft ref.
+#[tauri::command]
+async fn connection_save(shell: State<'_, Shell>, draft: Value, api_key: Option<String>) -> Reply {
+    let core = core(&shell)?.clone();
+    let key = api_key.map(Zeroizing::new);
+    blocking(move || {
+        let draft = core.connection_draft(&draft, key).map_err(|e| message(&e))?;
+        core.run_skill("connection-settings", json!({"operation": "save", "connection_draft_id": draft}), "protected").map_err(|e| message(&e))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn connection_probe(app: AppHandle, shell: State<'_, Shell>, connection: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || {
+        let info = core.describe_connection(&connection).map_err(|e| message(&e))?;
+        let text = format!(
+            "将向 {}（模型 {}）发送约 6 条合成测试请求，检测文本、流式、工具调用、结构化输出和图片输入能力。\n\n测试内容是固定的合成样本，不包含你的任何资料。{}",
+            info["host"].as_str().unwrap_or(""),
+            info["model_id"].as_str().unwrap_or(""),
+            if info["loopback"] == json!(true) { "这是本机地址的服务；它是否继续转发到其他地方无法由本应用核验。" } else { "可能产生少量费用。" }
+        );
+        if !confirm(&app, "检测生成接口能力", &text, "开始检测") {
+            return Err("已取消".into());
+        }
+        let draft = core.connection_reference(&connection).map_err(|e| message(&e))?;
+        core.start_skill("connection-settings", json!({"operation": "probe", "connection_draft_id": draft}), "protected").map(Value::String).map_err(|e| message(&e))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn connection_revoke(app: AppHandle, shell: State<'_, Shell>, connection: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || {
+        let info = core.describe_connection(&connection).map_err(|e| message(&e))?;
+        let text = format!("将删除本机保存的 {} 的 API Key，并停止使用这个连接。\n\n已经发送给服务方的内容无法从远端撤回。", info["host"].as_str().unwrap_or(""));
+        if !confirm(&app, "删除生成连接", &text, "删除") {
+            return Err("已取消".into());
+        }
+        let draft = core.connection_reference(&connection).map_err(|e| message(&e))?;
+        core.run_skill("connection-settings", json!({"operation": "revoke", "connection_draft_id": draft}), "protected").map_err(|e| message(&e))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn connection_default(shell: State<'_, Shell>, connection: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.set_default_connection(&connection).map(|_| Value::Null).map_err(|e| message(&e))).await
+}
+
+/// Local retrieval for the preview; registers an unapproved, single-use grant.
+#[tauri::command]
+async fn answer_preview(shell: State<'_, Shell>, question: String, matters: Vec<String>, connection: Option<String>) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.answer_preview(&question, &matters, connection.as_deref()).map_err(|e| message(&e))).await
+}
+
+/// The native dialog is built here from the grant's real parameters; only a
+/// confirmed dialog approves the grant and starts the task.
+#[tauri::command]
+async fn answer_start(app: AppHandle, shell: State<'_, Shell>, grant: String, excluded: Vec<String>) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || {
+        let preview = core.describe_grant(&grant).map_err(|e| message(&e))?;
+        let offered = preview["excerpts"].as_array().map(|e| e.len()).unwrap_or(0);
+        let sending = offered.saturating_sub(excluded.len());
+        let text = format!(
+            "接收方：{}（{}）\n模型：{}\n用途：生成这一次回答（不包含联网搜索）\n将发送：你的问题，以及所选事务中检索到的原文摘录（预览中 {} 段；查询改写后可能在同一范围内替换，最多 {} 段）\n请求次数：最多 {} 次\n有效期：仅本次任务\n\n已发送的内容无法从服务方撤回。",
+            preview["connection"]["name"].as_str().unwrap_or(""),
+            preview["connection"]["host"].as_str().unwrap_or(""),
+            preview["connection"]["model_id"].as_str().unwrap_or(""),
+            sending,
+            preview["max_items"].as_i64().unwrap_or(0),
+            preview["max_requests"].as_i64().unwrap_or(0),
+        );
+        if !confirm(&app, "向生成接口发送资料", &text, "发送并生成") {
+            let _ = core.answer_cancel_preview(&grant);
+            return Err("已取消，未发送任何内容".into());
+        }
+        core.answer_start(&grant, &excluded).map(Value::String).map_err(|e| message(&e))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn answer_discard(shell: State<'_, Shell>, grant: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.answer_cancel_preview(&grant).map(|_| Value::Null).map_err(|e| message(&e))).await
+}
+
+#[tauri::command]
+async fn generation_requests(shell: State<'_, Shell>) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.generation_requests(200).map(Value::from).map_err(|e| message(&e))).await
 }
 
 // ------------------------------------------------------------------ status
@@ -475,7 +594,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status, touch, vault_create, vault_unlock, vault_lock, vault_restore, change_passphrase, run_skill, start_skill, tasks, task_cancel,
-            create_object, import_files, resume_import, commit_change, export_commit, backup, privacy, view
+            create_object, import_files, resume_import, commit_change, export_commit, backup, privacy, view, connections, connection_save,
+            connection_probe, connection_revoke, connection_default, answer_preview, answer_start, answer_discard, generation_requests
         ])
         .run(tauri::generate_context!())
         .expect("desktop runtime failed");

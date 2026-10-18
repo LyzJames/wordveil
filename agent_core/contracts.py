@@ -191,6 +191,9 @@ class TaskPlan(StrictModel):
 
 class Claim(StrictModel):
     claim_id: ShortText
+    # conclusion / basis / calculation are verified against sources; next_step
+    # is advice and is shown as such (design 9.12, lvjin-retrieval contracts 4).
+    kind: Literal['conclusion', 'basis', 'calculation', 'next_step']
     text: ShortText
     evidence_refs: list[Ref]
     calculation_refs: list[Ref]

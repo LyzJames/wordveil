@@ -9,6 +9,16 @@
           "title": "Claim Id",
           "type": "string"
         },
+        "kind": {
+          "enum": [
+            "conclusion",
+            "basis",
+            "calculation",
+            "next_step"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "text": {
           "maxLength": 4096,
           "minLength": 1,
@@ -34,6 +44,7 @@
       },
       "required": [
         "claim_id",
+        "kind",
         "text",
         "evidence_refs",
         "calculation_refs"

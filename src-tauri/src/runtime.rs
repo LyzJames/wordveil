@@ -891,7 +891,7 @@ impl Runtime {
 }
 
 /// Typed result objects that report-export may reference as ResultRef.
-pub const RESULT_KINDS: &[&str] = &["ResultRef", "ImportResultRef", "OcrResultRef", "IndexResultRef", "CandidateSetRef", "EvidenceBundleRef", "EvidenceReadRef", "GraphResultRef", "CalculationRef", "MatterSnapshotRef", "ChangeResultRef", "MediaResultRef", "TranscriptResultRef", "ReviewResultRef", "RetrievalResultRef", "DiagnosticsResultRef", "MaintenanceResultRef"];
+pub const RESULT_KINDS: &[&str] = &["ResultRef", "ImportResultRef", "OcrResultRef", "IndexResultRef", "CandidateSetRef", "EvidenceBundleRef", "EvidenceReadRef", "GraphResultRef", "CalculationRef", "MatterSnapshotRef", "ChangeResultRef", "MediaResultRef", "TranscriptResultRef", "ReviewResultRef", "RetrievalResultRef", "DiagnosticsResultRef", "MaintenanceResultRef", "SearchPlanRef", "DraftRef", "ValidationReportRef", "ConnectionResultRef"];
 
 /// Handler outcome before the core seals it into the closed SkillResult schema.
 #[derive(Clone, Debug, Default)]

@@ -1,112 +1,168 @@
-// Workbench: recent matters, running tasks and interrupted imports.
+// Workbench (design 9.2): what needs you, what is running, recent matters.
 import React, { useState } from 'react';
-import { api, applyChange, day, MATTER_TYPES, snapshot, statusLabel, type Matter } from './api';
-import { useSession } from './main';
-import { Busy, Empty, ErrorLine, Field, Modal, useAction, useLoad } from './ui';
+import { api, applyChange, MATTER_TYPES, relative, skillName, stageName, statusLabel, type Matter } from './api';
+import { Icon } from './icons';
+import { useSession } from './session';
+import { Callout, Empty, Field, Modal, Skeleton, useAction, useLoad } from './ui';
 
-const STAGES: Record<string, string> = {
-  parse_pdf: '解析 PDF', orientation: '整页方向', unwarp: '弯曲矫正', detection: '文字检测', line_orientation: '行方向', recognition: '文字识别',
-  index: '建立索引', embedding: '向量化', probe: '读取媒体信息', decode_audio: '解码音频', frames: '抽取画面', asr: '语音转写', backup: '备份',
-};
-const SKILLS: Record<string, string> = {
-  'document-import': '导入资料', 'document-ocr': '识别文字', 'knowledge-index': '建立索引', 'audio-review': '音频转写', 'video-review': '视频识别',
-  'lvjin-retrieval': '资料检索', 'contract-review': '合同阅读', 'loan-analysis': '借款核对', 'budget-analysis': '预算分析', 'media-decode': '媒体解码', 'audio-transcribe': '语音转写', 'image-review': '图片识别',
-};
-export const skillName = (id: string) => SKILLS[id] ?? id;
+type Interrupted = { selection_id: string; matter_id: string; display_name: string; updated_at: string };
 
 export function Workbench() {
-  const { info, go, tasks, revision, refresh } = useSession();
-  const root = useLoad(() => snapshot(info.root_matter), [info.root_matter, revision]);
-  const interrupted = useLoad(() => api.view<{ selection_id: string; matter_id: string; display_name: string; updated_at: string }[]>('interrupted'), [revision]);
-  const [creating, setCreating] = useState(false);
+  const { info, go, tasks, revision, refresh, matters, mattersLoaded, connection, newMatter } = useSession();
+  const interrupted = useLoad(() => api.view<Interrupted[]>('interrupted'), [revision]);
   const { run } = useAction();
-  const matters = root.data?.matters ?? [];
+  const [, tick] = useState(0);
   const active = tasks.filter((t) => t.status === 'running');
+  const failed = tasks.filter((t) => t.status === 'failed' && t.envelope).slice(-2);
+  const pending = matters.filter((m) => (m.candidate_facts ?? 0) > 0);
+  const recent = [...matters].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 6);
+  const loaded = interrupted.data !== undefined && mattersLoaded;
+  const nothing = pending.length === 0 && (interrupted.data?.length ?? 0) === 0 && failed.length === 0;
+
   return (
-    <div className="page">
+    <div className="page fade-in">
       <header className="page-head">
-        <div>
-          <p className="eyebrow">工作台</p>
-          <h1>{info.name}</h1>
+        <div className="titles">
+          <div className="text-secondary">{info.name} · 本机加密</div>
+          <h1 className="t-page">工作台</h1>
         </div>
         <div className="actions">
-          <button className="primary" onClick={() => setCreating(true)}>新建事务</button>
-          <button onClick={() => go({ name: 'search' })}>检索资料</button>
+          <button className="btn btn-primary" onClick={newMatter}>
+            <Icon name="add" />
+            新建事务
+          </button>
+          <button className="btn" onClick={() => go({ name: 'qa' })}>
+            <Icon name="chat" />
+            提问
+          </button>
         </div>
       </header>
-      <section className="panel">
-        <h2>进行中的任务</h2>
-        {active.length === 0 ? (
-          <p className="muted">没有正在运行的任务。导入、识别与转写会在后台进行，可随时停止。</p>
-        ) : (
-          <ul className="task-list">
-            {active.map((t) => (
-              <li key={t.task_id}>
-                <span className="task-name">{skillName(t.skill)}</span>
-                <span className="task-stage">{t.progress ? `${skillName(t.progress.skill)} · ${STAGES[t.progress.stage] ?? t.progress.stage}` : '准备中'}</span>
-                {t.progress && t.progress.total > 0 && <progress max={t.progress.total} value={t.progress.done} aria-label="进度" />}
-                <button className="small" onClick={() => run(() => api.cancelTask(t.task_id), '已请求停止')}>停止</button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      {(interrupted.data?.length ?? 0) > 0 && (
-        <section className="panel warn">
-          <h2>中断的导入</h2>
-          <p className="muted">这些资料在锁定或退出时尚未处理完。原件已加密保存，可从中断处继续，不会重复导入。</p>
-          <ul className="plain">
-            {interrupted.data!.map((item) => (
-              <li key={item.selection_id} className="row-between">
-                <span>{item.display_name}<span className="muted small">（{day(item.updated_at)}）</span></span>
-                <button className="small" onClick={() => run(async () => { await api.resumeImport(item.selection_id, item.matter_id); refresh(); }, '已继续导入')}>继续导入</button>
-              </li>
-            ))}
-          </ul>
+
+      {matters.length === 0 && loaded ? (
+        <section className="section start-card card" aria-labelledby="start">
+          <h2 id="start" className="t-subtitle">开始使用</h2>
+          <ol className="start-steps">
+            <li>
+              <strong>新建第一件事务</strong>
+              <span className="text-secondary">例如“房屋租赁”或“借款给朋友”，同一件事的资料、事实和金额归在一起。</span>
+              <button className="btn btn-primary btn-sm" onClick={newMatter}>新建事务</button>
+            </li>
+            <li>
+              <strong>导入资料</strong>
+              <span className="text-secondary">合同、借条、账单、截图、录音或视频；原件加密保存在本机，自动识别文字并建立检索。</span>
+            </li>
+            <li>
+              <strong>（可选）连接生成接口</strong>
+              <span className="text-secondary">连接后可以生成带引用、逐句核查的回答；发送任何资料前都会先请你确认。</span>
+              {!connection && <button className="btn btn-sm" onClick={() => go({ name: 'connections' })}>连接生成接口</button>}
+            </li>
+          </ol>
         </section>
+      ) : (
+        <>
+          <section className="section" aria-labelledby="todo">
+            <div className="section-head">
+              <h2 id="todo">需要你处理</h2>
+            </div>
+            <div className="stack reading">
+              {!loaded && <Skeleton rows={2} />}
+              {pending.map((m) => (
+                <Callout
+                  key={m.id}
+                  tone="attention"
+                  title={`${m.title} 有 ${m.candidate_facts} 条候选待校对`}
+                  action={<button className="btn btn-sm" onClick={() => go({ name: 'matter', id: m.id, tab: 'facts' })}>去核对</button>}
+                >
+                  金额与日期由规则从原文提取，确认后才会用于计算。
+                </Callout>
+              ))}
+              {interrupted.data?.map((item) => (
+                <Callout
+                  key={item.selection_id}
+                  tone="warning"
+                  title={`《${item.display_name}》的导入在锁定或退出时中断`}
+                  action={
+                    <button className="btn btn-sm" onClick={() => run(async () => { await api.resumeImport(item.selection_id, item.matter_id); refresh(); }, '已继续导入')}>
+                      继续导入
+                    </button>
+                  }
+                >
+                  原件已加密保存，可以从中断处继续，不会重复导入（{relative(item.updated_at)}）。
+                </Callout>
+              ))}
+              {failed.map((t) => (
+                <Callout key={t.task_id} tone="danger" title={`${skillName(t.skill)}失败`}>
+                  {t.envelope!.warnings.map((w) => w.message).join('；') || statusLabel(t.status)}
+                </Callout>
+              ))}
+              {loaded && nothing && <p className="text-secondary">没有需要你处理的事项。</p>}
+            </div>
+          </section>
+
+          <section className="section" aria-labelledby="running">
+            <div className="section-head">
+              <h2 id="running">进行中</h2>
+            </div>
+            {active.length === 0 ? (
+              <p className="text-secondary">没有进行中的任务。导入、识别与转写在后台进行，可以随时停止。</p>
+            ) : (
+              <div className="stack reading">
+                {active.map((t) => {
+                  const pct = t.progress && t.progress.total > 0 ? Math.round((t.progress.done / t.progress.total) * 100) : null;
+                  return (
+                    <div key={t.task_id} className="card task-card">
+                      <div style={{ minWidth: 0 }}>
+                        <div className="t-strong ellipsis">{skillName(t.skill)}</div>
+                        <div className="t-caption text-secondary">
+                          {t.progress ? `${stageName(t.progress.stage)}${t.progress.total > 0 ? ` · ${t.progress.done}/${t.progress.total}` : ''}` : '准备中'} · 开始于 {relative(t.started_at)}
+                        </div>
+                      </div>
+                      <button className="btn btn-sm" onClick={() => run(() => api.cancelTask(t.task_id), '已请求停止').then(() => tick((x) => x + 1))}>
+                        <Icon name="stop" />
+                        停止
+                      </button>
+                      <div className="progress" aria-label="进度">
+                        <span style={{ width: `${pct ?? 6}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="section" aria-labelledby="recent">
+            <div className="section-head">
+              <h2 id="recent">最近事务</h2>
+              <button className="btn btn-link" onClick={() => go({ name: 'matters' })}>全部事务</button>
+            </div>
+            <div className="grid-cards">
+              {recent.map((m) => (
+                <MatterCard key={m.id} matter={m} onOpen={() => go({ name: 'matter', id: m.id })} />
+              ))}
+            </div>
+          </section>
+        </>
       )}
-      <section className="panel">
-        <div className="row-between">
-          <h2>最近事务</h2>
-          <button className="link" onClick={() => go({ name: 'matters' })}>全部事务</button>
-        </div>
-        {root.loading && !root.data ? <Busy /> : <ErrorLine text={root.error} />}
-        {matters.length === 0 && !root.loading ? (
-          <Empty title="还没有事务">新建一件事务（例如“房屋租赁”或“借款给朋友”），再把合同、借条、账单、截图或录音导入其中。</Empty>
-        ) : (
-          <div className="cards">
-            {matters.slice(0, 6).map((m) => (
-              <MatterCard key={m.id} matter={m} onOpen={() => go({ name: 'matter', id: m.id })} />
-            ))}
-          </div>
-        )}
-      </section>
-      <section className="panel quiet">
-        <h2>当前版本可以做什么</h2>
-        <ul className="plain columns">
-          <li>导入 PDF、Word、表格、文本、图片、截图、录音与视频，原件加密保存在本机。</li>
-          <li>扫描件与照片自动识别文字，每行文字都能回到原图位置。</li>
-          <li>录音转写为带时间段的文字，视频按画面抽帧识别文字。</li>
-          <li>在所选事务中检索原文，按相关度重排并显示出处。</li>
-          <li>校对候选金额与日期，按确认的记录进行确定性计算。</li>
-          <li>导出 Markdown/CSV，创建加密备份并在新电脑恢复。</li>
-        </ul>
-        <p className="muted small">回答与分析需要你配置的生成接口，将在后续版本（M2）提供；当前版本不会把资料发送到任何地方。</p>
-      </section>
-      {creating && <NewMatter root={info.root_matter} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); refresh(); go({ name: 'matter', id }); }} />}
     </div>
   );
 }
 
 export function MatterCard({ matter, onOpen }: { matter: Matter; onOpen: () => void }) {
+  const pending = matter.candidate_facts ?? 0;
   return (
-    <button className="card matter-card" onClick={onOpen}>
-      <span className="card-kind">{MATTER_TYPES[matter.matter_type] ?? matter.matter_type}</span>
-      <strong>{matter.title}</strong>
-      <span className="muted small">
-        {matter.documents ?? 0} 份资料 · {matter.candidate_facts ?? 0} 条待校对 · 更新于 {day(matter.updated_at)}
+    <button className="card interactive matter-card" onClick={onOpen}>
+      <span className="card-kind">
+        <Icon name="folder" />
+        {MATTER_TYPES[matter.matter_type] ?? matter.matter_type}
+        {matter.status !== 'active' && ` · ${statusLabel(matter.status)}`}
       </span>
-      {matter.status !== 'active' && <span className="muted small">{statusLabel(matter.status)}</span>}
+      <span className="card-title">{matter.title}</span>
+      <span className="card-meta">
+        <span>{matter.documents ?? 0} 份资料</span>
+        <span className={pending ? 'pending' : undefined}>{pending ? `${pending} 条待校对` : '无待校对'}</span>
+        <span title={matter.updated_at}>更新于 {relative(matter.updated_at)}</span>
+      </span>
     </button>
   );
 }
@@ -121,7 +177,7 @@ export function NewMatter({ root, onClose, onCreated }: { root: string; onClose:
     if (done) onCreated(done.evidence_refs[0]);
   }
   return (
-    <Modal title="新建事务" onClose={onClose}>
+    <Modal title="新建事务" icon="folder" onClose={onClose}>
       <form className="stack" onSubmit={submit}>
         <Field label="事务名称" hint="例如：浦东租房合同、借给方宁的钱、2026 家庭开支">
           <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} required autoFocus />
@@ -134,10 +190,19 @@ export function NewMatter({ root, onClose, onCreated }: { root: string; onClose:
           </select>
         </Field>
         <div className="actions end">
-          <button type="button" onClick={onClose}>取消</button>
-          <button className="primary" disabled={busy || !title.trim()}>{busy ? '正在创建…' : '创建'}</button>
+          <button type="button" className="btn" onClick={onClose}>取消</button>
+          <button className="btn btn-primary" disabled={busy || !title.trim()}>{busy ? '正在创建…' : '创建'}</button>
         </div>
       </form>
     </Modal>
+  );
+}
+
+export function MattersEmpty() {
+  const { newMatter } = useSession();
+  return (
+    <Empty icon="folder" title="还没有事务" action={<button className="btn btn-primary" onClick={newMatter}>新建事务</button>}>
+      事务用来归集同一件事的资料、事实、金额记录与待办。
+    </Empty>
   );
 }

@@ -35,9 +35,9 @@
       "rule": "本次用途，不新增权限"
     }
   ],
-  "version": "0.2.0-m1",
+  "version": "0.3.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "m2-network",
+  "implementation_status": "network-pending",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }
