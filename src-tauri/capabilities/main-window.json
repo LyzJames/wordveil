@@ -34,6 +34,11 @@
     "allow-answer-preview",
     "allow-answer-start",
     "allow-answer-discard",
-    "allow-generation-requests"
+    "allow-generation-requests",
+    "allow-flows-interrupted",
+    "allow-flow-continue",
+    "allow-flow-discard",
+    "allow-analysis-preview",
+    "allow-media-preview"
   ]
 }

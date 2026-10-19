@@ -112,7 +112,7 @@ async fn connection_probe(app: AppHandle, shell: State<'_, Shell>, connection: S
     blocking(move || {
         let info = core.describe_connection(&connection).map_err(|e| message(&e))?;
         let text = format!(
-            "将向 {}（模型 {}）发送约 6 条合成测试请求，检测文本、流式、工具调用、结构化输出和图片输入能力。\n\n测试内容是固定的合成样本，不包含你的任何资料。{}",
+            "将向 {}（模型 {}）发送约 7 条合成测试请求，检测文本、流式、工具调用、结构化输出、图片输入和音频输入能力。\n\n测试内容是固定的合成样本，不包含你的任何资料。{}",
             info["host"].as_str().unwrap_or(""),
             info["model_id"].as_str().unwrap_or(""),
             if info["loopback"] == json!(true) { "这是本机地址的服务；它是否继续转发到其他地方无法由本应用核验。" } else { "可能产生少量费用。" }
@@ -149,42 +149,125 @@ async fn connection_default(shell: State<'_, Shell>, connection: String) -> Repl
 
 /// Local retrieval for the preview; registers an unapproved, single-use grant.
 #[tauri::command]
-async fn answer_preview(shell: State<'_, Shell>, question: String, matters: Vec<String>, connection: Option<String>) -> Reply {
+async fn answer_preview(shell: State<'_, Shell>, question: String, matters: Vec<String>, connection: Option<String>, deep: Option<bool>) -> Reply {
     let core = core(&shell)?.clone();
-    blocking(move || core.answer_preview(&question, &matters, connection.as_deref()).map_err(|e| message(&e))).await
+    blocking(move || core.answer_preview_with(&question, &matters, connection.as_deref(), deep.unwrap_or(false)).map_err(|e| message(&e))).await
+}
+
+/// Written analysis preview: local evidence, fixed roles, request limits.
+#[tauri::command]
+async fn analysis_preview(shell: State<'_, Shell>, kind: String, request: Value) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.analysis_preview(&kind, &request).map_err(|e| message(&e))).await
+}
+
+/// Media review preview: the images to upload (prepared now) or the bounded
+/// frame/audio policy of a video or audio range.
+#[tauri::command]
+async fn media_preview(shell: State<'_, Shell>, kind: String, request: Value) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.media_preview(&kind, &request).map_err(|e| message(&e))).await
 }
 
 /// The native dialog is built here from the grant's real parameters; only a
 /// confirmed dialog approves the grant and starts the task.
 #[tauri::command]
-async fn answer_start(app: AppHandle, shell: State<'_, Shell>, grant: String, excluded: Vec<String>) -> Reply {
+async fn answer_start(app: AppHandle, shell: State<'_, Shell>, grant: String, excluded: Vec<String>, excluded_media: Option<Vec<String>>) -> Reply {
     let core = core(&shell)?.clone();
     blocking(move || {
+        let excluded_media = excluded_media.unwrap_or_default();
         let preview = core.describe_grant(&grant).map_err(|e| message(&e))?;
-        let offered = preview["excerpts"].as_array().map(|e| e.len()).unwrap_or(0);
-        let sending = offered.saturating_sub(excluded.len());
-        let text = format!(
-            "接收方：{}（{}）\n模型：{}\n用途：生成这一次回答（不包含联网搜索）\n将发送：你的问题，以及所选事务中检索到的原文摘录（预览中 {} 段；查询改写后可能在同一范围内替换，最多 {} 段）\n请求次数：最多 {} 次\n有效期：仅本次任务\n\n已发送的内容无法从服务方撤回。",
-            preview["connection"]["name"].as_str().unwrap_or(""),
-            preview["connection"]["host"].as_str().unwrap_or(""),
-            preview["connection"]["model_id"].as_str().unwrap_or(""),
-            sending,
-            preview["max_items"].as_i64().unwrap_or(0),
-            preview["max_requests"].as_i64().unwrap_or(0),
-        );
+        let text = egress_text(&preview, excluded.len(), &excluded_media);
         if !confirm(&app, "向生成接口发送资料", &text, "发送并生成") {
             let _ = core.answer_cancel_preview(&grant);
             return Err("已取消，未发送任何内容".into());
         }
-        core.answer_start(&grant, &excluded).map(Value::String).map_err(|e| message(&e))
+        core.grant_start(&grant, &excluded, &excluded_media).map(Value::String).map_err(|e| message(&e))
     })
     .await
+}
+
+/// The confirmation text, from the grant's stored real parameters only.
+fn egress_text(preview: &Value, excluded: usize, excluded_media: &[String]) -> String {
+    let purpose = match preview["purpose"].as_str().unwrap_or("") {
+        "deep_answer" => "深入分析这一个问题（任务规划者安排至多 3 个专业角色，检查者复核，不包含联网搜索）",
+        "contract_review" => "合同书面分析（法律适用、金融口径、证据检查、结果综合）",
+        "loan_analysis" => "借款书面分析（金融口径、法律适用、证据检查、结果综合）",
+        "budget_analysis" => "预算书面分析（金融口径、证据检查、结果综合）",
+        "image_review" => "图片分析（直接读取所列图片，并与本机识别文字核对）",
+        "audio_review" => "录音分析（本机转写；接口通过音频自检时直接听取所选时段）",
+        "video_review" => "视频分析（本机抽帧识别与转写；接口通过自检时直接读取抽帧画面与音轨）",
+        _ => "生成这一次回答（不包含联网搜索）",
+    };
+    let offered = preview["excerpts"].as_array().map(|e| e.len()).unwrap_or(0);
+    let media: Vec<&Value> = preview["native_media"].as_array().map(|m| m.iter().filter(|x| !excluded_media.iter().any(|e| x["media_ref"] == e.as_str())).collect()).unwrap_or_default();
+    let mut lines = vec![
+        format!("接收方：{}（{}）", preview["connection"]["name"].as_str().unwrap_or(""), preview["connection"]["host"].as_str().unwrap_or("")),
+        format!("模型：{}", preview["connection"]["model_id"].as_str().unwrap_or("")),
+        format!("用途：{purpose}"),
+        format!("将发送：你的问题，以及所选资料中的原文摘录（预览中 {} 段；任务中可能在同一范围内替换，全程最多 {} 段）", offered.saturating_sub(excluded), preview["max_items"].as_i64().unwrap_or(0)),
+    ];
+    if !media.is_empty() {
+        let bytes: u64 = media.iter().filter_map(|m| m["bytes"].as_u64()).sum();
+        lines.push(format!("将上传原始图片：{} 张（JPEG，长边不超过 2048 像素，共约 {} KB）", media.len(), bytes.div_ceil(1024)));
+    }
+    if let Some(policy) = preview["media_policy"].as_object() {
+        if policy["frames"].as_u64().unwrap_or(0) > 0 {
+            lines.push(format!("将上传：所选时段内均匀抽取的画面，最多 {} 张（JPEG）", policy["frames"]));
+        }
+        if policy["audio_seconds"].as_f64().unwrap_or(0.0) > 0.0 {
+            lines.push(format!("将上传：所选时段的原始音频，最长 {:.0} 秒", policy["audio_seconds"].as_f64().unwrap_or(0.0)));
+        }
+    }
+    lines.push(format!("请求次数：最多 {} 次", preview["max_requests"].as_i64().unwrap_or(0)));
+    lines.push("有效期：仅本次任务".into());
+    format!("{}\n\n已发送的内容无法从服务方撤回。", lines.join("\n"))
 }
 
 #[tauri::command]
 async fn answer_discard(shell: State<'_, Shell>, grant: String) -> Reply {
     let core = core(&shell)?.clone();
     blocking(move || core.answer_cancel_preview(&grant).map(|_| Value::Null).map_err(|e| message(&e))).await
+}
+
+// ------------------------------------------------- interrupted flow runs
+
+#[tauri::command]
+async fn flows_interrupted(shell: State<'_, Shell>) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.interrupted_flows().map(Value::from).map_err(|e| message(&e))).await
+}
+
+/// Continuing sends further requests under the original grant, so it needs
+/// its own native confirmation built from the run's real state.
+#[tauri::command]
+async fn flow_continue(app: AppHandle, shell: State<'_, Shell>, run: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || {
+        let info = core.describe_continue(&run).map_err(|e| message(&e))?;
+        let unknown = info["unknown_requests"].as_i64().unwrap_or(0);
+        let text = format!(
+            "问题：{}\n接收方：{}（{}）\n模型：{}\n已用请求：{} / {} 次\n{}\n继续后从中断处接着执行，已完成的步骤不会重复。已发送的内容无法从服务方撤回。",
+            info["question"].as_str().unwrap_or("（无）"),
+            info["connection"]["name"].as_str().unwrap_or(""),
+            info["connection"]["host"].as_str().unwrap_or(""),
+            info["connection"]["model_id"].as_str().unwrap_or(""),
+            info["used_requests"].as_i64().unwrap_or(0),
+            info["max_requests"].as_i64().unwrap_or(0),
+            if unknown > 0 { format!("有 {unknown} 次请求在中断时已发出但没有收到回应，结果未知，已计入额度；继续时该步骤会在剩余额度内重新请求。\n") } else { String::new() },
+        );
+        if !confirm(&app, "继续中断的任务", &text, "继续") {
+            return Err("已取消，未发送任何内容".into());
+        }
+        core.flow_continue(&run).map(Value::String).map_err(|e| message(&e))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn flow_discard(shell: State<'_, Shell>, run: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.flow_discard(&run).map(|_| Value::Null).map_err(|e| message(&e))).await
 }
 
 #[tauri::command]
@@ -595,7 +678,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_status, touch, vault_create, vault_unlock, vault_lock, vault_restore, change_passphrase, run_skill, start_skill, tasks, task_cancel,
             create_object, import_files, resume_import, commit_change, export_commit, backup, privacy, view, connections, connection_save,
-            connection_probe, connection_revoke, connection_default, answer_preview, answer_start, answer_discard, generation_requests
+            connection_probe, connection_revoke, connection_default, answer_preview, answer_start, answer_discard, generation_requests,
+            flows_interrupted, flow_continue, flow_discard, analysis_preview, media_preview
         ])
         .run(tauri::generate_context!())
         .expect("desktop runtime failed");

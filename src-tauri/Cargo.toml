@@ -135,6 +135,21 @@ name = "m2_pipeline"
 path = "../../docs/tests/m2/pipeline.rs"
 required-features = ["m0-harness", "dev-worker"]
 
+[[test]]
+name = "m2_flows"
+path = "../../docs/tests/m2/flows.rs"
+required-features = ["m0-harness", "dev-worker"]
+
+[[test]]
+name = "m2_roles"
+path = "../../docs/tests/m2/roles.rs"
+required-features = ["m0-harness", "dev-worker"]
+
+[[test]]
+name = "m2_isolation"
+path = "../../docs/tests/m2/isolation_acl.rs"
+required-features = ["m0-harness"]
+
 # Opt-in real-service check (ignored by default; needs the user's key and network).
 [[test]]
 name = "m2_real_deepseek"

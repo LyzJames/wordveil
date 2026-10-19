@@ -54,6 +54,13 @@ class RotateOp(StrictModel):
     clockwise_turns: Annotated[int, Field(ge=0, le=3)]
 
 
+class EncodeOp(StrictModel):
+    op: Literal['encode_for_model']
+    png_base64: Annotated[str, StringConstraints(min_length=1, max_length=24_000_000)]
+    max_side: Annotated[int, Field(ge=256, le=4096)]
+    quality: Annotated[int, Field(ge=50, le=95)]
+
+
 class CropOp(StrictModel):
     op: Literal['crop_polygons']
     png_base64: Annotated[str, StringConstraints(min_length=1, max_length=24_000_000)]
@@ -131,6 +138,10 @@ class LocalService:
             from .ocr_ops import rotate_quarter
             item = RotateOp.model_validate(request)
             return rotate_quarter(item.png_base64, item.clockwise_turns)
+        if op == 'encode_for_model':
+            from .ocr_ops import encode_for_model
+            item = EncodeOp.model_validate(request)
+            return encode_for_model(item.png_base64, item.max_side, item.quality)
         if op == 'crop_polygons':
             from .ocr_ops import crop_polygons
             item = CropOp.model_validate(request)

@@ -1,15 +1,19 @@
 // Analysis entries (contract reading, loan reconciliation, budget review).
-// They run the local evidence and calculation steps now; the written
-// analysis by the generation connection is a later M2 segment, and the
-// result says so plainly.
+// Local evidence and deterministic calculations always run on this computer.
+// With a generation connection, the written analysis by fixed narrow roles
+// is approved in the egress preview and the native confirmation, and its
+// result appears in the Q&A thread.
 import React, { useRef, useState } from 'react';
-import { api, money, type EvidenceItem, type Snapshot } from './api';
+import { api, money, type AnswerPreview, type EvidenceItem, type Snapshot } from './api';
+import { EgressDialog } from './egress';
 import { EvidenceList } from './evidence';
 import { Icon } from './icons';
 import { sourceOf, useSession } from './session';
+import { newTurnId, type TurnKind } from './turns';
 import { Busy, Callout, ErrorLine, Field, Modal, useAction, useDismiss } from './ui';
 
 type Workflow = 'contract-review' | 'loan-analysis' | 'budget-analysis';
+const TURN: Record<Workflow, TurnKind> = { 'contract-review': 'contract', 'loan-analysis': 'loan', 'budget-analysis': 'budget' };
 const TITLES: Record<Workflow, string> = { 'contract-review': '合同阅读', 'loan-analysis': '借款核对', 'budget-analysis': '预算分析' };
 const QUESTIONS: Record<Workflow, string> = {
   'contract-review': '这份合同的押金、租金、期限和违约责任是怎样约定的？',
@@ -47,7 +51,8 @@ export function AnalysisButton({ matter, snapshot }: { matter: string; snapshot:
 type Outcome = { status: string; message: string; items: EvidenceItem[]; calculation: Record<string, unknown> | null };
 
 function AnalysisModal({ workflow, matter, snapshot, onClose }: { workflow: Workflow; matter: string; snapshot: Snapshot; onClose: () => void }) {
-  const { open } = useSession();
+  const { open, connection, qa, go } = useSession();
+  const [preview, setPreview] = useState<AnswerPreview | null>(null);
   const documents = snapshot.documents.filter((d) => d.media_kind === 'document');
   const media = snapshot.documents.filter((d) => d.media_id);
   const [question, setQuestion] = useState(QUESTIONS[workflow]);
@@ -63,6 +68,32 @@ function AnalysisModal({ workflow, matter, snapshot, onClose }: { workflow: Work
     else next.add(id);
     return next;
   };
+
+  /** Written analysis: preview what may leave, then the native confirmation. */
+  async function written() {
+    setError('');
+    if (workflow === 'budget-analysis' && (!period.start || !period.end)) {
+      setError('请选择分析期间');
+      return;
+    }
+    const prepared = await run(() => api.analysisPreview(workflow, {
+      question, matter_id: matter, document_versions: [...versions], period: workflow === 'budget-analysis' ? period : undefined, account_ids: [], connection: connection?.id ?? null,
+    }));
+    if (prepared) setPreview(prepared);
+  }
+
+  async function approve(excluded: string[], excludedMedia: string[]) {
+    if (!preview) return;
+    try {
+      const task = await api.answerStart(preview.grant_id, excluded, excludedMedia);
+      qa.update((turns) => [...turns, { id: newTurnId(), question, matters: [matter], kind: TURN[workflow], state: 'running', started: Date.now(), task, source: snapshot.matter.title }]);
+      onClose();
+      go({ name: 'qa' });
+    } catch (e) {
+      setPreview(null);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   async function start() {
     setError('');
@@ -86,6 +117,10 @@ function AnalysisModal({ workflow, matter, snapshot, onClose }: { workflow: Work
     if (result) setOutcome(result);
   }
 
+  if (preview) {
+    return <EgressDialog preview={preview} onCancel={() => { api.answerDiscard(preview.grant_id).catch(() => {}); setPreview(null); }} onConfirm={approve} />;
+  }
+  const empty = workflow !== 'loan-analysis' && versions.size === 0 && mediaRefs.size === 0;
   return (
     <Modal
       title={TITLES[workflow]}
@@ -95,9 +130,14 @@ function AnalysisModal({ workflow, matter, snapshot, onClose }: { workflow: Work
       footer={
         <>
           <button className="btn" onClick={onClose}>关闭</button>
-          <button className="btn btn-primary" disabled={busy || (workflow !== 'loan-analysis' && versions.size === 0 && mediaRefs.size === 0)} onClick={start}>
-            {busy ? '正在本机检索与计算…' : '开始'}
+          <button className={connection ? 'btn' : 'btn btn-primary'} disabled={busy || empty} onClick={start}>
+            {busy ? '正在本机检索与计算…' : '只看本机证据与计算'}
           </button>
+          {connection && (
+            <button className="btn btn-primary" disabled={busy || empty || mediaRefs.size > 0} onClick={written} title={mediaRefs.size > 0 ? '书面分析暂不含录音/视频；可在资料列表中单独分析录音或视频' : undefined}>
+              生成书面分析
+            </button>
+          )}
         </>
       }
     >
@@ -137,8 +177,8 @@ function AnalysisModal({ workflow, matter, snapshot, onClose }: { workflow: Work
       {busy && <Busy label="正在本机检索原文、重排并核对计算（首次加载模型可能需要一分钟）…" />}
       {outcome && (
         <div className="stack">
-          <Callout title="书面分析将在后续版本由生成接口提供">
-            {outcome.message ? `${outcome.message}。` : ''}以下是本机找到的原文依据{outcome.calculation ? '与确定性计算结果' : ''}，可以逐条回到原文核对；也可以在“问答与检索”中就这些资料提问。
+          <Callout title={connection ? '本机证据与计算（未发送任何内容）' : '书面分析需要连接生成接口'}>
+            {outcome.message ? `${outcome.message}。` : ''}以下是本机找到的原文依据{outcome.calculation ? '与确定性计算结果' : ''}，可以逐条回到原文核对{connection ? '；“生成书面分析”会在发送前请你确认' : ''}。
           </Callout>
           {outcome.calculation && <CalculationSummary result={outcome.calculation} />}
           <h3 className="t-subtitle">原文依据（{outcome.items.length}）</h3>
@@ -153,7 +193,7 @@ const LABELS: Record<string, string> = {
   total_lent: '借出合计', total_repaid: '已还合计', outstanding: '尚欠', total_received: '收到', total_paid: '付出', finance_cost: '资金成本',
 };
 
-function CalculationSummary({ result }: { result: Record<string, unknown> }) {
+export function CalculationSummary({ result }: { result: Record<string, unknown> }) {
   const figures = Object.entries(LABELS).filter(([key]) => typeof result[key] === 'string');
   if (!figures.length) {
     return (

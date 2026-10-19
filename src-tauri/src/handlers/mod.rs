@@ -20,11 +20,13 @@ use std::sync::{
 pub mod answers;
 pub mod connections;
 pub mod documents;
+pub mod flows;
 pub mod indexing;
 pub mod matters;
 pub mod outputs;
 pub mod maintenance;
 pub mod mediaflow;
+pub mod observe;
 pub mod workflows;
 
 pub type VaultHandle = Arc<Mutex<Vault>>;
@@ -98,6 +100,7 @@ pub fn run(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
         "image-review" => mediaflow::image_review(ctx, invocation, input),
         "audio-review" => mediaflow::audio_review(ctx, invocation, input),
         "video-review" => mediaflow::video_review(ctx, invocation, input),
+        "media-observe" => observe::media_observe(ctx, invocation, input),
         "query-plan" => answers::query_plan(ctx, invocation, input),
         "answer-compose" => answers::answer_compose(ctx, invocation, input),
         "answer-grounding" => answers::answer_grounding(ctx, invocation, input),

@@ -7,6 +7,7 @@ import {
   type DocumentRow, type Fact, type Snapshot,
 } from './api';
 import { AnalysisButton } from './analysis';
+import { MediaAnalysisButton } from './media';
 import { ExportButton } from './export';
 import { Icon, type IconName } from './icons';
 import { CalcTab, CashflowTab } from './money';
@@ -371,6 +372,7 @@ function DocumentsTab({ matter, snapshot: s, onImport, importing }: { matter: st
                   <td className="row-actions">
                     <button className="btn btn-xs" onClick={() => open({ version: doc.version_id, title: doc.display_name, media: doc.media_kind !== 'document' })}>查看</button>
                     {doc.media_id && <button className="btn btn-xs" disabled={busy} onClick={() => transcribe(doc)}>{doc.media_kind === 'video' ? '识别画面与语音' : '转写'}</button>}
+                    <MediaAnalysisButton doc={doc} matter={matter} />
                     {doc.media_kind === 'audio' && <button className="btn btn-xs" disabled={busy} onClick={() => run(() => api.start('knowledge-index', { document_versions: [doc.version_id], operation: 'build' }), '已开始建立索引')} title="把转写文字加入检索索引">建立索引</button>}
                     {doc.media_kind === 'document' && doc.pages > 0 && <button className="btn btn-xs" disabled={busy} onClick={() => correct(doc)} title="对扫描页或照片做弯曲矫正后重新识别">矫正重识别</button>}
                     <button className="btn btn-xs btn-danger" disabled={busy} onClick={() => askDelete(doc)}>删除…</button>

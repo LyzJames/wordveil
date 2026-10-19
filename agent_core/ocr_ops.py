@@ -25,6 +25,20 @@ def _encode(image) -> str:
     return base64.b64encode(buffer.getvalue()).decode('ascii')
 
 
+def encode_for_model(png_base64: str, max_side: int, quality: int) -> dict:
+    """A JPEG copy for an approved generation request: longest side at most
+    max_side, RGB, no metadata (PIL writes no EXIF unless asked)."""
+    from PIL import Image
+    image = _decode(png_base64)
+    scale = min(1.0, max_side / max(image.width, image.height))
+    if scale < 1.0:
+        image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    image.save(buffer, format='JPEG', quality=quality, optimize=True)
+    data = buffer.getvalue()
+    return {'jpeg_base64': base64.b64encode(data).decode('ascii'), 'width': image.width, 'height': image.height, 'bytes': len(data)}
+
+
 def rotate_quarter(png_base64: str, clockwise_turns: int) -> dict:
     """Rotate the page clockwise by 0-3 quarter turns."""
     from PIL import Image

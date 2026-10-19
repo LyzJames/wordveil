@@ -1,0 +1,77 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observations",
+    "fields",
+    "limitations"
+  ],
+  "properties": {
+    "observations": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "media",
+          "text"
+        ],
+        "properties": {
+          "media": {
+            "type": "string",
+            "maxLength": 8
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "media",
+          "name",
+          "value"
+        ],
+        "properties": {
+          "media": {
+            "type": "string",
+            "maxLength": 8
+          },
+          "name": {
+            "type": "string",
+            "enum": [
+              "amount",
+              "date",
+              "name",
+              "account",
+              "id_number"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    }
+  }
+}

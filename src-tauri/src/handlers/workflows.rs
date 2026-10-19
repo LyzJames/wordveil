@@ -1,8 +1,9 @@
 //! Composite workflows (design 7.1, 9.1). lvjin-retrieval always delivers
 //! hybrid retrieval, rerank and exact source reading; with an approved
-//! generation grant it adds planning, a drafted answer, sentence-level
-//! verification and at most two revisions. Contract/loan/budget analyses
-//! deliver their local evidence and deterministic calculations.
+//! generation grant the LangGraph answer flow adds planning, a drafted
+//! answer, sentence-level verification and at most two revisions, and the
+//! core builds the delivered answer. Contract/loan/budget analyses deliver
+//! their local evidence and deterministic calculations.
 use super::*;
 use crate::vault::now_rfc3339;
 use rusqlite::{OptionalExtension, params};
@@ -27,6 +28,21 @@ fn scope_contents(ctx: &Ctx, scope: &str) -> Result<(Vec<String>, Vec<String>)> 
     Ok((serde_json::from_str(&matters)?, serde_json::from_str(&versions)?))
 }
 
+/// What one retrieval produced, whichever path ran.
+struct Found {
+    queries: Vec<Value>,
+    plan: Value,
+    candidate_set: Option<String>,
+    bundle: Option<String>,
+    read: Option<String>,
+    evidence: Vec<String>,
+    answer: Value,
+    process: Vec<Value>,
+    run: Option<String>,
+    /// Roles, plan and checker summaries of a deep answer (core-built).
+    extra: Value,
+}
+
 pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
     ctx.authorize(invocation, "vault.read")?;
     let question = text_of(input, "question_id")?;
@@ -35,44 +51,51 @@ pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
     let requested = text_of(input, "requested_output")?;
     let text: String = ctx.lock()?.db().query_row("SELECT text FROM questions WHERE id=?", [&question], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
     let (matters, versions) = scope_contents(ctx, &scope)?;
-    let generation = super::indexing::current_generation(ctx)?;
-    let snapshot = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalSnapshotRef", &json!({"generation": generation, "matters": matters, "versions": versions, "scope_id": scope}))?;
     let wants_answer = requested == "answer";
     // Generation runs only with an approved, destination-bound grant for this
-    // root; otherwise the local path below is the whole result (design 9.1).
+    // root (design 9.1); the LangGraph answer flow then owns the steps. Without
+    // one, the fixed local pipeline below is the whole result.
     let can_generate = wants_answer && super::answers::generation_available(ctx, invocation)?;
     let mut parts = completed(None);
-    let mut process: Vec<Value> = vec![];
-    let mut queries = vec![json!({"query_id": "q0", "query": text})];
-    let mut plan_info = json!({"fallback": true, "rewrites": [], "missing_facts": []});
-    if can_generate {
-        let started = std::time::Instant::now();
-        match child(ctx, invocation, "query-plan", json!({"question_id": question, "scope_id": scope, "constraint_ids": constraints})) {
-            Ok((_, envelope)) if status_of(&envelope) == "completed" => {
-                let plan = match data_of(&envelope) {
-                    Some(id) => ctx.lock()?.get_result(&id)?.2,
-                    None => json!({}),
-                };
-                for (index, rewrite) in plan["plan"]["rewritten_queries"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-                    queries.push(json!({"query_id": format!("q{}", index + 1), "query": rewrite}));
-                }
-                plan_info = json!({"fallback": false, "rewrites": plan["rewrites"], "missing_facts": plan["missing_facts"]});
-                process.push(json!({"step": "plan", "status": "completed", "ms": started.elapsed().as_millis() as u64, "rewrites": queries.len() - 1}));
-            }
-            Ok((_, envelope)) => {
-                parts.warnings.extend(child_warnings(&envelope));
-                warn(&mut parts, "plan_fallback", "查询规划未完成，改用原始问题检索。");
-                process.push(json!({"step": "plan", "status": status_of(&envelope), "ms": started.elapsed().as_millis() as u64}));
-            }
-            Err(Error::Cancelled) => return Err(Error::Cancelled),
-            Err(error) => {
-                warn(&mut parts, "plan_fallback", "查询规划未完成，改用原始问题检索。");
-                process.push(json!({"step": "plan", "status": "failed", "code": error.code(), "ms": started.elapsed().as_millis() as u64}));
-            }
-        }
+    let snapshot = |ctx: &Ctx| -> Result<String> {
+        let generation = super::indexing::current_generation(ctx)?;
+        ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalSnapshotRef", &json!({"generation": generation, "matters": matters, "versions": versions, "scope_id": scope}))
+    };
+    let found = if can_generate {
+        answer_flow(ctx, invocation, input, &question, &text, &scope, &constraints, &snapshot, &mut parts)?
+    } else {
+        local_evidence(ctx, invocation, &question, &text, &snapshot(ctx)?, &mut parts)?
+    };
+    let read_payload = match &found.read {
+        Some(id) => ctx.lock()?.get_result(id)?.2,
+        None => json!({"items": []}),
+    };
+    let usage = generation_usage(ctx, invocation.root_id())?;
+    let connection = if can_generate { connection_summary(ctx, invocation.root_id())? } else { Value::Null };
+    let notes = if can_generate { "已按授权使用生成接口；回答逐句核查" } else if wants_answer { "未连接或未授权生成接口；只交付本地检索到的原文依据" } else { "只检索原文" };
+    let payload = json!({"question_id": question, "question": text, "scope": {"matters": matters, "versions": versions}, "known_constraint_ids": constraints,
+        "candidate_set": found.candidate_set, "evidence_bundle": found.bundle, "evidence_read": found.read, "items": read_payload["items"], "requested_output": requested,
+        "query_rewrites": found.queries.iter().skip(1).map(|q| q["query"].clone()).collect::<Vec<_>>(), "plan": found.plan, "answer": found.answer, "process": found.process,
+        "usage": usage, "connection": connection, "notes": notes, "flow_run": found.run, "roles": found.extra["roles"], "task_plan": found.extra["task_plan"],
+        "challenge": found.extra["challenge"], "created_at": now_rfc3339()});
+    let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalResultRef", &payload)?;
+    parts.data_ref = Some(result);
+    parts.evidence_refs = found.evidence;
+    if parts.evidence_refs.is_empty() && !parts.warnings.iter().any(|(code, _)| code == "insufficient_evidence") {
+        warn(&mut parts, "insufficient_evidence", "依据不足：所选范围内没有检索到相关原文。");
     }
-    // Fixed hybrid retrieval: q0 always first; rewrites share the other half
-    // of the weight in the two-level RRF (knowledge-search).
+    if wants_answer && !can_generate {
+        parts.status = "requires_generation".into();
+        warn(&mut parts, "requires_generation", "生成回答需要连接并授权生成接口；已交付本地检索到的原文依据。");
+    }
+    Ok(parts)
+}
+
+/// Fixed local pipeline (no model decision): the original question q0 →
+/// hybrid search → rerank → exact reading.
+fn local_evidence(ctx: &Ctx, invocation: &Invocation, question: &str, text: &str, snapshot: &str, parts: &mut EnvelopeParts) -> Result<Found> {
+    let queries = vec![json!({"query_id": "q0", "query": text})];
+    let mut process = vec![];
     let started = std::time::Instant::now();
     let (_, search) = child(ctx, invocation, "knowledge-search", json!({"queries": queries, "filter_ids": [], "snapshot_id": snapshot}))?;
     if status_of(&search) != "completed" {
@@ -82,14 +105,12 @@ pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
         }
     }
     let candidate_set = data_of(&search);
-    let mut bundle = None;
-    let mut read = None;
-    let mut evidence = vec![];
     let candidates = match &candidate_set {
         Some(id) => ctx.lock()?.get_result(id)?.2["candidates"].as_array().map(|c| c.len()).unwrap_or(0),
         None => 0,
     };
-    process.push(json!({"step": "search", "status": status_of(&search), "ms": started.elapsed().as_millis() as u64, "queries": queries.len(), "candidates": candidates}));
+    process.push(json!({"step": "search", "status": status_of(&search), "ms": started.elapsed().as_millis() as u64, "queries": 1, "candidates": candidates}));
+    let (mut bundle, mut read, mut evidence) = (None, None, vec![]);
     if let Some(set) = &candidate_set {
         let started = std::time::Instant::now();
         let (_, reranked) = child(ctx, invocation, "evidence-rerank", json!({"query_ref": question, "candidate_set_id": set, "facet_ids": []}))?;
@@ -105,121 +126,93 @@ pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
             read = data_of(&reading);
         }
     }
-    let read_payload = match &read {
-        Some(id) => ctx.lock()?.get_result(id)?.2,
-        None => json!({"items": []}),
-    };
-    let mut answer = Value::Null;
-    if can_generate {
-        match &bundle {
-            Some(bundle) if !evidence.is_empty() => {
-                answer = compose_and_verify(ctx, invocation, &question, bundle, &mut parts, &mut process)?;
-            }
-            _ => {
-                warn(&mut parts, "insufficient_evidence", "依据不足：所选范围内没有检索到可用于回答的原文，未生成回答。");
-                parts.status = "partial".into();
-            }
-        }
-    }
-    let usage = generation_usage(ctx, invocation.root_id())?;
-    let connection = match super::answers::grant_for_root(ctx, invocation.root_id())? {
-        Some(grant) if can_generate => {
-            let vault = ctx.lock()?;
-            let connection = crate::generation::connections::load(&vault, &grant.connection_id)?;
-            json!({"name": connection.name, "host": grant.host, "model_id": connection.profile.model_id, "provider": connection.profile.provider.as_str()})
-        }
-        _ => Value::Null,
-    };
-    let notes = if can_generate { "已按授权使用生成接口；回答逐句核查" } else if wants_answer { "未连接或未授权生成接口；只交付本地检索到的原文依据" } else { "只检索原文" };
-    let payload = json!({"question_id": question, "question": text, "scope": {"matters": matters, "versions": versions}, "known_constraint_ids": constraints,
-        "candidate_set": candidate_set, "evidence_bundle": bundle, "evidence_read": read, "items": read_payload["items"], "requested_output": requested,
-        "query_rewrites": queries.iter().skip(1).map(|q| q["query"].clone()).collect::<Vec<_>>(), "plan": plan_info, "answer": answer, "process": process,
-        "usage": usage, "connection": connection, "notes": notes, "created_at": now_rfc3339()});
-    let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalResultRef", &payload)?;
-    parts.data_ref = Some(result);
-    parts.evidence_refs = evidence;
-    if parts.evidence_refs.is_empty() && !parts.warnings.iter().any(|(code, _)| code == "insufficient_evidence") {
-        warn(&mut parts, "insufficient_evidence", "依据不足：所选范围内没有检索到相关原文。");
-    }
-    if wants_answer && !can_generate {
-        parts.status = "requires_generation".into();
-        warn(&mut parts, "requires_generation", "生成回答需要连接并授权生成接口；已交付本地检索到的原文依据。");
-    }
-    Ok(parts)
+    Ok(Found { queries, plan: json!({"fallback": true, "rewrites": [], "missing_facts": []}), candidate_set, bundle, read, evidence, answer: Value::Null, process, run: None,
+        extra: json!({"roles": [], "task_plan": null, "challenge": null}) })
 }
 
-/// Draft, grounding and at most two revisions (root limits: 3 answer versions,
-/// 7 generation attempts, 36 grounding units). The last verified version is
-/// the answer; remaining problems stay visible instead of being hidden.
-fn compose_and_verify(ctx: &Ctx, invocation: &Invocation, question: &str, bundle: &str, parts: &mut EnvelopeParts, process: &mut Vec<Value>) -> Result<Value> {
-    let mut draft: Option<String> = None;
-    let mut report: Option<String> = None;
-    let mut previous_problems: Option<Vec<String>> = None;
-    let mut revisions = 0;
-    for round in 0..3 {
-        let step = if round == 0 { "draft" } else { "revise" };
-        let started = std::time::Instant::now();
-        let input = json!({"question_id": question, "evidence_bundle_id": bundle, "calculation_ids": [], "draft_ref": draft, "validation_report_ref": report});
-        let composed = match child(ctx, invocation, "answer-compose", input) {
-            Ok((_, envelope)) => envelope,
-            Err(Error::Cancelled) => return Err(Error::Cancelled),
-            Err(error) => {
-                process.push(json!({"step": step, "status": "failed", "code": error.code(), "ms": started.elapsed().as_millis() as u64}));
-                if draft.is_none() {
-                    return Err(error);
-                }
-                warn(parts, "revision_stopped", "修订未完成，保留上一版回答。");
-                break;
-            }
-        };
-        let Some(next_draft) = data_of(&composed).filter(|_| status_of(&composed) == "completed") else {
-            parts.warnings.extend(child_warnings(&composed));
-            process.push(json!({"step": step, "status": status_of(&composed), "ms": started.elapsed().as_millis() as u64}));
-            if draft.is_none() {
-                parts.status = "partial".into();
-                return Ok(Value::Null);
-            }
-            break;
-        };
-        process.push(json!({"step": step, "status": "completed", "ms": started.elapsed().as_millis() as u64}));
-        if round > 0 {
-            revisions += 1;
-        }
-        let started = std::time::Instant::now();
-        let (_, grounded) = child(ctx, invocation, "answer-grounding", json!({"question_id": question, "draft_ref": next_draft, "evidence_bundle_id": bundle, "calculation_ids": []}))?;
-        let next_report = data_of(&grounded);
-        if next_report.is_none() {
-            parts.warnings.extend(child_warnings(&grounded));
-        }
-        let findings = match &next_report {
-            Some(id) => ctx.lock()?.get_result(id)?.2,
-            None => json!({}),
-        };
-        let problems: Vec<String> = findings["required_actions"].as_array().cloned().unwrap_or_default().iter()
-            .map(|a| format!("{}:{}", a["claim_id"].as_str().unwrap_or(""), a["reason"].as_str().unwrap_or(""))).collect();
-        let supported = findings["claims"].as_array().map(|c| c.iter().filter(|r| r["status"] == "supported").count()).unwrap_or(0);
-        process.push(json!({"step": "verify", "status": status_of(&grounded), "ms": started.elapsed().as_millis() as u64, "supported": supported, "problems": problems.len()}));
-        draft = Some(next_draft);
-        report = next_report;
-        if problems.is_empty() || round == 2 || previous_problems.as_ref() == Some(&problems) {
-            break;
-        }
-        previous_problems = Some(problems);
-    }
-    let (Some(draft), Some(report)) = (draft, report) else {
-        // An answer that could not be verified is not delivered (design 9.12).
-        warn(parts, "verification_failed", "回答未能完成逐句核查，未交付；已保留本机检索到的原文依据。");
-        parts.status = "partial".into();
-        return Ok(Value::Null);
+/// The LangGraph answer flow; the core re-checks every reference it returns
+/// and builds the delivered answer itself from the verified draft and report.
+#[allow(clippy::too_many_arguments)]
+fn answer_flow(
+    ctx: &Ctx, invocation: &Invocation, input: &Value, question: &str, text: &str, scope: &str, constraints: &[String], snapshot: &dyn Fn(&Ctx) -> Result<String>, parts: &mut EnvelopeParts,
+) -> Result<Found> {
+    // "深入分析" approves a planner and narrow roles; otherwise the fixed answer flow.
+    let deep = super::answers::grant_for_root(ctx, invocation.root_id())?.is_some_and(|g| g.purpose == "deep_answer");
+    let outcome = super::flows::run(ctx, invocation, input, if deep { "deep_answer" } else { "answer" }, || {
+        Ok(json!({"owner": invocation.id(), "question_id": question, "question": text, "scope_id": scope, "constraint_ids": constraints, "snapshot_id": snapshot(ctx)?, "generate": true}))
+    })?;
+    let out = &outcome.output;
+    let root = invocation.root_id();
+    let plan = super::flows::owned_result(ctx, &out["plan_ref"], "SearchPlanRef", root)?;
+    let candidate_set = super::flows::owned_result(ctx, &out["candidate_set"], "CandidateSetRef", root)?.map(|(id, _)| id);
+    let bundle = super::flows::owned_result(ctx, &out["evidence_bundle"], "EvidenceBundleRef", root)?;
+    let read = super::flows::owned_result(ctx, &out["evidence_read"], "EvidenceReadRef", root)?.map(|(id, _)| id);
+    let draft = super::flows::owned_result(ctx, &out["draft"], "DraftRef", root)?;
+    let report = super::flows::owned_result(ctx, &out["report"], "ValidationReportRef", root)?;
+    // Evidence is what the core put into the bundle, not what the flow says.
+    let evidence: Vec<String> = match &bundle {
+        Some((_, payload)) => payload["items"].as_array().cloned().unwrap_or_default().iter().take(payload["initial_take"].as_u64().unwrap_or(0) as usize)
+            .filter_map(|item| item["evidence_id"].as_str().map(str::to_owned)).collect(),
+        None => vec![],
     };
+    let mut queries = vec![json!({"query_id": "q0", "query": text})];
+    let plan_info = match &plan {
+        Some((_, payload)) => {
+            for (index, rewrite) in payload["plan"]["rewritten_queries"].as_array().cloned().unwrap_or_default().iter().enumerate() {
+                queries.push(json!({"query_id": format!("q{}", index + 1), "query": rewrite}));
+            }
+            json!({"fallback": false, "rewrites": payload["rewrites"], "missing_facts": payload["missing_facts"]})
+        }
+        None => json!({"fallback": true, "rewrites": [], "missing_facts": []}),
+    };
+    for (code, message) in outcome.warnings {
+        if !parts.warnings.iter().any(|(c, _)| *c == code) {
+            parts.warnings.push((code, message));
+        }
+    }
+    for code in out["warnings"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
+        if let Some(message) = super::flows::flow_warning(code) {
+            if !parts.warnings.iter().any(|(c, _)| c == code) {
+                warn(parts, code, message);
+            }
+        }
+    }
+    if out["partial"] == json!(true) {
+        parts.status = "partial".into();
+    }
+    let answer = match (&draft, &report) {
+        (Some((draft, _)), Some((report, _))) => deliver_answer(ctx, invocation, draft, report, out["revisions"].as_u64().unwrap_or(0).min(2), parts)?,
+        (Some(_), None) => {
+            // An answer that could not be verified is not delivered (design 9.12).
+            warn(parts, "verification_failed", "回答未能完成逐句核查，未交付；已保留本机检索到的原文依据。");
+            parts.status = "partial".into();
+            Value::Null
+        }
+        (None, _) => {
+            if bundle.is_some() && !evidence.is_empty() {
+                parts.status = "partial".into();
+            }
+            Value::Null
+        }
+    };
+    let extra = json!({"roles": role_summaries(ctx, root, &out["analyses"])?, "task_plan": plan_summary(ctx, root, &out["task_plan"])?, "challenge": challenge_summary(ctx, root, &out["challenge"])?});
+    Ok(Found { queries, plan: plan_info, candidate_set, bundle: bundle.map(|(id, _)| id), read, evidence, answer, process: super::flows::clean_process(&out["process"]), run: Some(outcome.run), extra })
+}
+
+/// Finalize and shape the last verified version (root limits: 3 answer
+/// versions, 36 grounding units); remaining problems stay visible.
+pub(crate) fn deliver_answer(ctx: &Ctx, invocation: &Invocation, draft: &str, report: &str, revisions: u64, parts: &mut EnvelopeParts) -> Result<Value> {
+    let (draft_payload, report_payload) = {
+        let vault = ctx.lock()?;
+        (vault.get_result(draft)?.2, vault.get_result(report)?.2)
+    };
+    if report_payload["draft_ref"].as_str() != Some(draft) {
+        return Err(Error::Denied);
+    }
     match ctx.lock()?.runtime.finalize(invocation) {
         Ok(()) | Err(Error::Denied) => {}
         Err(error) => return Err(error),
     }
-    let (draft_payload, report_payload) = {
-        let vault = ctx.lock()?;
-        (vault.get_result(&draft)?.2, vault.get_result(&report)?.2)
-    };
     let labels: Vec<(String, String)> = draft_payload["evidence_labels"].as_object().map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_owned())).collect()).unwrap_or_default();
     let checks: std::collections::BTreeMap<String, Value> = report_payload["claims"].as_array().cloned().unwrap_or_default().into_iter()
         .filter_map(|r| Some((r["claim_id"].as_str()?.to_owned(), r))).collect();
@@ -256,7 +249,19 @@ fn compose_and_verify(ctx: &Ctx, invocation: &Invocation, question: &str, bundle
         "coverage": report_payload["coverage"], "verification_note": report_payload["note"]}))
 }
 
-fn generation_usage(ctx: &Ctx, root: &str) -> Result<Value> {
+/// The connection a root's grant names (name, host, model), for the result.
+pub(crate) fn connection_summary(ctx: &Ctx, root: &str) -> Result<Value> {
+    Ok(match super::answers::grant_for_root(ctx, root)? {
+        Some(grant) => {
+            let vault = ctx.lock()?;
+            let connection = crate::generation::connections::load(&vault, &grant.connection_id)?;
+            json!({"name": connection.name, "host": grant.host, "model_id": connection.profile.model_id, "provider": connection.profile.provider.as_str()})
+        }
+        None => Value::Null,
+    })
+}
+
+pub(crate) fn generation_usage(ctx: &Ctx, root: &str) -> Result<Value> {
     let vault = ctx.lock()?;
     let (requests, input, output): (i64, Option<i64>, Option<i64>) = vault.db().query_row(
         "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens) FROM generation_requests WHERE root=? AND purpose<>'capability_probe'",
@@ -300,11 +305,12 @@ pub fn analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
     ctx.lock()?.expect_kind(&question, &["ImmutableQuestionRef"])?;
     let versions: Vec<String> = input["document_versions"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let media: Vec<String> = input["media_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+    let can_generate = super::answers::generation_available(ctx, invocation)?;
     let mut parts = completed(None);
     let mut calculation = None;
     let mut media_results = vec![];
     for media_ref in &media {
-        // Media become locatable text evidence first (text_only; native review is M2).
+        // Media become locatable text evidence first (text_only).
         let (kind, version): (String, String) = ctx.lock()?.db().query_row("SELECT v.media_kind,v.id FROM media m JOIN document_versions v ON v.id=m.version_id WHERE m.id=?", [media_ref], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
         let range = {
             let vault = ctx.lock()?;
@@ -364,18 +370,180 @@ pub fn analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
         }
     }
     let mut retrieval = None;
-    if skill != "budget-analysis" {
-        let scope = create_scope(ctx, &[matter.clone()], &versions)?;
-        let (_, envelope) = child(ctx, invocation, "lvjin-retrieval", json!({"question_id": question, "scope_id": scope, "known_constraint_ids": input["known_constraint_ids"].as_array().cloned().unwrap_or_default(), "requested_output": "evidence_only"}))?;
+    let mut scope = None;
+    // Budget analysis reads its bills only when a written analysis follows.
+    if skill != "budget-analysis" || can_generate {
+        let created = create_scope(ctx, &[matter.clone()], &versions)?;
+        let (_, envelope) = child(ctx, invocation, "lvjin-retrieval", json!({"question_id": question, "scope_id": created, "known_constraint_ids": input["known_constraint_ids"].as_array().cloned().unwrap_or_default(), "requested_output": "evidence_only"}))?;
         retrieval = data_of(&envelope);
         parts.evidence_refs = envelope["evidence_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-        parts.warnings.extend(child_warnings(&envelope));
+        parts.warnings.extend(child_warnings(&envelope).into_iter().filter(|(code, _)| code != "requires_generation"));
+        scope = Some(created);
     }
-    let payload = json!({"workflow": skill, "matter_id": matter, "question_id": question, "document_versions": versions, "media": media_results,
-        "calculation": calculation, "retrieval": retrieval, "analysis": null, "analysis_status": "requires_generation"});
+    let mut written = json!({"analysis": null, "analysis_status": "requires_generation", "roles": [], "process": []});
+    if can_generate {
+        written = written_analysis(ctx, invocation, input, &skill, &question, scope.as_deref(), retrieval.as_deref(), calculation.as_deref(), &mut parts)?;
+    }
+    let mut payload = json!({"workflow": skill, "matter_id": matter, "question_id": question, "document_versions": versions, "media": media_results,
+        "calculation": calculation, "retrieval": retrieval});
+    for (key, value) in written.as_object().cloned().unwrap_or_default() {
+        payload[key] = value;
+    }
+    payload["created_at"] = json!(now_rfc3339());
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "ReviewResultRef", &payload)?;
     parts.data_ref = Some(result);
-    parts.status = "requires_generation".into();
-    warn(&mut parts, "requires_generation", "分析结论需要配置生成接口；已交付本地证据与确定性计算结果。");
+    if !can_generate {
+        parts.status = "requires_generation".into();
+        warn(&mut parts, "requires_generation", "分析结论需要配置并授权生成接口；已交付本地证据与确定性计算结果。");
+    }
     Ok(parts)
+}
+
+/// The LangGraph analysis flow: it opens the finalizing lvjin-retrieval child,
+/// runs the fixed roles under it and closes it; the core re-checks every
+/// reference and builds what the user sees.
+#[allow(clippy::too_many_arguments)]
+fn written_analysis(
+    ctx: &Ctx, invocation: &Invocation, input: &Value, skill: &str, question: &str, scope: Option<&str>, retrieval: Option<&str>, calculation: Option<&str>, parts: &mut EnvelopeParts,
+) -> Result<Value> {
+    let root = invocation.root_id();
+    let flow = skill.replace('-', "_");
+    let (scope, retrieval) = match (scope, retrieval) {
+        (Some(scope), Some(retrieval)) => (scope, retrieval),
+        _ => return Err(Error::Integrity),
+    };
+    let bundle = ctx.lock()?.get_result(retrieval)?.2["evidence_bundle"].clone();
+    if bundle.is_null() {
+        warn(parts, "insufficient_evidence", "依据不足：所选资料中没有检索到可用于分析的原文，未生成书面分析。");
+        parts.status = "partial".into();
+        return Ok(json!({"analysis": null, "analysis_status": "insufficient_evidence", "roles": [], "process": []}));
+    }
+    let text: String = ctx.lock()?.db().query_row("SELECT text FROM questions WHERE id=?", [question], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
+    let outcome = super::flows::run(ctx, invocation, input, &flow, || {
+        Ok(json!({"owner": invocation.id(), "question_id": question, "question": text, "evidence_bundle": bundle, "calculation_ids": calculation.map(|c| vec![c]).unwrap_or_default(),
+            "retrieval_input": {"question_id": question, "scope_id": scope, "known_constraint_ids": input["known_constraint_ids"].as_array().cloned().unwrap_or_default(), "requested_output": "answer"}}))
+    })?;
+    let out = &outcome.output;
+    for (code, message) in outcome.warnings {
+        if !parts.warnings.iter().any(|(c, _)| *c == code) {
+            parts.warnings.push((code, message));
+        }
+    }
+    let analysis = super::flows::owned_result(ctx, &out["retrieval"], "RetrievalResultRef", root)?;
+    let (analysis_id, answer) = match &analysis {
+        Some((id, payload)) => (json!(id), payload["answer"].clone()),
+        None => (Value::Null, Value::Null),
+    };
+    if answer.is_null() {
+        parts.status = "partial".into();
+    } else if answer["sections"]["conclusion"].as_array().is_some_and(|c| c.iter().any(|row| row["status"] != "supported")) {
+        parts.status = "partial".into();
+    }
+    Ok(json!({"analysis": analysis_id, "answer": answer, "analysis_status": if answer.is_null() { "partial" } else { "completed" },
+        "roles": role_summaries(ctx, root, &out["analyses"])?, "challenge": challenge_summary(ctx, root, &out["challenge"])?,
+        "process": super::flows::clean_process(&out["process"]), "flow_run": outcome.run}))
+}
+
+/// The validated task plan with its goals as the user reads them.
+pub(crate) fn plan_summary(ctx: &Ctx, root: &str, reference: &Value) -> Result<Value> {
+    let Some((id, payload)) = super::flows::owned_result(ctx, reference, "TaskPlanRef", root)? else { return Ok(Value::Null) };
+    let vault = ctx.lock()?;
+    let text = |id: &Value| -> Result<Value> {
+        Ok(match id.as_str() {
+            Some(id) => json!(vault.db().query_row::<String, _, _>("SELECT text FROM goals WHERE id=? AND root=?", params![id, root], |r| r.get(0)).optional()?),
+            None => Value::Null,
+        })
+    };
+    let mut tasks = vec![];
+    for node in payload["plan"]["task_graph"].as_array().cloned().unwrap_or_default() {
+        // The planner numbered its passages E1, E2…; every task packet keeps
+        // that order, so the interface can show those labels as citations.
+        let packet: Option<String> = match node["context_packet_ref"].as_str() {
+            Some(id) => vault.db().query_row("SELECT payload FROM context_packets WHERE id=? AND root=?", params![id, root], |r| r.get(0)).optional()?,
+            None => None,
+        };
+        let evidence = packet.and_then(|p| serde_json::from_str::<Value>(&p).ok()).map(|p| p["evidence_ids"].clone()).unwrap_or(Value::Null);
+        let labels: serde_json::Map<String, Value> = evidence.as_array().cloned().unwrap_or_default().into_iter().enumerate().map(|(index, id)| (format!("E{}", index + 1), id)).collect();
+        tasks.push(json!({"node_id": node["node_id"], "role_id": node["role_id"], "depends_on": node["depends_on"], "goal": text(&node["goal_ref"])?, "acceptance": text(&node["acceptance_ref"])?,
+            "labels": labels}));
+    }
+    Ok(json!({"task_plan_ref": id, "tasks": tasks}))
+}
+
+/// What each role contributed, built by the core from validated results.
+pub(crate) fn role_summaries(ctx: &Ctx, root: &str, refs: &Value) -> Result<Vec<Value>> {
+    let mut out = vec![];
+    for id in refs.as_array().cloned().unwrap_or_default().into_iter().take(6) {
+        if let Some((id, payload)) = super::flows::owned_result(ctx, &id, "RoleAnalysisRef", root)? {
+            let labels: Vec<(String, String)> = payload["evidence_labels"].as_object().map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_owned())).collect()).unwrap_or_default();
+            let claims: Vec<Value> = payload["analysis"]["claims"].as_array().cloned().unwrap_or_default().iter().map(|claim| {
+                let cited: Vec<Value> = claim["evidence_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(|r| {
+                    let r = r.as_str()?;
+                    labels.iter().find(|(_, v)| v == r).map(|(label, _)| json!({"label": label, "evidence_id": r}))
+                }).collect();
+                json!({"kind": claim["kind"], "text": claim["text"], "evidence": cited})
+            }).collect();
+            out.push(json!({"analysis_ref": id, "role": payload["role"], "role_title": payload["role_title"], "claims": claims,
+                "limitations": payload["analysis"]["limitations"], "proposed_skill_ids": payload["analysis"]["proposed_skill_ids"], "invalid_citations": payload["invalid_citations"]}));
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) fn challenge_summary(ctx: &Ctx, root: &str, reference: &Value) -> Result<Value> {
+    Ok(match super::flows::owned_result(ctx, reference, "ChallengeReportRef", root)? {
+        Some((id, payload)) => json!({"challenge_ref": id, "draft_ref": payload["report"]["draft_ref"], "challenges": payload["report"]["challenges"]}),
+        None => Value::Null,
+    })
+}
+
+/// Seal an lvjin-retrieval owner a flow opened (an analysis's finalizer):
+/// re-check the references the flow reports, deliver the verified answer and
+/// build the result and envelope in the core.
+pub(crate) fn close_retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value, output: &Value, run: &str) -> Result<Value> {
+    let root = invocation.root_id();
+    let question = text_of(input, "question_id")?;
+    let scope = text_of(input, "scope_id")?;
+    let text: String = ctx.lock()?.db().query_row("SELECT text FROM questions WHERE id=?", [&question], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
+    let (matters, versions) = scope_contents(ctx, &scope)?;
+    let bundle = super::flows::owned_result(ctx, &output["evidence_bundle"], "EvidenceBundleRef", root)?;
+    let draft = super::flows::owned_result(ctx, &output["draft"], "DraftRef", root)?;
+    let report = super::flows::owned_result(ctx, &output["report"], "ValidationReportRef", root)?;
+    let mut parts = completed(None);
+    for code in output["warnings"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
+        if let Some(message) = super::flows::flow_warning(code) {
+            if !parts.warnings.iter().any(|(c, _)| c == code) {
+                warn(&mut parts, code, message);
+            }
+        }
+    }
+    if output["partial"] == json!(true) {
+        parts.status = "partial".into();
+    }
+    let answer = match (&draft, &report) {
+        (Some((draft, _)), Some((report, _))) => deliver_answer(ctx, invocation, draft, report, output["revisions"].as_u64().unwrap_or(0).min(2), &mut parts)?,
+        (Some(_), None) => {
+            warn(&mut parts, "verification_failed", "回答未能完成逐句核查，未交付；已保留本机检索到的原文依据。");
+            parts.status = "partial".into();
+            Value::Null
+        }
+        (None, _) => {
+            parts.status = "partial".into();
+            Value::Null
+        }
+    };
+    let evidence = match &bundle {
+        Some((id, _)) => super::answers::bundle_ids(ctx, id)?,
+        None => vec![],
+    };
+    let usage = generation_usage(ctx, root)?;
+    let payload = json!({"question_id": question, "question": text, "scope": {"matters": matters, "versions": versions}, "known_constraint_ids": input["known_constraint_ids"],
+        "candidate_set": null, "evidence_bundle": bundle.as_ref().map(|(id, _)| id.clone()), "evidence_read": null, "items": [], "requested_output": "answer",
+        "query_rewrites": [], "plan": {"fallback": true, "rewrites": [], "missing_facts": []}, "answer": answer, "process": super::flows::clean_process(&output["process"]),
+        "roles": role_summaries(ctx, root, &output["analyses"])?, "challenge": challenge_summary(ctx, root, &output["challenge"])?,
+        "usage": usage, "connection": connection_summary(ctx, root)?, "notes": "书面分析：固定角色在授权范围内分析，最终回答逐句核查", "flow_run": run, "created_at": now_rfc3339()});
+    let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalResultRef", &payload)?;
+    parts.data_ref = Some(result);
+    parts.evidence_refs = evidence;
+    ctx.lock()?.runtime.envelope(invocation, &parts)
 }

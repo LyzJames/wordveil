@@ -20,7 +20,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 const M1_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -83,6 +83,25 @@ CREATE TABLE IF NOT EXISTS capabilities(connection_id TEXT NOT NULL, capability 
 CREATE TABLE IF NOT EXISTS generation_requests(id TEXT PRIMARY KEY, root TEXT NOT NULL, invocation TEXT NOT NULL, connection_id TEXT NOT NULL, purpose TEXT NOT NULL, host TEXT NOT NULL, model_id TEXT NOT NULL, status TEXT NOT NULL, error TEXT, input_tokens INTEGER, output_tokens INTEGER, materials TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT);
 CREATE INDEX IF NOT EXISTS generation_requests_root ON generation_requests(root);
 CREATE TABLE IF NOT EXISTS egress_grants(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT, connection_id TEXT NOT NULL, host TEXT NOT NULL, purpose TEXT NOT NULL, scope_id TEXT NOT NULL, question_id TEXT NOT NULL, max_items INTEGER NOT NULL, max_requests INTEGER NOT NULL, preview TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, revoked_at TEXT);
+"#;
+
+/// M2 (second segment): LangGraph flow runs. The orchestrator's checkpoints,
+/// channel blobs and pending writes are opaque serialised bytes it alone
+/// reads back; receipts make every state-changing call idempotent across a
+/// continued run. Context packets, goals and native media payload records
+/// support the narrow roles.
+const M3_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS flow_runs(id TEXT PRIMARY KEY, root TEXT NOT NULL, owner TEXT NOT NULL, owner_input TEXT NOT NULL, skill TEXT NOT NULL, flow TEXT NOT NULL, flow_version TEXT, inputs TEXT NOT NULL, snapshot_generation INTEGER NOT NULL, status TEXT NOT NULL, reason TEXT, attempts INTEGER NOT NULL DEFAULT 1, requests INTEGER NOT NULL DEFAULT 0, stored_bytes INTEGER NOT NULL DEFAULT 0, output TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS flow_runs_root ON flow_runs(root, status);
+CREATE TABLE IF NOT EXISTS flow_owners(run TEXT NOT NULL REFERENCES flow_runs(id), invocation TEXT NOT NULL, input TEXT NOT NULL, PRIMARY KEY(run, invocation));
+CREATE TABLE IF NOT EXISTS flow_checkpoints(run TEXT NOT NULL REFERENCES flow_runs(id), ns TEXT NOT NULL, checkpoint_id TEXT NOT NULL, parent_id TEXT, checkpoint TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(run, ns, checkpoint_id));
+CREATE TABLE IF NOT EXISTS flow_blobs(run TEXT NOT NULL REFERENCES flow_runs(id), ns TEXT NOT NULL, channel TEXT NOT NULL, version TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(run, ns, channel, version));
+CREATE TABLE IF NOT EXISTS flow_writes(run TEXT NOT NULL REFERENCES flow_runs(id), ns TEXT NOT NULL, checkpoint_id TEXT NOT NULL, task_id TEXT NOT NULL, idx INTEGER NOT NULL, channel TEXT NOT NULL, value TEXT NOT NULL, task_path TEXT NOT NULL, PRIMARY KEY(run, ns, checkpoint_id, task_id, idx));
+CREATE TABLE IF NOT EXISTS flow_receipts(run TEXT NOT NULL REFERENCES flow_runs(id), key TEXT NOT NULL, method TEXT NOT NULL, params_sha256 TEXT NOT NULL, external INTEGER NOT NULL, state TEXT NOT NULL, response TEXT, started_at TEXT NOT NULL, finished_at TEXT, PRIMARY KEY(run, key));
+CREATE TABLE IF NOT EXISTS flow_events(run TEXT NOT NULL REFERENCES flow_runs(id), seq INTEGER NOT NULL, node TEXT NOT NULL, status TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(run, seq));
+CREATE TABLE IF NOT EXISTS goals(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS context_packets(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT NOT NULL, agent TEXT NOT NULL, role TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS native_media(id TEXT PRIMARY KEY REFERENCES objects(id), grant_id TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, blob TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
 "#;
 
 /// An unlocked vault. Dropping it closes SQLCipher and zeroizes keys.
@@ -342,6 +361,13 @@ pub(crate) fn migrate(db: &Connection) -> Result<()> {
     if version < 2 {
         // Additive only: M1 data stays as it is; M2 tables start empty.
         let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M2_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=2;COMMIT;"));
+        if let Err(error) = applied {
+            let _ = db.execute_batch("ROLLBACK;");
+            return Err(error.into());
+        }
+    }
+    if version < 3 {
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M3_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-3') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=3;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());

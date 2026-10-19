@@ -1,30 +1,24 @@
 // Q&A and retrieval (design 9.5, 9.7): scope and mode, the question thread,
 // structured answers with citations and per-sentence grounding status, the
-// execution process, and the two-step egress approval — an in-app preview
-// that can drop excerpts, then the native confirmation built by the core.
+// narrow roles' contributions and the checker's challenges, native media
+// observations with the local comparison, the execution process, the two-step
+// egress approval, and interrupted tasks that can continue after a new
+// confirmation.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type AnswerPreview, type ClaimRow, type EvidenceItem, type ProcessStep, type RetrievalResult, type TaskState, type Warning } from './api';
+import {
+  api, type AnswerPreview, type ChallengeSummary, type ClaimRow, type EvidenceItem, type InterruptedFlow, type ObservationSummary, type ProcessStep,
+  type RetrievalResult, type RoleSummary, type TaskPlanSummary, type TaskState,
+} from './api';
+import { CalculationSummary } from './analysis';
+import { EgressDialog } from './egress';
 import { EvidenceList, locatorLabel } from './evidence';
 import { ExportButton } from './export';
 import { Icon } from './icons';
 import { sourceOf, useSession, type EvidencePanel } from './session';
-import { Busy, Callout, Chip, ErrorLine, Modal, Segmented, useDismiss, useLoad, useNotice } from './ui';
+import { generates, KIND_LABEL, kindOfRun, newTurnId, ROLE_TITLE, type QaTurn, type TurnKind } from './turns';
+import { Busy, Callout, Chip, ErrorLine, Segmented, useDismiss, useLoad, useNotice } from './ui';
 
-export type QaTurn = {
-  id: string;
-  question: string;
-  matters: string[];
-  mode: 'answer' | 'evidence';
-  state: 'preparing' | 'running' | 'done' | 'failed' | 'cancelled';
-  started: number;
-  finished?: number;
-  task?: string;
-  status?: string;
-  warnings?: Warning[];
-  resultRef?: string | null;
-  sent?: number;
-  error?: string;
-};
+export type { QaTurn } from './turns';
 
 type Update = (change: (turns: QaTurn[]) => QaTurn[]) => void;
 
@@ -39,20 +33,23 @@ export function watchQaTasks(tasks: TaskState[], update: Update) {
       if (!task) return turn;
       changed = true;
       const envelope = task.envelope;
+      if (task.status === 'interrupted') {
+        return { ...turn, state: 'interrupted' as const, status: task.status, run: envelope?.flow_run, warnings: envelope?.warnings ?? [], finished: Date.now() };
+      }
       const state: QaTurn['state'] = task.status === 'cancelled' ? 'cancelled' : envelope?.data_ref ? 'done' : 'failed';
-      return { ...turn, state, status: task.status, warnings: envelope?.warnings ?? [], resultRef: envelope?.data_ref ?? null, finished: Date.now(), error: state === 'failed' ? envelope?.warnings.map((w) => w.message).join('；') || '回答未完成' : undefined };
+      return { ...turn, state, status: task.status, warnings: envelope?.warnings ?? [], resultRef: envelope?.data_ref ?? null, finished: Date.now(), error: state === 'failed' ? envelope?.warnings.map((w) => w.message).join('；') || '没有完成' : undefined };
     });
     return changed ? next : turns;
   });
 }
 
-let counter = 0;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+type Mode = 'answer' | 'deep' | 'evidence';
 
 export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: string[]; initialQuestion?: string }) {
   const { matters, connection, qa, go } = useSession();
   const [scope, setScope] = useState<string[]>(initialMatters ?? []);
-  const [mode, setMode] = useState<'answer' | 'evidence'>(connection ? 'answer' : 'evidence');
+  const [mode, setMode] = useState<Mode>(connection ? 'answer' : 'evidence');
   const modeTouched = useRef(false);
   const [text, setText] = useState(initialQuestion ?? '');
   const [preview, setPreview] = useState<{ turn: string; data: AnswerPreview } | null>(null);
@@ -61,7 +58,7 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
   const composer = useRef<HTMLTextAreaElement>(null);
   const notice = useNotice();
   const chosen = scope.length ? scope : matters.map((m) => m.id);
-  const effectiveMode = connection ? mode : 'evidence';
+  const effectiveMode: Mode = connection ? mode : 'evidence';
   const running = qa.turns.find((t) => t.state === 'running' || t.state === 'preparing');
 
   useEffect(() => {
@@ -115,10 +112,10 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function submit(value = text, asMode: 'answer' | 'evidence' = effectiveMode, within = chosen) {
+  async function submit(value = text, asMode: Mode = effectiveMode, within = chosen) {
     const question = value.trim();
     if (!question || !within.length || running) return;
-    const turn: QaTurn = { id: `turn-${++counter}`, question, matters: within, mode: asMode, state: 'preparing', started: Date.now() };
+    const turn: QaTurn = { id: newTurnId(), question, matters: within, kind: asMode, state: 'preparing', started: Date.now() };
     qa.update((turns) => [...turns, turn]);
     setText('');
     try {
@@ -130,7 +127,7 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
       } else {
         // Local retrieval only; nothing leaves the computer before approval.
         pending.current = { turn: turn.id, grant: null };
-        const data = await api.answerPreview(question, within, connection?.id ?? null);
+        const data = await api.answerPreview(question, within, connection?.id ?? null, asMode === 'deep');
         if (!mounted.current) {
           api.answerDiscard(data.grant_id).catch(() => {});
           return;
@@ -144,12 +141,12 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
     }
   }
 
-  async function approve(excluded: string[]) {
+  async function approve(excluded: string[], excludedMedia: string[]) {
     if (!preview) return;
     const { turn, data } = preview;
     pending.current = null;
     try {
-      const task = await api.answerStart(data.grant_id, excluded);
+      const task = await api.answerStart(data.grant_id, excluded, excludedMedia);
       setPreview(null);
       patch(turn, { state: 'running', task, sent: data.excerpts.length - excluded.length });
     } catch (e) {
@@ -169,6 +166,29 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
 
   function stop() {
     if (running?.task) api.cancelTask(running.task).then(() => notice('info', '已请求停止')).catch(() => {});
+  }
+
+  /** Continue an interrupted run (the core opens a native confirmation). */
+  async function resume(run: string, question: string | null, kind: TurnKind) {
+    try {
+      const task = await api.flowContinue(run);
+      const existing = qa.turns.find((t) => t.run === run);
+      if (existing) patch(existing.id, { state: 'running', task, error: undefined });
+      else qa.update((turns) => [...turns, { id: newTurnId(), question: question ?? '（中断的任务）', matters: [], kind, state: 'running', started: Date.now(), task, run, source: '继续中断的任务' }]);
+      return true;
+    } catch (e) {
+      notice('error', message(e));
+      return false;
+    }
+  }
+
+  async function abandon(run: string) {
+    try {
+      await api.flowDiscard(run);
+      qa.update((turns) => turns.map((t) => (t.run === run ? { ...t, state: 'cancelled', error: '已放弃这个中断的任务' } : t)));
+    } catch (e) {
+      notice('error', message(e));
+    }
   }
 
   return (
@@ -207,13 +227,22 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
             modeTouched.current = true;
             setMode(v);
           }}
-          items={[['answer', '生成回答', !connection], ['evidence', '只找原文']]}
+          items={[['answer', '生成回答', !connection], ['deep', '深入分析', !connection], ['evidence', '只找原文']]}
         />
       </div>
       <div className="qa-thread" ref={thread}>
+        <InterruptedRuns turns={qa.turns} onResume={resume} onDiscard={abandon} />
         {qa.turns.length === 0 && <Intro hasConnection={!!connection} />}
         {qa.turns.map((turn, index) => (
-          <TurnView key={turn.id} turn={turn} latest={index === qa.turns.length - 1} onStop={stop} onRetry={(asMode) => submit(turn.question, asMode, turn.matters)} />
+          <TurnView
+            key={turn.id}
+            turn={turn}
+            latest={index === qa.turns.length - 1}
+            onStop={stop}
+            onRetry={(asMode) => submit(turn.question, asMode, turn.matters)}
+            onResume={() => turn.run && resume(turn.run, turn.question, turn.kind)}
+            onDiscard={() => turn.run && abandon(turn.run)}
+          />
         ))}
       </div>
       <div className="composer">
@@ -223,7 +252,7 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
             rows={2}
             value={text}
             maxLength={2000}
-            placeholder={effectiveMode === 'answer' ? '输入问题…（Ctrl+Enter 发送）' : '输入要查找的内容…（Ctrl+Enter 检索）'}
+            placeholder={effectiveMode === 'evidence' ? '输入要查找的内容…（Ctrl+Enter 检索）' : '输入问题…（Ctrl+Enter 发送）'}
             aria-label="问题"
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -241,16 +270,18 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
               <Icon name="stop" />
             </button>
           ) : (
-            <button className="btn btn-primary btn-icon" aria-label={effectiveMode === 'answer' ? '发送' : '检索'} title="Ctrl+Enter" onClick={() => submit()} disabled={!text.trim() || !chosen.length}>
-              <Icon name={effectiveMode === 'answer' ? 'send' : 'search'} />
+            <button className="btn btn-primary btn-icon" aria-label={effectiveMode === 'evidence' ? '检索' : '发送'} title="Ctrl+Enter" onClick={() => submit()} disabled={!text.trim() || !chosen.length}>
+              <Icon name={effectiveMode === 'evidence' ? 'search' : 'send'} />
             </button>
           )}
         </div>
         <div className="composer-meta">
-          {effectiveMode === 'answer' && connection ? (
+          {effectiveMode !== 'evidence' && connection ? (
             <>
               <Icon name="globe" className="cap-outbound" />
-              <span>发送前会显示将发往 {connection.host} 的原文，并请你确认</span>
+              <span>
+                {effectiveMode === 'deep' ? '深入分析会安排至多 3 个专业角色并由检查者复核，最多 7 次请求；' : ''}发送前会显示将发往 {connection.host} 的原文，并请你确认
+              </span>
             </>
           ) : (
             <>
@@ -272,7 +303,7 @@ function Intro({ hasConnection }: { hasConnection: boolean }) {
       <h2 className="t-title">在你的资料里提问</h2>
       <p className="text-secondary">
         {hasConnection
-          ? '回答由你连接的生成接口起草，只依据所选事务中检索到的原文；每一句都会在本机核对依据，发送前先请你确认。'
+          ? '回答由你连接的生成接口起草，只依据所选事务中检索到的原文；每一句都会在本机核对依据，发送前先请你确认。复杂问题可以选“深入分析”，由几个专业角色分别分析后再综合。'
           : '目前只在本机检索原文并按相关度排序。连接生成接口后，可以生成带引用、逐句核查的回答。'}
       </p>
       <ul className="text-secondary t-caption">
@@ -281,6 +312,36 @@ function Intro({ hasConnection }: { hasConnection: boolean }) {
         <li>例：提前退租要提前多久通知？</li>
       </ul>
     </div>
+  );
+}
+
+/** Runs stopped by a lock or an exit, listed by the core after unlocking. */
+function InterruptedRuns({ turns, onResume, onDiscard }: { turns: QaTurn[]; onResume: (run: string, question: string | null, kind: TurnKind) => Promise<boolean>; onDiscard: (run: string) => Promise<void> }) {
+  const [rows, setRows] = useState<InterruptedFlow[]>([]);
+  const shown = new Set(turns.filter((t) => t.state === 'interrupted' && t.run).map((t) => t.run));
+  const signature = turns.map((t) => `${t.id}:${t.state}`).join('|');
+  const load = () => api.flowsInterrupted().then(setRows).catch(() => setRows([]));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+  const hidden = rows.filter((r) => !shown.has(r.run_id));
+  if (!hidden.length) return null;
+  return (
+    <Callout tone="attention" title={`有 ${hidden.length} 个任务停在中断处`}>
+      <ul className="interrupted">
+        {hidden.map((row) => (
+          <li key={row.run_id}>
+            <span className="ellipsis">{KIND_LABEL[kindOfRun(row.flow, row.skill)]}：{row.question ?? '（没有问题文本）'}</span>
+            <span className="t-caption text-tertiary">
+              {row.stale ? '资料已变化，不能从中断处继续' : row.unknown_requests ? `${row.unknown_requests} 次请求结果未知` : '已完成的步骤不会重复'}
+            </span>
+            {!row.stale && <button className="btn btn-xs" onClick={async () => { if (await onResume(row.run_id, row.question, kindOfRun(row.flow, row.skill))) load(); }}>继续</button>}
+            <button className="btn btn-xs btn-subtle" onClick={async () => { await onDiscard(row.run_id); load(); }}>放弃</button>
+          </li>
+        ))}
+      </ul>
+    </Callout>
   );
 }
 
@@ -306,10 +367,25 @@ function ScopePicker({ value, onChange, onClose }: { value: string[]; onChange: 
 
 // ------------------------------------------------------------------- turns
 
-function TurnView({ turn, latest, onStop, onRetry }: { turn: QaTurn; latest: boolean; onStop: () => void; onRetry: (mode: 'answer' | 'evidence') => void }) {
+const RUNNING_TEXT: Record<TurnKind, string> = {
+  answer: '正在生成：理解问题 → 检索 → 起草 → 逐句核查',
+  deep: '正在深入分析：安排专业角色 → 分别分析 → 综合起草 → 逐句核查 → 证据检查',
+  evidence: '正在本机检索与重排…',
+  contract: '正在书面分析：本机检索 → 法律与金融角色分析 → 综合起草 → 核查与检查',
+  loan: '正在书面分析：本机对账与检索 → 金融与法律角色分析 → 综合起草 → 核查与检查',
+  budget: '正在书面分析：本机预算计算 → 金融角色分析 → 综合起草 → 核查与检查',
+  image: '正在分析图片：本机识别 → 直接读取图片 → 与识别文字核对 → 起草与核查',
+  audio: '正在分析录音：本机转写 → 直接听取所选时段 → 与转写核对 → 起草与核查',
+  video: '正在分析视频：抽帧识别与转写 → 直接读取画面与音轨 → 核对 → 起草与核查',
+};
+
+function TurnView({ turn, latest, onStop, onRetry, onResume, onDiscard }: {
+  turn: QaTurn; latest: boolean; onStop: () => void; onRetry: (mode: Mode) => void; onResume: () => void; onDiscard: () => void;
+}) {
   const { matters } = useSession();
   const ref = useRef<HTMLElement>(null);
-  const names = turn.matters.length === matters.length && matters.length > 1 ? '全部事务' : turn.matters.map((id) => matters.find((m) => m.id === id)?.title ?? '事务').join('、');
+  const names = turn.source ?? (turn.matters.length === matters.length && matters.length > 1 ? '全部事务' : turn.matters.map((id) => matters.find((m) => m.id === id)?.title ?? '事务').join('、'));
+  const retryable = turn.kind === 'answer' || turn.kind === 'deep' || turn.kind === 'evidence';
   // The newest question and the start of its result stay in view.
   useEffect(() => {
     if (latest) ref.current?.scrollIntoView({ block: 'start' });
@@ -319,20 +395,20 @@ function TurnView({ turn, latest, onStop, onRetry }: { turn: QaTurn; latest: boo
       <div className="question">
         <div className="bubble">
           {turn.question}
-          <div className="t-caption text-tertiary">{turn.mode === 'answer' ? '生成回答' : '只找原文'} · {names}</div>
+          <div className="t-caption text-tertiary">{KIND_LABEL[turn.kind]}{names ? ` · ${names}` : ''}</div>
         </div>
       </div>
       {turn.state === 'preparing' && (
         <div className="answer running">
           <div className="answer-empty">
-            <Busy label={turn.mode === 'answer' ? '正在本机检索可以发送的原文…（首次加载模型约需一分钟）' : '正在本机检索与重排…'} />
+            <Busy label={turn.kind === 'evidence' ? '正在本机检索与重排…' : '正在本机检索可以发送的原文…（首次加载模型约需一分钟）'} />
           </div>
         </div>
       )}
       {turn.state === 'running' && (
         <div className="answer running">
           <div className="answer-empty row-between">
-            <Busy label={turn.mode === 'answer' ? `正在生成：理解问题 → 检索 → 起草 → 逐句核查${turn.sent !== undefined ? `（已批准发送 ${turn.sent} 段原文）` : ''}` : '正在本机检索与重排…'} />
+            <Busy label={`${RUNNING_TEXT[turn.kind]}${turn.sent !== undefined && generates(turn.kind) ? `（已批准发送 ${turn.sent} 段原文）` : ''}`} />
             <button className="btn btn-sm" onClick={onStop}>
               <Icon name="stop" />
               停止
@@ -340,17 +416,31 @@ function TurnView({ turn, latest, onStop, onRetry }: { turn: QaTurn; latest: boo
           </div>
         </div>
       )}
+      {turn.state === 'interrupted' && (
+        <Callout
+          tone="attention"
+          title="任务已中断"
+          action={
+            <>
+              <button className="btn btn-sm" onClick={onResume} disabled={!turn.run}>继续</button>
+              <button className="btn btn-sm btn-subtle" onClick={onDiscard} disabled={!turn.run}>放弃</button>
+            </>
+          }
+        >
+          空间锁定或程序退出打断了这个任务。继续时已完成的步骤不会重复，并会再次请你确认发送。
+        </Callout>
+      )}
       {turn.state === 'failed' && (
-        <Callout tone="danger" title="没有完成" action={<button className="btn btn-sm" onClick={() => onRetry(turn.mode)}>重试</button>}>
+        <Callout tone="danger" title="没有完成" action={retryable ? <button className="btn btn-sm" onClick={() => onRetry(turn.kind as Mode)}>重试</button> : undefined}>
           {turn.error}
         </Callout>
       )}
       {turn.state === 'cancelled' && (
         <Callout
           title={turn.error ?? '已停止'}
-          action={turn.mode === 'answer' ? <button className="btn btn-sm" onClick={() => onRetry('evidence')}>只看本机原文</button> : undefined}
+          action={turn.kind === 'answer' || turn.kind === 'deep' ? <button className="btn btn-sm" onClick={() => onRetry('evidence')}>只看本机原文</button> : undefined}
         >
-          {turn.mode === 'answer' ? '可以调整问题或范围后重新提问；只找原文不会发送任何内容。' : undefined}
+          {turn.kind === 'answer' || turn.kind === 'deep' ? '可以调整问题或范围后重新提问；只找原文不会发送任何内容。' : undefined}
         </Callout>
       )}
       {turn.state === 'done' && turn.resultRef && <TurnResult turn={turn} latest={latest} />}
@@ -358,8 +448,30 @@ function TurnView({ turn, latest, onStop, onRetry }: { turn: QaTurn; latest: boo
   );
 }
 
+type ReviewPayload = {
+  answer?: RetrievalResult['answer']; analysis?: string | null; retrieval?: string | null; evidence_read?: string | null; calculation?: string | null;
+  roles?: RoleSummary[]; challenge?: ChallengeSummary | null; process?: ProcessStep[]; observations?: ObservationSummary[]; visual_check?: string; direct_audio_check?: string;
+  flow_run?: string | null; usage?: RetrievalResult['usage']; connection?: RetrievalResult['connection'];
+};
+
+/** Plain Q&A results are retrieval results; analyses and media reviews are
+ *  review results whose answer, evidence and calculation are gathered here. */
+async function loadResult(turn: QaTurn): Promise<RetrievalResult> {
+  if (turn.kind === 'answer' || turn.kind === 'deep' || turn.kind === 'evidence') return api.result<RetrievalResult>(turn.resultRef!);
+  const review = await api.result<ReviewPayload>(turn.resultRef!);
+  const items = review.retrieval ? (await api.result<RetrievalResult>(review.retrieval)).items : review.evidence_read ? (await api.result<{ items: EvidenceItem[] }>(review.evidence_read)).items : [];
+  const child = review.analysis ? await api.result<RetrievalResult>(review.analysis) : null;
+  const calculation = review.calculation ? (await api.result<{ result: Record<string, unknown> }>(review.calculation)).result : null;
+  return {
+    question: turn.question, items, answer: review.answer ?? null, process: review.process ?? [], query_rewrites: [], plan: { fallback: true, rewrites: [], missing_facts: [] },
+    usage: review.usage ?? child?.usage ?? { requests: 0, input_tokens: 0, output_tokens: 0 }, connection: review.connection ?? child?.connection ?? null, requested_output: 'answer', evidence_bundle: null,
+    roles: review.roles ?? [], challenge: review.challenge ?? null, task_plan: null, observations: review.observations ?? [], calculation,
+    visual_check: review.visual_check, direct_audio_check: review.direct_audio_check, flow_run: review.flow_run,
+  };
+}
+
 function TurnResult({ turn, latest }: { turn: QaTurn; latest: boolean }) {
-  const result = useLoad(() => api.result<RetrievalResult>(turn.resultRef!), [turn.resultRef]);
+  const result = useLoad(() => loadResult(turn), [turn.resultRef]);
   if (result.error) return <ErrorLine text={result.error} />;
   if (!result.data) return <Busy label="正在打开结果…" />;
   return result.data.answer ? <AnswerCard turn={turn} result={result.data} latest={latest} /> : <EvidenceCard turn={turn} result={result.data} />;
@@ -386,7 +498,7 @@ function EvidenceCard({ turn, result }: { turn: QaTurn; result: RetrievalResult 
           </>
         )}
         <span className="spacer" />
-        <Chip icon="shield">未发送任何内容</Chip>
+        {turn.kind === 'evidence' && <Chip icon="shield">未发送任何内容</Chip>}
       </div>
       <div className="answer-body">
         {needsGeneration && (
@@ -395,6 +507,8 @@ function EvidenceCard({ turn, result }: { turn: QaTurn; result: RetrievalResult 
           </Callout>
         )}
         {other.length > 0 && <Callout tone="warning" title="部分完成">{other.map((w) => w.message).join('；')}</Callout>}
+        {result.observations && result.observations.length > 0 && <Observations rows={result.observations} visual={result.visual_check} audio={result.direct_audio_check} />}
+        {result.calculation && <CalculationSummary result={result.calculation} />}
         {result.items.length === 0 ? (
           <Callout tone="attention" title="依据不足">所选范围内没有检索到相关原文。可以换个说法、扩大范围，或导入补充资料。</Callout>
         ) : (
@@ -437,7 +551,7 @@ function AnswerCard({ turn, result, latest }: { turn: QaTurn; result: RetrievalR
     return { title: `依据（${sent.length}）`, note: `本次回答发送并可引用的原文${unsent > 0 ? `；另有 ${unsent} 段只在本机检索到，未发送` : ''}`, items: sent, labels, current };
   }
   function cite(evidence: string) {
-    const item = sent.find((i) => i.evidence_id === evidence);
+    const item = sent.find((i) => i.evidence_id === evidence) ?? result.items.find((i) => i.evidence_id === evidence);
     inspect({ kind: 'evidence', evidence: panel(evidence), source: item ? sourceOf(item) : undefined });
   }
   // The newest answer opens its evidence beside it once (design 9.5).
@@ -503,7 +617,12 @@ function AnswerCard({ turn, result, latest }: { turn: QaTurn; result: RetrievalR
         <Part title="缺失信息" items={s.missing_information} />
         <Part title="资料之间的矛盾" items={s.conflicts} />
         <Part title="下一步" claims={s.next_steps} onCite={cite} byLabel={byLabel} />
+        {result.calculation && <CalculationSummary result={result.calculation} />}
       </div>
+      {result.observations && result.observations.length > 0 && <Observations rows={result.observations} visual={result.visual_check} audio={result.direct_audio_check} />}
+      {((result.roles?.length ?? 0) > 0 || result.task_plan || result.challenge) && (
+        <Roles roles={result.roles ?? []} plan={result.task_plan ?? null} challenge={result.challenge ?? null} labels={labels} onCite={cite} />
+      )}
       <Process steps={result.process} running={false} />
       <div className="answer-foot">
         <button className="btn btn-xs btn-subtle" onClick={copy}>
@@ -587,13 +706,130 @@ function Cite({ label, onOpen }: { label: string; onOpen: () => void }) {
   );
 }
 
+/** A planner goal names passages by the planner's labels (E1, E2…); they
+ *  are shown as the same citations the answer uses. */
+function GoalText({ text, taskLabels, labels, onCite }: { text: string; taskLabels: Record<string, string>; labels: Record<string, string>; onCite: (evidence: string) => void }) {
+  return (
+    <>
+      {text.split(/(?<![A-Za-z])(E\d{1,2})(?!\d)/).map((part, i) => {
+        if (i % 2 === 0) return part;
+        const id = taskLabels[part];
+        return id && labels[id] ? <Cite key={i} label={labels[id]} onOpen={() => onCite(id)} /> : null;
+      })}
+    </>
+  );
+}
+
+const ISSUE: Record<string, string> = { unsupported: '缺乏依据', contradiction: '与证据矛盾', missing_evidence: '缺少证据', calculation: '计算问题', scope: '超出资料范围' };
+
+/** The roles' candidate analyses, the plan and the checker's challenges:
+ *  inputs to the final answer, never evidence themselves. */
+function Roles({ roles, plan, challenge, labels, onCite }: { roles: RoleSummary[]; plan: TaskPlanSummary | null; challenge: ChallengeSummary | null; labels: Record<string, string>; onCite: (evidence: string) => void }) {
+  const challenges = challenge?.challenges ?? [];
+  return (
+    <details className="roles">
+      <summary>
+        <Icon name="permissions" />
+        专业角色分析（{roles.length}）{challenges.length ? ` · 检查者质疑 ${challenges.length} 条` : challenge ? ' · 检查者未提出质疑' : ''}
+      </summary>
+      <p className="t-caption text-tertiary">各角色的意见只是候选分析，由结果综合者对照原文采纳；最终回答已逐句核查。</p>
+      {plan && plan.tasks.length > 0 && (
+        <section className="role-block">
+          <h4>任务安排</h4>
+          <ol>
+            {plan.tasks.map((task) => (
+              <li key={task.node_id}>
+                <span className="t-strong">{ROLE_TITLE[task.role_id] ?? task.role_id}</span>：<GoalText text={task.goal ?? ''} taskLabels={task.labels ?? {}} labels={labels} onCite={onCite} />
+                {task.depends_on.length > 0 && <span className="t-caption text-tertiary">（在 {task.depends_on.map((d) => plan.tasks.find((t) => t.node_id === d)).map((t) => (t ? ROLE_TITLE[t.role_id] : '')).join('、')} 之后）</span>}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {roles.map((role) => (
+        <section key={role.analysis_ref} className="role-block">
+          <h4>{role.role_title || ROLE_TITLE[role.role] || role.role}</h4>
+          <ul>
+            {role.claims.map((claim, i) => (
+              <li key={i}>
+                {claim.text}
+                {claim.evidence.map((e) => (labels[e.evidence_id] ? <Cite key={e.evidence_id} label={labels[e.evidence_id]} onOpen={() => onCite(e.evidence_id)} /> : null))}
+              </li>
+            ))}
+            {role.limitations.map((limit, i) => (
+              <li key={`l${i}`} className="text-secondary">局限：{limit}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      {challenges.length > 0 && (
+        <section className="role-block">
+          <h4>检查者质疑（已交给修订）</h4>
+          <ul>
+            {challenges.map((c, i) => (
+              <li key={i}>
+                <Chip tone="warn">{ISSUE[c.issue_type] ?? c.issue_type}</Chip> {c.proposed_action}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </details>
+  );
+}
+
+const FIELD: Record<string, string> = { amount: '金额', date: '日期', name: '姓名', account: '账号', id_number: '证件号' };
+
+/** What the model read directly from the approved media, and how its key
+ *  fields compare with the local OCR/ASR of the same source. */
+function Observations({ rows, visual, audio }: { rows: ObservationSummary[]; visual?: string; audio?: string }) {
+  const disagreements = rows.flatMap((r) => r.comparison.disagreements);
+  return (
+    <details className="roles" open={disagreements.length > 0}>
+      <summary>
+        <Icon name="view" />
+        直接读取媒体{visual === 'performed' ? ' · 已看图' : ''}{audio === 'performed' ? ' · 已听音频' : ''}{disagreements.length ? ` · ${disagreements.length} 处与本机识别不一致` : ' · 关键字段与本机识别一致'}
+      </summary>
+      <p className="t-caption text-tertiary">直接读取与本机识别来自同一份原件，一致只是核对信号，不证明原件真实；不一致处请回到原图或回放核对。</p>
+      {rows.map((row) => (
+        <section key={row.observation_ref} className="role-block">
+          <ul>
+            {row.observations.map((text, i) => <li key={i}>{text}</li>)}
+            {row.limitations.map((text, i) => <li key={`l${i}`} className="text-secondary">局限：{text}</li>)}
+          </ul>
+          {(row.comparison.agreements.length > 0 || row.comparison.disagreements.length > 0) && (
+            <table className="table compact">
+              <thead>
+                <tr><th>字段</th><th>直接读取</th><th>本机识别</th></tr>
+              </thead>
+              <tbody>
+                {[...row.comparison.disagreements, ...row.comparison.agreements].map((f, i) => (
+                  <tr key={i}>
+                    <td>{FIELD[f.name] ?? f.name}</td>
+                    <td>{f.observed}</td>
+                    <td>{f.extracted ? <span className="cap-supported">一致</span> : <Chip tone="warn">未在识别文字中找到</Chip>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      ))}
+    </details>
+  );
+}
+
 const STEP_TEXT: Record<string, (s: ProcessStep) => string> = {
   plan: (s) => (s.status === 'completed' ? `理解问题并改写检索词（${s.rewrites ?? 0} 条）` : '查询规划未完成，改用原问题检索'),
   search: (s) => `关键词＋语义检索：${s.queries ?? 1} 组查询，融合 ${s.candidates ?? 0} 段`,
   rerank: (s) => `本机重排，取前 ${s.evidence ?? 0} 段`,
+  plan_tasks: (s) => (s.status === 'completed' ? `任务规划：安排 ${s.roles ?? 0} 个专业角色` : '任务规划未完成，改为直接综合'),
+  role: (s) => `${ROLE_TITLE[s.role ?? ''] ?? '专业角色'}分析${s.status === 'completed' ? '' : '（未完成）'}`,
+  observe: (s) => (s.status === 'completed' ? `直接读取媒体：${s.observations ?? 0} 条观察，并与本机识别核对` : '直接读取媒体未完成'),
   draft: () => '起草回答（只依据已批准发送的原文）',
   verify: (s) => `逐句核查：${s.supported ?? 0} 句有依据${s.problems ? `，${s.problems} 处需要修订` : ''}`,
-  revise: () => '按核查结果修订回答',
+  check: (s) => (s.status === 'completed' ? `证据检查：${s.challenges ?? 0} 条质疑` : '证据检查未完成'),
+  revise: () => '按核查与检查结果修订回答',
 };
 
 function Process({ steps, running }: { steps: ProcessStep[]; running: boolean }) {
@@ -601,11 +837,20 @@ function Process({ steps, running }: { steps: ProcessStep[]; running: boolean })
   const total = steps.reduce((sum, s) => sum + (s.ms ?? 0), 0) / 1000;
   const search = steps.find((s) => s.step === 'search');
   const verify = [...steps].reverse().find((s) => s.step === 'verify');
+  const roles = steps.filter((s) => s.step === 'role').length;
+  const path = [
+    search ? `检索 ${search.candidates ?? 0} 段 → 重排` : '',
+    steps.some((s) => s.step === 'observe') ? '直接读取媒体' : '',
+    roles ? `${roles} 个角色分析` : '',
+    '起草',
+    `核查${verify ? `（${verify.problems ? `${verify.problems} 处待改` : '通过'}）` : ''}`,
+    steps.some((s) => s.step === 'check') ? '证据检查' : '',
+  ].filter(Boolean).join(' → ');
   return (
     <details className="process" open={running}>
       <summary>
         <Icon name="list" />
-        执行过程：检索 {search?.candidates ?? 0} 段 → 重排 → 起草 → 核查{verify ? `（${verify.problems ? `${verify.problems} 处待改` : '通过'}）` : ''} · 共 {total.toFixed(1)} 秒
+        执行过程：{path} · 共 {total.toFixed(1)} 秒
       </summary>
       <ol className="steps">
         {steps.map((s, i) => (
@@ -617,84 +862,5 @@ function Process({ steps, running }: { steps: ProcessStep[]; running: boolean })
         ))}
       </ol>
     </details>
-  );
-}
-
-// ------------------------------------------------------------- egress (9.7)
-
-function EgressDialog({ preview, onCancel, onConfirm }: { preview: AnswerPreview; onCancel: () => void; onConfirm: (excluded: string[]) => Promise<void> }) {
-  const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
-  const sending = preview.excerpts.length - excluded.size;
-  const toggle = (id: string) => setExcluded((set) => {
-    const next = new Set(set);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    return next;
-  });
-  return (
-    <Modal
-      title="发送前预览"
-      icon="globe"
-      wide
-      onClose={busy ? () => {} : onCancel}
-      footer={
-        <>
-          <span className="t-caption text-tertiary" style={{ marginRight: 'auto' }}>将发送至 {preview.connection.host}</span>
-          <button className="btn" onClick={onCancel} disabled={busy}>取消</button>
-          <button
-            className="btn btn-primary"
-            disabled={busy || sending === 0}
-            onClick={async () => {
-              setBusy(true);
-              await onConfirm([...excluded]);
-              setBusy(false);
-            }}
-          >
-            {busy ? '等待系统确认…' : '继续，打开系统确认'}
-          </button>
-        </>
-      }
-    >
-      <Callout title="以下内容将发送到你配置的生成接口，用于生成这一次回答">可以取消勾选不想发送的段落。继续后会弹出系统确认框，确认后才会发送。</Callout>
-      <dl className="kv">
-        <dt>接收方</dt>
-        <dd>{preview.connection.name}（{preview.connection.host}）· 模型 {preview.connection.model_id}</dd>
-        <dt>用途</dt>
-        <dd>生成这一次回答：改写检索词、起草，并按本机核查结果修订（不包含联网搜索）</dd>
-        <dt>有效期</dt>
-        <dd>仅本次回答；之后再发送需要重新确认</dd>
-        <dt>上限</dt>
-        <dd>最多 {preview.max_requests} 次请求；每次输出不超过 {preview.max_output_tokens.toLocaleString('zh-CN')} 个令牌；原文最多 {preview.max_items} 段</dd>
-      </dl>
-      <div>
-        <div className="t-subtitle" style={{ marginBottom: 4 }}>将发送的内容（{sending + 1} 项）</div>
-        <div className="send-item">
-          <Icon name="chat" />
-          <div>
-            <div className="t-strong">你的问题</div>
-            <div className="text-secondary">{preview.question}</div>
-          </div>
-          <Chip>必需</Chip>
-        </div>
-        {preview.excerpts.length === 0 && <p className="text-secondary">所选范围内没有检索到相关原文；继续时只会发送问题，回答会说明依据不足。</p>}
-        {preview.excerpts.map((e) => (
-          <div key={e.evidence_id} className={`send-item${excluded.has(e.evidence_id) ? ' excluded' : ''}`}>
-            <Icon name="document" />
-            <div style={{ minWidth: 0 }}>
-              <div className="t-strong ellipsis">{[e.display_name, locatorLabel(e.locators ?? [])].filter(Boolean).join(' · ')}</div>
-              <div className="text-secondary excerpt-text">{e.excerpt}</div>
-            </div>
-            <label className="check t-caption">
-              <input type="checkbox" checked={!excluded.has(e.evidence_id)} onChange={() => toggle(e.evidence_id)} />
-              发送
-            </label>
-          </div>
-        ))}
-      </div>
-      <p className="t-caption text-tertiary">
-        不会发送：原件与页面图、其他页面、事实与金额记录、你的姓名与空间名称。改写检索词后可能在同一范围内换用其他段落（同样不超过 {preview.max_items} 段，取消勾选的段落不会发送）。已发送的内容无法从服务方撤回。
-      </p>
-    </Modal>
   );
 }

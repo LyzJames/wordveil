@@ -28,7 +28,7 @@
       "rule": "扩展仍在同版本与读取预算内"
     }
   ],
-  "version": "0.3.0-m2",
+  "version": "0.4.0-m2",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

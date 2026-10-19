@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "challenges"
+  ],
+  "properties": {
+    "challenges": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_id",
+          "issue_type",
+          "evidence",
+          "proposed_action"
+        ],
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16
+          },
+          "issue_type": {
+            "type": "string",
+            "enum": [
+              "unsupported",
+              "contradiction",
+              "missing_evidence",
+              "calculation",
+              "scope"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "maxLength": 8
+            }
+          },
+          "proposed_action": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    }
+  }
+}

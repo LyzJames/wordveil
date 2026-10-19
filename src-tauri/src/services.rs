@@ -7,15 +7,56 @@ use crate::{
     logging::EventLog,
     media::MediaTools,
     model_pool::{ModelKey, ModelLease, ModelPool, ResidencyPolicy, installed_memory_bytes},
+    isolation::SpawnPolicy,
     worker_process::{ArtifactFile, CpuArtifact, Launcher, WorkerInstallation},
 };
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
-    sync::{Mutex, atomic::AtomicBool},
+    sync::{Condvar, Mutex, atomic::{AtomicBool, Ordering}},
     time::{Duration, Instant},
 };
+
+/// Global limit on concurrent requests to generation services (design 7.3:
+/// at most two in flight across all roles and roots).
+pub const GENERATION_CONCURRENCY: u32 = 2;
+const ORCHESTRATOR_MEMORY: usize = 1024 * 1024 * 1024;
+
+/// A counting semaphore whose waiters keep honouring cancellation.
+pub struct Slots {
+    used: Mutex<u32>,
+    freed: Condvar,
+    limit: u32,
+}
+
+pub struct SlotGuard<'a>(&'a Slots);
+
+impl Slots {
+    pub fn new(limit: u32) -> Self {
+        Self { used: Mutex::new(0), freed: Condvar::new(), limit }
+    }
+    pub fn acquire(&self, cancellation: &AtomicBool) -> Result<SlotGuard<'_>> {
+        let mut used = self.used.lock().map_err(|_| Error::Integrity)?;
+        while *used >= self.limit {
+            if cancellation.load(Ordering::Acquire) {
+                return Err(Error::Cancelled);
+            }
+            used = self.freed.wait_timeout(used, Duration::from_millis(50)).map_err(|_| Error::Integrity)?.0;
+        }
+        *used += 1;
+        Ok(SlotGuard(self))
+    }
+}
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut used) = self.0.used.lock() {
+            *used = used.saturating_sub(1);
+        }
+        self.0.freed.notify_one();
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct EmbeddingSpace {
@@ -131,6 +172,7 @@ pub struct Services {
     pub media: MediaTools,
     pub log: EventLog,
     pub residency: ResidencyPolicy,
+    pub generation_slots: Slots,
 }
 
 impl Services {
@@ -149,6 +191,7 @@ impl Services {
             media: MediaTools { bin: layout.ffmpeg_bin.clone(), work_root: temp.join("media") },
             log: EventLog::new(layout.logs_root()),
             residency: ResidencyPolicy::for_installed_memory(installed_memory_bytes()),
+            generation_slots: Slots::new(GENERATION_CONCURRENCY),
             pool: Mutex::new(None),
             layout,
         })
@@ -185,6 +228,35 @@ impl Services {
     pub fn predict(&self, model: &str, request: &Value, cancellation: &AtomicBool) -> Result<Value> {
         let lease = self.lease(model, cancellation)?;
         lease.predict(request, cancellation)
+    }
+
+    /// A fresh private scratch directory for one isolated process.
+    pub fn scratch(&self, prefix: &str) -> Result<PathBuf> {
+        let path = self.layout.temp_root().join("workers").join(format!("{prefix}-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+
+    /// Spawn policy of one orchestrator process: the worker bundle only, no
+    /// model, tokenizer or business path, no network (AppContainer).
+    pub fn orchestrator_policy(&self, scratch: PathBuf) -> Result<SpawnPolicy> {
+        // Synthetic tests only (never compiled into production): a scripted,
+        // possibly hostile orchestrator `script.py|scenario`, run isolated alike.
+        #[cfg(all(feature = "m0-harness", feature = "dev-worker"))]
+        if let (Some(spec), Launcher::Source { python, base, .. }) = (std::env::var_os("LVJIN_TEST_ORCHESTRATOR"), &self.layout.launcher) {
+            let spec = spec.to_string_lossy().to_string();
+            let (script, scenario) = spec.split_once('|').ok_or(Error::Contract)?;
+            let script = PathBuf::from(script);
+            let directory = script.parent().ok_or(Error::Contract)?.to_path_buf();
+            return Ok(SpawnPolicy {
+                executable: python.clone(),
+                arguments: vec!["-I".into(), "-B".into(), "-u".into(), script.to_string_lossy().to_string(), scenario.into()],
+                read_only: vec![base.clone(), directory],
+                scratch,
+                memory_limit: ORCHESTRATOR_MEMORY,
+            });
+        }
+        self.layout.launcher.policy(vec!["--service".into(), "orchestrator".into()], vec![], scratch, ORCHESTRATOR_MEMORY)
     }
 
     /// Lock/exit: stop every sensitive worker so no plaintext stays resident.

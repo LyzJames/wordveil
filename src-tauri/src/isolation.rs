@@ -33,6 +33,13 @@ fn quote(value:&str)->String {
     output.push_str(&"\\".repeat(slashes*2)); output.push('"'); output
 }
 
+/// Granting and revoking read a directory's DACL, change it and write it back
+/// over the whole tree. A worker evicted on the pool thread revokes its SID
+/// from the same shared directories another thread is granting to a new
+/// child; unserialized, the later writer drops the other's entry and that
+/// child cannot start or read its files.
+static ACL_CHANGES:std::sync::Mutex<()>=std::sync::Mutex::new(());
+
 struct Profile { name:Vec<u16>,sid:*mut c_void,granted:Vec<PathBuf> }
 unsafe impl Send for Profile {}
 impl Profile {
@@ -45,15 +52,19 @@ impl Profile {
     fn grant(&mut self,path:&Path,writable:bool)->Result<()> {
         let path=path.canonicalize()?;
         self.granted.push(path.clone());
+        let _serialized=ACL_CHANGES.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
         check(unsafe { lvjin_grant_path(wide(&path).as_ptr(),self.sid,i32::from(writable)) })?;
         Ok(())
     }
 }
 impl Drop for Profile {
-    fn drop(&mut self) { unsafe {
-        for path in self.granted.iter().rev() { lvjin_revoke_path(wide(path).as_ptr(),self.sid); }
-        lvjin_profile_free(self.sid); lvjin_profile_delete(self.name.as_ptr());
-    }}
+    fn drop(&mut self) {
+        let _serialized=ACL_CHANGES.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+        unsafe {
+            for path in self.granted.iter().rev() { lvjin_revoke_path(wide(path).as_ptr(),self.sid); }
+            lvjin_profile_free(self.sid); lvjin_profile_delete(self.name.as_ptr());
+        }
+    }
 }
 
 fn pipe(parent_reads:bool)->Result<(File,File)> {
@@ -184,6 +195,17 @@ impl IsolatedProcess {
 
     pub fn receive(&mut self,cancellation:&AtomicBool,deadline:Instant)->Result<serde_json::Value> {
         Ok(serde_json::from_slice(&self.receive_line(cancellation,deadline)?)?)
+    }
+
+    /// The next stdout message if one arrives within `wait` (None on timeout).
+    /// An exited child surfaces as the reader's end-of-file error.
+    pub fn poll(&mut self,cancellation:&AtomicBool,wait:Duration)->Result<Option<serde_json::Value>> {
+        if cancellation.load(Ordering::Acquire) { self.terminate()?; return Err(Error::Cancelled); }
+        match self.receiver.as_ref().ok_or(Error::Cancelled)?.recv_timeout(wait) {
+            Ok(line)=>Ok(Some(serde_json::from_slice(&line?)?)),
+            Err(mpsc::RecvTimeoutError::Timeout)=>Ok(None),
+            Err(_)=>Err(Error::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof))),
+        }
     }
 
     #[cfg(feature="m0-harness")]

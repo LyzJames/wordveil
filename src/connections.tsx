@@ -30,7 +30,10 @@ const CAPABILITIES: [string, string][] = [
 const STATUS: Record<Capability['status'], [string, IconName]> = {
   supported: ['支持', 'check'], unsupported: ['不支持', 'close'], unknown: ['未知', 'unknown'], unavailable: ['暂不可用', 'warning'], policy_blocked: ['策略禁止', 'warning'],
 };
-const PURPOSE: Record<string, string> = { capability_probe: '能力自检（合成内容）', search_plan: '改写检索词', draft_answer: '起草或修订回答' };
+const PURPOSE: Record<string, string> = {
+  capability_probe: '能力自检（合成内容）', search_plan: '改写检索词', draft_answer: '起草或修订回答', task_plan: '安排专业角色', role_analysis: '专业角色分析',
+  role_check: '证据检查', context_brief: '上下文简报', direct_media: '直接读取媒体',
+};
 
 type Form = ConnectionDraft & { provider: ProviderId };
 
@@ -325,7 +328,7 @@ function RequestLog() {
                     <td>{PURPOSE[r.purpose] ?? r.purpose}</td>
                     <td className="mono t-caption">{r.host}</td>
                     <td className="mono t-caption">{r.model_id}</td>
-                    <td>{r.status === 'completed' ? <Chip tone="ok">完成</Chip> : r.status === 'sent' ? <Chip tone="info">进行中</Chip> : <Chip tone="danger" title={r.error ?? ''}>{r.status === 'cancelled' ? '已取消' : '失败'}</Chip>}</td>
+                    <td>{r.status === 'completed' ? <Chip tone="ok">完成</Chip> : r.status === 'sent' ? <Chip tone="info">进行中</Chip> : r.status === 'unknown' || r.error === 'cancelled' ? <Chip tone="warn" title="请求已发出，但中断前没有收到回应；已计入额度">结果未知</Chip> : <Chip tone="danger" title={r.error ?? ''}>失败</Chip>}</td>
                     <td className="num">{r.input_tokens?.toLocaleString('zh-CN') ?? '—'}</td>
                     <td className="num">{r.output_tokens?.toLocaleString('zh-CN') ?? '—'}</td>
                   </tr>

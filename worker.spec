@@ -8,7 +8,7 @@ from importlib.metadata import distributions
 app=Path(SPECPATH)
 datas=[]
 binaries=[]
-for package in ['transformers','paddlex','paddleocr','paddle','docx']:
+for package in ['transformers','paddlex','paddleocr','paddle','docx','langgraph','langchain_core']:
     datas+=collect_data_files(package,include_py_files=True,excludes=['**/tests/**','**/test/**','**/__pycache__/**'])
 for package in ['paddle','pypdfium2_raw','soundfile','usearch']:
     binaries+=collect_dynamic_libs(package)
@@ -19,7 +19,7 @@ for distribution in distributions():
         datas+=copy_metadata(name)
 
 a=Analysis([str(app/'agent_core/entry.py')],pathex=[str(app)],binaries=binaries,datas=datas,
-    hiddenimports=['agent_core.worker','agent_core.inference','agent_core.geometry','agent_core.contracts','agent_core.local_service','agent_core.parsers','agent_core.ocr_ops','agent_core.chunking','agent_core.extract','agent_core.finance','pydantic','PIL.Image','PIL.ImageOps','pypdfium2','pypdfium2.raw','usearch.index','jieba','librosa','soundfile','bidi','bidi.algorithm','pyclipper','shapely','shapely.ops','cv2','tokenizers','docx','docx.table','docx.text.paragraph','openpyxl','openpyxl.reader.excel','lxml.etree','lxml._elementpath','et_xmlfile'],
+    hiddenimports=['agent_core.worker','agent_core.orchestrator','agent_core.orchestrator.serve','agent_core.orchestrator.rpc','agent_core.orchestrator.checkpoint','agent_core.orchestrator.core','agent_core.orchestrator.flows','agent_core.orchestrator.flows.answer','agent_core.orchestrator.flows.deep_answer','agent_core.orchestrator.flows.analysis','agent_core.orchestrator.flows.media_review','agent_core.orchestrator.flows.roles','agent_core.orchestrator.flows.common','langgraph.graph','langgraph.types','langgraph.checkpoint.memory','langgraph.checkpoint.serde.jsonplus','ormsgpack','xxhash','agent_core.inference','agent_core.geometry','agent_core.contracts','agent_core.local_service','agent_core.parsers','agent_core.ocr_ops','agent_core.chunking','agent_core.extract','agent_core.finance','pydantic','PIL.Image','PIL.ImageOps','pypdfium2','pypdfium2.raw','usearch.index','jieba','librosa','soundfile','bidi','bidi.algorithm','pyclipper','shapely','shapely.ops','cv2','tokenizers','docx','docx.table','docx.text.paragraph','openpyxl','openpyxl.reader.excel','lxml.etree','lxml._elementpath','et_xmlfile'],
     excludes=['tkinter','pytest','IPython','matplotlib','onnx','onnxruntime','bitsandbytes','accelerate','pip','tensorboard','notebook','jupyter'],
     noarchive=False)
 pyz=PYZ(a.pure)

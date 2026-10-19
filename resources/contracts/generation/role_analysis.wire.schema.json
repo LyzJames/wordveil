@@ -1,0 +1,71 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "claims",
+    "proposed_skills",
+    "limitations"
+  ],
+  "properties": {
+    "claims": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "text",
+          "evidence"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "conclusion",
+              "basis",
+              "calculation",
+              "next_step"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string",
+              "maxLength": 8
+            }
+          }
+        }
+      }
+    },
+    "proposed_skills": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "enum": [
+          "knowledge-search",
+          "graph-relations",
+          "evidence-rerank",
+          "evidence-read",
+          "finance-calculate"
+        ]
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 400
+      }
+    }
+  }
+}

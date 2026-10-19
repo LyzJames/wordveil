@@ -30,8 +30,8 @@ export type AppStatus = {
 };
 export type UnlockInfo = { handle: string; vault_id: string; root_matter: string; name: string };
 export type Progress = { skill: string; stage: string; done: number; total: number };
-export type TaskEvent = { task_id: string; kind: 'progress' | 'finished'; progress: Progress | null; envelope: Envelope | null };
-export type TaskState = { task_id: string; skill: string; root: string; status: string; progress: Progress | null; envelope: Envelope | null; started_at: string };
+export type TaskEvent = { task_id: string; kind: 'progress' | 'finished'; progress: Progress | null; envelope: (Envelope & { flow_run?: string }) | null };
+export type TaskState = { task_id: string; skill: string; root: string; status: string; progress: Progress | null; envelope: (Envelope & { flow_run?: string }) | null; started_at: string };
 
 export type Locator = { type: string; page_no?: number; page_id?: string; bbox?: number[]; polygon?: number[][]; frame?: string; low_confidence?: boolean; start_s?: number; end_s?: number; segment_id?: string; sheet?: string; row?: number; line?: number; paragraph?: number; table?: number; outside_page?: boolean; rotation_turns?: number; unwarped?: boolean };
 export type Block = { block: number; text: string; locator: Locator; confidence: number | null; kind: string };
@@ -68,9 +68,14 @@ export type Connection = {
 };
 export type ConnectionDraft = { connection_id: string | null; name: string; provider: string; protocol: string; base_url: string; model_id: string; timeout_s: number; max_output_tokens: number; proxy: 'system' | 'none' };
 export type Excerpt = { evidence_id: string; display_name: string; unit_title: string; pages: string[]; locators: Locator[]; excerpt: string };
+export type NativeMedia = { media_ref: string; kind: 'image' | 'audio'; page_id?: string; display: string; location?: string; bytes: number; width?: number; height?: number };
+/** What a grant approves: the Q&A modes, a written analysis or a media review. */
+export type Purpose = 'answer' | 'deep_answer' | 'contract_review' | 'loan_analysis' | 'budget_analysis' | 'image_review' | 'audio_review' | 'video_review';
 export type AnswerPreview = {
-  grant_id: string; question_id: string; scope_id: string; question: string; purpose: string; matters: number;
+  grant_id: string; question_id: string; scope_id: string; question: string; purpose: Purpose; matters: number;
   connection: { id: string; name: string; host: string; model_id: string }; excerpts: Excerpt[]; max_items: number; max_requests: number; max_output_tokens: number;
+  roles?: string[]; native_media?: NativeMedia[]; native_media_note?: string;
+  media_policy?: { frames: number; audio_seconds: number; range: { start_s: number; end_s: number | null } };
 };
 export type ClaimRow = { claim_id: string; text: string; evidence: { label: string; evidence_id: string }[]; status: 'supported' | 'partial' | 'unsupported' | 'unchecked' | 'advice' | null; message: string | null; flagged: { start: number; end: number; utf16_start: number; utf16_end: number }[] | null };
 export type Answer = {
@@ -78,12 +83,21 @@ export type Answer = {
   sections: { conclusion: ClaimRow[]; basis: ClaimRow[]; calculations: ClaimRow[]; next_steps: ClaimRow[]; assumptions: string[]; missing_information: string[]; conflicts: string[] };
   labels: { label: string; evidence_id: string }[]; coverage: { checked: number; groundable: number }; verification_note: string;
 };
-export type ProcessStep = { step: string; status: string; ms?: number; rewrites?: number; queries?: number; candidates?: number; evidence?: number; supported?: number; problems?: number; code?: string };
+export type ProcessStep = { step: string; status: string; ms?: number; rewrites?: number; queries?: number; candidates?: number; evidence?: number; supported?: number; problems?: number; code?: string; role?: string; roles?: number; challenges?: number; observations?: number };
+export type RoleSummary = { analysis_ref: string; role: string; role_title: string; claims: { kind: string; text: string; evidence: { label: string; evidence_id: string }[] }[]; limitations: string[]; proposed_skill_ids: string[] };
+export type TaskPlanSummary = { task_plan_ref: string; tasks: { node_id: string; role_id: string; depends_on: string[]; goal: string | null; acceptance: string | null; labels?: Record<string, string> }[] };
+export type ChallengeSummary = { challenge_ref: string; draft_ref: string; challenges: { claim_id: string; issue_type: string; evidence_refs: string[]; proposed_action: string }[] };
+export type FieldCheck = { media_ref: string; name: string; observed: string; extracted: string | null };
+export type ObservationSummary = { observation_ref: string; observations: string[]; limitations: string[]; comparison: { agreements: FieldCheck[]; disagreements: FieldCheck[]; method: string }; media: { label: string; media_ref: string; kind: string; detail: Record<string, unknown> }[] };
+export type InterruptedFlow = { run_id: string; root: string; skill: string; flow: string; question: string | null; attempts: number; reason: string | null; unknown_requests: number; stale: boolean; created_at: string; updated_at: string };
 export type RetrievalResult = {
   question: string; items: EvidenceItem[]; answer: Answer | null; process: ProcessStep[]; query_rewrites: string[];
   plan: { fallback: boolean; rewrites: { purpose: string; query: string }[]; missing_facts: string[] };
   usage: { requests: number; input_tokens: number; output_tokens: number }; connection: { name: string; host: string; model_id: string; provider: string } | null; requested_output: string;
-  evidence_bundle: string | null;
+  evidence_bundle: string | null; flow_run?: string | null;
+  roles?: RoleSummary[]; task_plan?: TaskPlanSummary | null; challenge?: ChallengeSummary | null; observations?: ObservationSummary[];
+  /** Written analyses and media reviews: what was checked locally and how. */
+  calculation?: Record<string, unknown> | null; visual_check?: string; direct_audio_check?: string;
 };
 export type GenerationRequestRow = { purpose: string; host: string; model_id: string; status: string; error: string | null; input_tokens: number | null; output_tokens: number | null; started_at: string; connection: string | null };
 
@@ -122,9 +136,15 @@ export const api = {
   connectionProbe: (connection: string) => wrap(invoke<string>('connection_probe', { connection })),
   connectionRevoke: (connection: string) => wrap(invoke<Envelope>('connection_revoke', { connection })),
   connectionDefault: (connection: string) => wrap(invoke<null>('connection_default', { connection })),
-  answerPreview: (question: string, matters: string[], connection: string | null = null) => wrap(invoke<AnswerPreview>('answer_preview', { question, matters, connection })),
+  answerPreview: (question: string, matters: string[], connection: string | null = null, deep = false) => wrap(invoke<AnswerPreview>('answer_preview', { question, matters, connection, deep })),
+  analysisPreview: (kind: 'contract-review' | 'loan-analysis' | 'budget-analysis', request: object) => wrap(invoke<AnswerPreview>('analysis_preview', { kind, request })),
+  mediaPreview: (kind: 'image-review' | 'audio-review' | 'video-review', request: object) => wrap(invoke<AnswerPreview>('media_preview', { kind, request })),
   /** Opens the native confirmation; the task starts only if the user confirms there. */
-  answerStart: (grant: string, excluded: string[]) => wrap(invoke<string>('answer_start', { grant, excluded })),
+  answerStart: (grant: string, excluded: string[], excludedMedia: string[] = []) => wrap(invoke<string>('answer_start', { grant, excluded, excludedMedia })),
+  flowsInterrupted: () => wrap(invoke<InterruptedFlow[]>('flows_interrupted')),
+  /** Continuing needs its own native confirmation (opened by the core). */
+  flowContinue: (run: string) => wrap(invoke<string>('flow_continue', { run })),
+  flowDiscard: (run: string) => wrap(invoke<null>('flow_discard', { run })),
   answerDiscard: (grant: string) => wrap(invoke<null>('answer_discard', { grant })),
   generationRequests: () => wrap(invoke<GenerationRequestRow[]>('generation_requests')),
 };
@@ -187,7 +207,7 @@ export const FACT_TYPES: Record<string, string> = { amount: '金额', date: '日
 export const RELATION_TYPES: Record<string, string> = { cites: '引用', amends: '修订', supersedes: '取代', evidence_for: '依据', confirmed_fact: '确认事实', derived_from: '来源于' };
 export const SKILL_STATUS: Record<string, string> = {
   local: '本机可用', 'local-generation': '本机检索；授权后生成回答', generation: '需要生成接口', 'protected-connection': '受保护设置',
-  'generation-pending': '本机部分可用；生成分析后续提供', 'network-pending': '联网与外部工具（后续）',
+  'local-analysis': '本机证据与计算；授权后书面分析', 'local-media': '本机识别与转写；授权后原生复核', 'network-pending': '联网与外部工具（后续）',
 };
 
 /** Exact decimal strings as `77,000.00` (two decimals, more only when the
@@ -213,6 +233,8 @@ export const skillName = (id: string) => SKILLS[id] ?? id;
 const STAGES: Record<string, string> = {
   parse_pdf: '解析 PDF', orientation: '整页方向', unwarp: '弯曲矫正', detection: '文字检测', line_orientation: '行方向', recognition: '文字识别',
   index: '建立索引', embedding: '向量化', probe: '读取媒体信息', decode_audio: '解码音频', frames: '抽取画面', asr: '语音转写', backup: '备份',
+  plan: '理解问题', search: '检索', rerank: '重排', draft: '起草', revise: '修订', verify: '逐句核查', plan_tasks: '安排专业角色', role: '角色分析',
+  check: '证据检查', observe: '直接读取媒体', flow: '编排',
 };
 export const stageName = (id: string) => STAGES[id] ?? id;
 

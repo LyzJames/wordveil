@@ -119,7 +119,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
         }
     };
     if !baseline {
-        for capability in ["streaming", "tool_calling", "json_object", "strict_schema", "vision"] {
+        for capability in ["streaming", "tool_calling", "json_object", "strict_schema", "vision", "audio_input"] {
             push(ProbeResult { capability, status: "unknown", evidence: "文本请求未成功，未继续检测".into(), limits: Value::Null, input_tokens: 0, output_tokens: 0, sent: false }, &mut results);
         }
     } else {
@@ -182,11 +182,66 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
             Ok(response) => push(wrong("vision", &response, "接受了图片，但回答与图片内容不符".into()), &mut results),
             Err(error) => push(failure("vision", &error), &mut results),
         }
+        // 7. Audio input: a synthetic clip with three short tones.
+        if profile.protocol == Protocol::AnthropicMessages {
+            push(ProbeResult { capability: "audio_input", status: "unsupported", evidence: "该协议没有音频输入；音频按本机转写处理".into(), limits: Value::Null, input_tokens: 0, output_tokens: 0, sent: false }, &mut results);
+        } else {
+            let request = GenRequest {
+                system: SYSTEM.into(),
+                messages: vec![Message { role: "user", parts: vec![Part::Text("这段音频里有几声短促的提示音？只回复阿拉伯数字。".into()), Part::AudioWav(synthetic_wav_base64())] }],
+                max_output_tokens: 64,
+                output: OutputMode::Text,
+                tools: vec![],
+                stream: false,
+            };
+            match adapters::call(profile, key, &request, cancel, &mut ignore) {
+                Ok(response) if response.text.contains('3') || response.text.contains('三') => push(ok("audio_input", &response, "正确数出了合成音频中的提示音".into(), json!({"tested_audio": "WAV 16 kHz 单声道 约 1.6 秒"})), &mut results),
+                Ok(response) => push(wrong("audio_input", &response, "接受了音频，但回答与音频内容不符".into()), &mut results),
+                Err(error) => push(failure("audio_input", &error), &mut results),
+            }
+        }
     }
-    for capability in ["audio_input", "native_video", "joint_media"] {
-        push(ProbeResult { capability, status: "unknown", evidence: "本版本未检测；音视频按本机转写与抽帧文字处理".into(), limits: Value::Null, input_tokens: 0, output_tokens: 0, sent: false }, &mut results);
+    for capability in ["native_video", "joint_media"] {
+        push(ProbeResult { capability, status: "unsupported", evidence: "本版本的适配器不发送原生视频或联合媒体输入；视频按抽帧图片与音轨分别处理".into(), limits: Value::Null, input_tokens: 0, output_tokens: 0, sent: false }, &mut results);
     }
     results
+}
+
+/// 16 kHz mono 16-bit WAV: three 0.15 s tones of 880 Hz with pauses.
+pub fn synthetic_wav_base64() -> String {
+    use base64::Engine;
+    let rate = 16_000u32;
+    let mut samples: Vec<i16> = vec![0; (rate as f32 * 0.2) as usize];
+    for _ in 0..3 {
+        for n in 0..(rate as f32 * 0.15) as usize {
+            let t = n as f32 / rate as f32;
+            samples.push(((t * 880.0 * std::f32::consts::TAU).sin() * 0.4 * i16::MAX as f32) as i16);
+        }
+        samples.extend(std::iter::repeat_n(0i16, (rate as f32 * 0.3) as usize));
+    }
+    base64::engine::general_purpose::STANDARD.encode(wav_pcm16(&samples, rate))
+}
+
+/// A canonical PCM16 mono WAV container.
+pub fn wav_pcm16(samples: &[i16], rate: u32) -> Vec<u8> {
+    let data = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + data as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    for sample in samples {
+        out.extend_from_slice(&sample.to_le_bytes());
+    }
+    out
 }
 
 /// A 192x96 PNG: white background with three red 24x24 squares. Built with

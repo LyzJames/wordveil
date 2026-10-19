@@ -1,6 +1,8 @@
-//! media-decode, audio-transcribe and the text-only paths of image/audio/video
-//! review (design 9.13, multimodal 5-6). Native media observation requires a
-//! verified generation endpoint (M2); M1 reports it as not performed.
+//! media-decode, audio-transcribe and image/audio/video review (design 9.13,
+//! multimodal 2-6). Extraction (OCR, ASR, frames) is local. With an approved
+//! grant, "analyze" runs the LangGraph media review flow: native observation
+//! of the approved media where the connection passed the matching self-test,
+//! a field comparison with the local text, and a verified written answer.
 use super::*;
 use crate::{
     media::{audio_windows, pick_frames, SAMPLE_RATE},
@@ -16,7 +18,7 @@ const ASR_PROCESSED_SECONDS: f64 = 1320.0;
 const ASR_SEGMENTS: f64 = 48.0;
 const VISUAL_SAMPLES: usize = 24;
 
-fn charge(ctx: &Ctx, root: &str, key: &str, amount: f64, limit: f64) -> Result<()> {
+pub(crate) fn charge(ctx: &Ctx, root: &str, key: &str, amount: f64, limit: f64) -> Result<()> {
     let mut vault = ctx.lock()?;
     let tx = vault.runtime.ledger.db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let used: f64 = tx.query_row("SELECT value FROM root_usage WHERE root=? AND key=?", params![root, key], |r| r.get(0)).optional()?.unwrap_or(0.0);
@@ -298,6 +300,79 @@ fn question_exists(ctx: &Ctx, question: &str) -> Result<()> {
     ctx.lock()?.expect_kind(question, &["ImmutableQuestionRef"])
 }
 
+/// The media review flow for an approved "analyze" task; the core checks the
+/// references it returns and builds the delivered answer.
+#[allow(clippy::too_many_arguments)]
+fn native_review(ctx: &Ctx, invocation: &Invocation, input: &Value, question: &str, versions: &[String], pages: &[String], frames: &[String], audio_source: Option<&str>, parts: &mut EnvelopeParts) -> Result<Value> {
+    let root = invocation.root_id();
+    let grant = super::answers::grant_for_root(ctx, root)?.ok_or(Error::Denied)?;
+    super::observe::prepare_run_media(ctx, &grant, frames, audio_source)?;
+    let grant = super::answers::grant_for_root(ctx, root)?.ok_or(Error::Denied)?;
+    let (mut images, mut audio) = (vec![], vec![]);
+    {
+        let vault = ctx.lock()?;
+        for id in &grant.media {
+            let kind: Option<String> = vault.db().query_row("SELECT kind FROM native_media WHERE id=?", [id], |r| r.get(0)).optional()?;
+            match kind.as_deref() {
+                Some("image") if images.len() < super::observe::MAX_IMAGES_PER_REQUEST => images.push(id.clone()),
+                Some("audio") if audio.is_empty() => audio.push(id.clone()),
+                _ => {}
+            }
+        }
+    }
+    let bundle = super::observe::media_bundle(ctx, invocation, versions, pages)?;
+    let text: String = ctx.lock()?.db().query_row("SELECT text FROM questions WHERE id=?", [question], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
+    let outcome = super::flows::run(ctx, invocation, input, "media_review", || {
+        Ok(json!({"owner": invocation.id(), "question_id": question, "question": text, "evidence_bundle": bundle, "images": images, "audio": audio}))
+    })?;
+    let out = &outcome.output;
+    for (code, message) in outcome.warnings {
+        if !parts.warnings.iter().any(|(c, _)| *c == code) {
+            parts.warnings.push((code, message));
+        }
+    }
+    for code in out["warnings"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
+        if let Some(message) = super::flows::flow_warning(code) {
+            if !parts.warnings.iter().any(|(c, _)| c == code) {
+                warn(parts, code, message);
+            }
+        }
+    }
+    let draft = super::flows::owned_result(ctx, &out["draft"], "DraftRef", root)?;
+    let report = super::flows::owned_result(ctx, &out["report"], "ValidationReportRef", root)?;
+    let answer = match (&draft, &report) {
+        (Some((draft, _)), Some((report, _))) => super::workflows::deliver_answer(ctx, invocation, draft, report, out["revisions"].as_u64().unwrap_or(0).min(2), parts)?,
+        _ => {
+            parts.status = "partial".into();
+            Value::Null
+        }
+    };
+    let mut observations = vec![];
+    for id in out["observations"].as_array().cloned().unwrap_or_default().into_iter().take(2) {
+        if let Some((id, payload)) = super::flows::owned_result(ctx, &id, "MediaObservationRef", root)? {
+            observations.push(json!({"observation_ref": id, "observations": payload["observation"]["observations"], "limitations": payload["observation"]["limitations"],
+                "comparison": payload["comparison"], "media": payload["media"]}));
+        }
+    }
+    let read = |kind: &str| observations.iter().any(|o| o["media"].as_array().is_some_and(|m| m.iter().any(|x| x["kind"] == kind)));
+    let (visual, audible) = (read("image"), read("audio"));
+    if !visual && !images.is_empty() || !audible && !audio.is_empty() {
+        parts.status = "partial".into();
+    }
+    // The cited passages, read exactly, so the answer's citations open in place.
+    let cited: Vec<String> = answer["labels"].as_array().cloned().unwrap_or_default().iter().filter_map(|l| l["evidence_id"].as_str().map(str::to_owned)).collect();
+    let evidence_read = if cited.is_empty() {
+        Value::Null
+    } else {
+        let (_, reading) = child(ctx, invocation, "evidence-read", json!({"evidence_ids": cited, "context_mode": "exact"}))?;
+        data_of(&reading).map(Value::String).unwrap_or(Value::Null)
+    };
+    Ok(json!({"answer": answer, "evidence_read": evidence_read, "observations": observations, "visual_check": if visual { "performed" } else { "not_performed" },
+        "direct_audio_check": if audible { "performed" } else { "not_performed" }, "challenge": super::workflows::challenge_summary(ctx, root, &out["challenge"])?,
+        "process": super::flows::clean_process(&out["process"]), "flow_run": outcome.run,
+        "usage": super::workflows::generation_usage(ctx, root)?, "connection": super::workflows::connection_summary(ctx, root)?}))
+}
+
 pub fn image_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
     ctx.authorize(invocation, "vault.read")?;
     let images = refs_of(input, "image_refs")?;
@@ -341,15 +416,32 @@ pub fn image_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result
                 "low_confidence_lines": lines.iter().filter(|l| l.1.unwrap_or(1.0) < 0.8).count()}));
         }
     }
-    let payload = json!({"mode": mode, "question_id": question, "pages": pages_out, "visual_check": "not_performed",
-        "visual_check_reason": "原生图片复核需要已验证视觉能力的生成接口与授权（M2）；以上为本机 OCR 文字，未作画面理解"});
+    let mut payload = json!({"mode": mode, "question_id": question, "pages": pages_out, "visual_check": "not_performed",
+        "visual_check_reason": "原生图片复核需要通过视觉能力自检的生成接口与授权；以上为本机 OCR 文字，未作画面理解"});
+    let analyze = mode == "analyze" && super::answers::generation_available(ctx, invocation)?;
+    if analyze {
+        let page_ids: Vec<String> = pages_out.iter().filter_map(|p| p["page_id"].as_str().map(str::to_owned)).collect();
+        let mut versions: Vec<String> = vec![];
+        for page in &page_ids {
+            let version: String = ctx.lock()?.db().query_row("SELECT version_id FROM pages WHERE id=?", [page], |r| r.get(0))?;
+            if !versions.contains(&version) {
+                versions.push(version);
+            }
+        }
+        let review = native_review(ctx, invocation, input, &question, &versions, &page_ids, &[], None, &mut parts)?;
+        for (key, value) in review.as_object().cloned().unwrap_or_default() {
+            payload[key] = value;
+        }
+    }
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "ReviewResultRef", &payload)?;
     parts.data_ref = Some(result);
     parts.processed = images;
-    parts.limitations.push("visual_check_not_performed: 仅本机 OCR 文字".into());
-    if mode == "analyze" {
+    if payload["visual_check"] != "performed" {
+        parts.limitations.push("visual_check_not_performed: 仅本机 OCR 文字".into());
+    }
+    if mode == "analyze" && !analyze {
         parts.status = "requires_generation".into();
-        warn(&mut parts, "requires_generation", "图片分析需要生成接口；已交付本机 OCR 提取结果。");
+        warn(&mut parts, "requires_generation", "图片分析需要连接并授权生成接口；已交付本机 OCR 提取结果。");
     }
     Ok(parts)
 }
@@ -394,13 +486,27 @@ pub fn audio_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result
         }
         data_of(&envelope).map(Value::String).unwrap_or(Value::Null)
     };
-    let payload = json!({"media_id": source, "question_id": question, "analysis_goal": goal, "transcript": transcript, "coverage": bundle["coverage"],
-        "direct_audio_check": "not_performed", "direct_audio_reason": "原音频复核需要已验证音频能力的生成接口与授权（M2）"});
+    let mut payload = json!({"media_id": source, "question_id": question, "analysis_goal": goal, "transcript": transcript, "coverage": bundle["coverage"],
+        "direct_audio_check": "not_performed", "direct_audio_reason": "原音频复核需要通过音频输入自检的生成接口与授权"});
+    let analyze = goal == "analyze" && super::answers::generation_available(ctx, invocation)?;
+    if analyze {
+        // The transcript becomes locatable evidence before the written analysis.
+        let version = bundle["version_id"].as_str().ok_or(Error::Integrity)?.to_owned();
+        let (_, index) = child(ctx, invocation, "knowledge-index", json!({"document_versions": [version], "operation": "build"}))?;
+        if status_of(&index) != "completed" {
+            parts.status = "partial".into();
+            parts.warnings.extend(child_warnings(&index));
+        }
+        let review = native_review(ctx, invocation, input, &question, std::slice::from_ref(&version), &[], &[], Some(&source), &mut parts)?;
+        for (key, value) in review.as_object().cloned().unwrap_or_default() {
+            payload[key] = value;
+        }
+    }
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "ReviewResultRef", &payload)?;
     parts.data_ref = Some(result);
-    if goal == "analyze" {
+    if goal == "analyze" && !analyze {
         parts.status = "requires_generation".into();
-        warn(&mut parts, "requires_generation", "音频分析需要生成接口；已交付本机 ASR 转写。");
+        warn(&mut parts, "requires_generation", "音频分析需要连接并授权生成接口；已交付本机 ASR 转写。");
     }
     Ok(parts)
 }
@@ -440,15 +546,25 @@ pub fn video_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result
         parts.status = "partial".into();
         parts.warnings.extend(child_warnings(&index));
     }
-    let payload = json!({"media_id": source, "question_id": question, "analysis_goal": goal, "frame_ocr": ocr_ref, "audio_review": data_of(&audio),
+    let mut payload = json!({"media_id": source, "question_id": question, "analysis_goal": goal, "frame_ocr": ocr_ref, "audio_review": data_of(&audio),
         "coverage": {"visual_samples": bundle["coverage"]["visual_samples"], "ocr_ranges": bundle["frames"], "asr_ranges": bundle["coverage"]["audio_ranges"],
             "direct_audio_ranges": [], "native_video_ranges": [], "omitted_ranges": bundle["coverage"]["omitted_ranges"]},
-        "limits": "抽帧 OCR 只覆盖实际样本画面中的文字；ASR 只覆盖语音文字；未进行原生视觉/音频理解"});
+        "limits": "抽帧 OCR 只覆盖实际样本画面中的文字；ASR 只覆盖语音文字；原生视频与联合媒体输入不在本版本"});
+    let analyze = goal == "analyze" && super::answers::generation_available(ctx, invocation)?;
+    if analyze {
+        let review = native_review(ctx, invocation, input, &question, std::slice::from_ref(&version), &[], &frames, Some(&source), &mut parts)?;
+        if review["visual_check"] == "performed" {
+            payload["limits"] = json!("模型直接读取了获准的抽帧图片（不是完整视频）；ASR 只覆盖语音文字；原生视频与联合媒体输入不在本版本");
+        }
+        for (key, value) in review.as_object().cloned().unwrap_or_default() {
+            payload[key] = value;
+        }
+    }
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "ReviewResultRef", &payload)?;
     parts.data_ref = Some(result);
-    if goal == "analyze" {
+    if goal == "analyze" && !analyze {
         parts.status = "requires_generation".into();
-        warn(&mut parts, "requires_generation", "视频分析需要生成接口；已交付抽帧文字与音轨转写。");
+        warn(&mut parts, "requires_generation", "视频分析需要连接并授权生成接口；已交付抽帧文字与音轨转写。");
     }
     Ok(parts)
 }

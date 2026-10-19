@@ -1,0 +1,71 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tasks"
+  ],
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "role_id",
+          "goal",
+          "acceptance",
+          "stop",
+          "depends_on"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "enum": [
+              "t1",
+              "t2",
+              "t3"
+            ]
+          },
+          "role_id": {
+            "type": "string",
+            "enum": [
+              "evidence-researcher",
+              "legal-analyst",
+              "finance-analyst"
+            ]
+          },
+          "goal": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "acceptance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "stop": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "depends_on": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "type": "string",
+              "enum": [
+                "t1",
+                "t2",
+                "t3"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

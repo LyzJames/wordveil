@@ -238,3 +238,16 @@ ol.plain.numbered { list-style: decimal; padding-left: 20px; }
 @media (max-width: 1100px) {
   .grid-3 { grid-template-columns: 1fr 1fr; }
 }
+
+/* Narrow roles, checker challenges and native media observations (M2). */
+.roles { margin: 0 16px 12px; padding: 4px 12px; border-radius: var(--radius-card); background: var(--surface-sunken); }
+.roles > summary { cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.8125rem; min-height: 32px; }
+.roles > p { margin: 4px 0 8px; }
+.role-block { margin: 8px 0 12px; }
+.role-block h4 { font-size: 0.8125rem; font-weight: 600; margin: 0 0 4px; }
+.role-block ul, .role-block ol { margin: 0; padding-left: 1.25rem; }
+.role-block li { line-height: 1.6rem; }
+.table.compact td, .table.compact th { padding: 4px 8px; }
+.interrupted { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.interrupted li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.interrupted li .ellipsis { flex: 1; min-width: 0; }

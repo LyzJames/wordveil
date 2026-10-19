@@ -38,7 +38,7 @@
       "rule": "含来源/版本和待变更项"
     }
   ],
-  "version": "0.3.0-m2",
+  "version": "0.4.0-m2",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

@@ -83,7 +83,49 @@ pub struct Registry {
     pub roles: BTreeMap<String, Role>,
     schemas: BTreeMap<String, jsonschema::Validator>,
     outputs: BTreeMap<String, jsonschema::Validator>,
+    /// Locked system prompts and role instructions: id → (text, sha256).
+    prompts: BTreeMap<String, (String, String)>,
+    /// Model-facing output schemas (labels instead of references) per purpose.
+    wire: BTreeMap<String, Value>,
+    /// Goal, acceptance and stop texts of the fixed flows' role tasks.
+    goals: BTreeMap<String, Goal>,
 }
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Goal {
+    pub goal: String,
+    pub acceptance: String,
+    pub stop: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PromptEntry {
+    id: String,
+    file: String,
+    sha256: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PromptCatalog {
+    #[allow(dead_code)]
+    schema_version: String,
+    #[allow(dead_code)]
+    version: String,
+    prompts: Vec<PromptEntry>,
+    goals: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoalFile {
+    #[allow(dead_code)]
+    schema_version: String,
+    goals: BTreeMap<String, Goal>,
+}
+
+/// Purposes whose model output is parsed against a locked wire schema.
+pub const WIRE_PURPOSES: &[&str] = &["search_plan", "draft_answer", "task_plan", "role_analysis", "role_check", "context_brief", "direct_media"];
 
 impl Registry {
     /// M0 prototype loading is explicit. Normal installation must require complete=true.
@@ -159,16 +201,47 @@ impl Registry {
         if skills.len() != 30 || roles.len() != 7 {
             return Err(Error::Integrity);
         }
+        let mut wire = BTreeMap::new();
+        for purpose in WIRE_PURPOSES {
+            let value: Value = serde_json::from_slice(&std::fs::read(resources.join("contracts/generation").join(format!("{purpose}.wire.schema.json")))?)?;
+            jsonschema::validator_for(&value).map_err(|_| Error::Integrity)?;
+            wire.insert((*purpose).to_owned(), value);
+        }
+        let catalog: PromptCatalog = serde_json::from_slice(&std::fs::read(resources.join("prompts/catalog.json"))?)?;
+        let mut prompts = BTreeMap::new();
+        for entry in catalog.prompts {
+            let text = std::fs::read_to_string(resources.join("prompts").join(&entry.file))?;
+            if format!("{:x}", Sha256::digest(text.as_bytes())) != entry.sha256 || prompts.insert(entry.id, (text, entry.sha256)).is_some() {
+                return Err(Error::Integrity);
+            }
+        }
+        let goals: GoalFile = serde_json::from_slice(&std::fs::read(resources.join("prompts").join(&catalog.goals))?)?;
         let registry = Self {
             skills,
             roles,
             schemas,
             outputs,
+            prompts,
+            wire,
+            goals: goals.goals,
         };
         for skill in registry.skills.values() {
             registry.depth(&skill.id, &mut BTreeSet::new())?;
         }
         Ok(registry)
+    }
+
+    /// A locked prompt and its content hash (recorded with every request).
+    pub fn prompt(&self, id: &str) -> Result<(&str, &str)> {
+        self.prompts.get(id).map(|(text, sha)| (text.as_str(), sha.as_str())).ok_or(Error::Integrity)
+    }
+
+    pub fn wire(&self, purpose: &str) -> Result<&Value> {
+        self.wire.get(purpose).ok_or(Error::Integrity)
+    }
+
+    pub fn goal(&self, id: &str) -> Result<&Goal> {
+        self.goals.get(id).ok_or(Error::Denied)
     }
 
     fn depth(&self, id: &str, ancestors: &mut BTreeSet<String>) -> Result<usize> {
@@ -313,6 +386,10 @@ impl Invocation {
         self.parent.as_deref()
     }
     pub fn caused_by_id(&self) -> Option<&str> { self.caused_by.as_deref() }
+    /// The registered role instance this invocation acts for, if any.
+    pub fn agent_id(&self) -> Option<&str> {
+        self.agent.as_deref()
+    }
     pub fn actor(&self) -> &str {
         &self.actor
     }
@@ -320,11 +397,33 @@ impl Invocation {
         self.purpose.as_deref()
     }
 }
+#[derive(Clone)]
 pub struct AgentHandle {
     id: String,
     root: String,
     owner: String,
     role: String,
+}
+impl AgentHandle {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+    pub fn owner_id(&self) -> &str {
+        &self.owner
+    }
+}
+
+/// Purpose bound by the core to a skill invoked outside a role.
+fn default_purpose(skill: &str) -> Option<&'static str> {
+    match skill {
+        "query-plan" => Some("search_plan"),
+        "answer-compose" => Some("draft_answer"),
+        "media-observe" => Some("direct_media"),
+        _ => None,
+    }
 }
 
 pub struct Runtime {
@@ -370,12 +469,7 @@ impl Runtime {
         if !registered.actors.iter().any(|actor| actor == "ui") {
             return Err(Error::Denied);
         }
-        let purpose = match skill {
-            "query-plan" => Some("search_plan"),
-            "answer-compose" => Some("draft_answer"),
-            "media-observe" => Some("direct_media"),
-            _ => None,
-        };
+        let purpose = default_purpose(skill);
         self.registry.validate(skill, purpose, input)?;
         self.validate_refs(&root.id, root.revision, skill, purpose, input)?;
         let invocation = Invocation {
@@ -478,12 +572,7 @@ impl Runtime {
                 }
             }
         }
-        let purpose = match skill {
-            "query-plan" => Some("search_plan"),
-            "answer-compose" => Some("draft_answer"),
-            "media-observe" => Some("direct_media"),
-            _ => None,
-        };
+        let purpose = default_purpose(skill);
         self.registry.validate(skill, purpose, input)?;
         self.validate_refs(&parent.root, parent.revision, skill, purpose, input)?;
         let ceiling = self
@@ -601,6 +690,32 @@ impl Runtime {
                 .collect(),
             purpose: Some(role.generation_purpose.clone()),
             agent: Some(agent.id.clone()),
+        };
+        self.save(&invocation)?;
+        Ok(invocation)
+    }
+
+    /// Core context maintenance (design 8): a lossy brief the core itself
+    /// requests under `owner`, never a role. It counts like every request.
+    pub fn invoke_maintenance(&mut self, owner: &Invocation, input: &Value) -> Result<Invocation> {
+        self.ledger.check(&owner.root, owner.revision)?;
+        if owner.depth >= 4 || !self.registry.skills.get(&owner.skill).ok_or(Error::Denied)?.children.iter().any(|c| c == "answer-compose") {
+            return Err(Error::Denied);
+        }
+        self.registry.validate("answer-compose", Some("context_brief"), input)?;
+        self.validate_refs(&owner.root, owner.revision, "answer-compose", Some("context_brief"), input)?;
+        let invocation = Invocation {
+            id: Uuid::new_v4().to_string(),
+            root: owner.root.clone(),
+            revision: owner.revision,
+            skill: "answer-compose".into(),
+            actor: "system".into(),
+            parent: Some(owner.id.clone()),
+            caused_by: None,
+            depth: owner.depth + 1,
+            ceiling: self.registry.capability_closure("answer-compose").intersection(&owner.ceiling).cloned().collect(),
+            purpose: Some("context_brief".into()),
+            agent: None,
         };
         self.save(&invocation)?;
         Ok(invocation)
@@ -771,6 +886,42 @@ impl Runtime {
         Ok(self.ledger.db.query_row("SELECT action FROM roots WHERE id=?", [root], |r| r.get(0))?)
     }
 
+    /// Rebuild a live invocation of this vault from the ledger (a continued
+    /// flow run). The root must be uncancelled at the recorded revision; the
+    /// capability ceiling is recomputed from the registry along the parents.
+    pub fn reload_invocation(&self, id: &str) -> Result<Invocation> {
+        let row: Option<(String, Option<String>, Option<String>, String, String, Option<String>, i64, u32)> = self.ledger.db.query_row(
+            "SELECT root,parent,caused_by,skill,actor,agent,revision,depth FROM invocations WHERE id=?", [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
+        ).optional()?;
+        let (root, parent, caused_by, skill, actor, agent, revision, depth) = row.ok_or(Error::Denied)?;
+        self.ledger.check(&root, revision)?;
+        let closure = self.registry.capability_closure(&skill);
+        let ceiling = match &parent {
+            Some(parent) => {
+                let parent = self.reload_invocation(parent)?;
+                if parent.root != root { return Err(Error::Integrity); }
+                closure.intersection(&parent.ceiling).cloned().collect()
+            }
+            None => closure,
+        };
+        let purpose = match &agent {
+            Some(agent) => {
+                let role: String = self.ledger.db.query_row("SELECT role FROM agents WHERE id=? AND root=?", params![agent, root], |r| r.get(0))?;
+                let role = self.registry.roles.get(&role).ok_or(Error::Integrity)?;
+                if role.generation_skill == skill { Some(role.generation_purpose.clone()) } else { default_purpose(&skill).map(str::to_owned) }
+            }
+            None => default_purpose(&skill).map(str::to_owned),
+        };
+        Ok(Invocation { id: id.into(), root, revision, skill, actor, parent, caused_by, depth, ceiling, purpose, agent })
+    }
+
+    /// A registered role instance of `root`.
+    pub fn agent(&self, root: &str, id: &str) -> Result<AgentHandle> {
+        let (owner, role): (String, String) = self.ledger.db.query_row("SELECT owner,role FROM agents WHERE id=? AND root=?", params![id, root], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
+        Ok(AgentHandle { id: id.into(), root: root.into(), owner, role })
+    }
+
     pub fn handle(&self, root: &str) -> Result<RootHandle> {
         let revision: i64 = self.ledger.db.query_row("SELECT revision FROM roots WHERE id=? AND cancelled=0", [root], |r| r.get(0))?;
         Ok(RootHandle { id: root.into(), revision })
@@ -891,7 +1042,7 @@ impl Runtime {
 }
 
 /// Typed result objects that report-export may reference as ResultRef.
-pub const RESULT_KINDS: &[&str] = &["ResultRef", "ImportResultRef", "OcrResultRef", "IndexResultRef", "CandidateSetRef", "EvidenceBundleRef", "EvidenceReadRef", "GraphResultRef", "CalculationRef", "MatterSnapshotRef", "ChangeResultRef", "MediaResultRef", "TranscriptResultRef", "ReviewResultRef", "RetrievalResultRef", "DiagnosticsResultRef", "MaintenanceResultRef", "SearchPlanRef", "DraftRef", "ValidationReportRef", "ConnectionResultRef"];
+pub const RESULT_KINDS: &[&str] = &["ResultRef", "ImportResultRef", "OcrResultRef", "IndexResultRef", "CandidateSetRef", "EvidenceBundleRef", "EvidenceReadRef", "GraphResultRef", "CalculationRef", "MatterSnapshotRef", "ChangeResultRef", "MediaResultRef", "TranscriptResultRef", "ReviewResultRef", "RetrievalResultRef", "DiagnosticsResultRef", "MaintenanceResultRef", "SearchPlanRef", "DraftRef", "ValidationReportRef", "ConnectionResultRef", "TaskPlanRef", "RoleAnalysisRef", "ChallengeReportRef", "ContextBriefRef", "MediaObservationRef"];
 
 /// Handler outcome before the core seals it into the closed SkillResult schema.
 #[derive(Clone, Debug, Default)]

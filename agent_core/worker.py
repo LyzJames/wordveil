@@ -28,7 +28,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--model')
     parser.add_argument('--artifact',type=Path)
-    parser.add_argument('--service',choices=['local'],help='Run the non-model local service (parsing, OCR geometry, chunking, finance).')
+    parser.add_argument('--service',choices=['local','orchestrator'],help='Run the non-model local service (parsing, OCR geometry, chunking, finance) or the LangGraph orchestrator of one root task.')
     parser.add_argument('--tokenizer',type=Path,help='Core-selected read-only Qwen tokenizer.json for chunk token counts.')
     parser.add_argument('--diagnose-installation',action='store_true',help='Return model-load diagnostics before accepting any business input (M0 verification).')
     parser.add_argument('--installation-fixture',type=Path,help='With installation diagnostics, run one core-selected synthetic fixture and exit without reading stdin.')
@@ -36,6 +36,11 @@ def main():
     if args.service:
         if args.model or args.artifact or args.installation_fixture:
             parser.error('The local service takes no model arguments')
+        if args.service=='orchestrator':
+            if args.tokenizer:
+                parser.error('The orchestrator takes no resource arguments')
+            from agent_core.orchestrator.serve import serve_orchestrator
+            return serve_orchestrator()
         return serve_local(args.tokenizer)
     if not args.model or not args.artifact:
         parser.error('--model and --artifact are required')

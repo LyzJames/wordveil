@@ -16,6 +16,7 @@
     "media-decode",
     "audio-transcribe",
     "media-observe",
+    "knowledge-index",
     "evidence-read",
     "answer-compose",
     "answer-grounding"
@@ -53,9 +54,9 @@
       "rule": "仅转写不外发；独立analyze执行相应原生首读与最终文字分析，视频子任务固定text_only"
     }
   ],
-  "version": "0.3.0-m2",
+  "version": "0.4.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "generation-pending",
+  "implementation_status": "local-media",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

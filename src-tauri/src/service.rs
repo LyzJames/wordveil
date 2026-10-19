@@ -24,6 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
+use base64::Engine as _;
 
 /// Capabilities any user action may receive (local only). Generation and
 /// probing are conditional and granted only to confirmed/protected roots.
@@ -42,6 +43,21 @@ const CONFIRMED_CAPABILITIES: &[&str] = &["vault.write", "graph.write", "file.ex
 const EGRESS_MAX_ITEMS: i64 = 10;
 const EGRESS_MAX_REQUESTS: i64 = 7;
 const TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
+/// Native media prepared for an approved request: JPEG, longest side 2048 px.
+const MEDIA_MAX_SIDE: u32 = 2048;
+const MEDIA_QUALITY: u32 = 85;
+/// Longest audio a grant may approve for a direct listening request.
+pub const AUDIO_MAX_SECONDS: f64 = 300.0;
+
+/// Where the excerpts shown in a preview come from.
+enum Excerpts {
+    /// Local hybrid retrieval of the question (no generation).
+    Retrieval,
+    /// The indexed text of the selected pages.
+    Pages(Vec<String>),
+    /// Produced locally during the run (transcripts, frame OCR).
+    Later,
+}
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct TaskEvent {
@@ -221,6 +237,10 @@ impl CoreService {
         // Imports interrupted by a crash are marked for resumption, never duplicated.
         opened.db().execute("UPDATE jobs SET status='interrupted' WHERE status='running'", [])?;
         opened.db().execute("UPDATE document_versions SET status='interrupted' WHERE status IN ('parsing','ocr','indexing','stored')", [])?;
+        // Flow runs cut off by an exit continue only after a new confirmation;
+        // a request that left without a recorded reply has an unknown outcome.
+        opened.db().execute("UPDATE flow_runs SET status='interrupted',reason='app_exit',updated_at=? WHERE status IN ('running','resuming')", [now_rfc3339()])?;
+        opened.db().execute("UPDATE generation_requests SET status='unknown',finished_at=? WHERE status='sent'", [now_rfc3339()])?;
         self.install_session(handle.into(), opened)?;
         self.protected_audit("unlock")?;
         self.services.log.event("vault.unlocked", &[("kdf_ms", crate::logging::Field::Millis(started.elapsed().as_millis() as u64)), ("recovery", crate::logging::Field::Flag(matches!(secret, Secret::Recovery(_))))]);
@@ -245,7 +265,13 @@ impl CoreService {
     pub fn lock(&self) -> Result<()> {
         let ids: Vec<String> = self.tasks.lock().map_err(|_| Error::Integrity)?.keys().cloned().collect();
         for id in &ids {
-            let _ = self.cancel_task(id);
+            // A running flow is interrupted, not cancelled: its root stays valid
+            // so the user may continue it after unlocking (with a new confirmation).
+            if self.task_flow_running(id).unwrap_or(false) {
+                let _ = self.interrupt_task(id);
+            } else {
+                let _ = self.cancel_task(id);
+            }
         }
         let threads: Vec<std::thread::JoinHandle<()>> = {
             let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
@@ -520,10 +546,17 @@ impl CoreService {
             };
             let ctx = Ctx { vault: &handle, services: &service.services, cancel: &cancel, progress: &on_progress };
             // A cancelled root can no longer seal an envelope; report it as cancelled.
-            let envelope = handlers::execute(&ctx, &invocation, &input).unwrap_or_else(|error| match error {
+            let mut envelope = handlers::execute(&ctx, &invocation, &input).unwrap_or_else(|error| match error {
                 Error::Cancelled => json!({"status": "cancelled", "warnings": [{"code": "cancelled", "message": "任务已停止、撤销或空间已锁定。"}]}),
                 other => json!({"status": "failed", "warnings": [{"code": other.code(), "message": "执行失败"}]}),
             });
+            // A flow stopped by lock, exit or a vanished orchestrator keeps its
+            // root; it can be continued after a new confirmation.
+            if envelope["status"] == "cancelled" || envelope["status"] == "failed" {
+                if let Some(run) = interrupted_run(&handle, invocation.root_id()) {
+                    envelope = json!({"status": "interrupted", "flow_run": run, "warnings": [{"code": "flow_interrupted", "message": "任务已中断；可在确认后从中断处继续。"}]});
+                }
+            }
             if let Ok(mut tasks) = service.tasks.lock() {
                 if let Some(task) = tasks.get_mut(&id) {
                     task.state.status = envelope["status"].as_str().unwrap_or("failed").into();
@@ -561,6 +594,107 @@ impl CoreService {
             handle.lock().map_err(|_| Error::Integrity)?.runtime.cancel_root(&root)?;
         }
         Ok(())
+    }
+
+    fn task_flow_running(&self, id: &str) -> Result<bool> {
+        let root = self.tasks.lock().map_err(|_| Error::Integrity)?.get(id).map(|t| t.state.root.clone()).ok_or(Error::Denied)?;
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        Ok(vault.db().query_row("SELECT EXISTS(SELECT 1 FROM flow_runs WHERE root=? AND status IN ('running','resuming'))", [&root], |r| r.get(0))?)
+    }
+
+    /// Stop a task's threads without cancelling its root (lock or app exit).
+    pub fn interrupt_task(&self, id: &str) -> Result<()> {
+        let tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
+        tasks.get(id).ok_or(Error::Denied)?.cancel.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    // ------------------------------------------------------- flow continuation
+
+    /// Interrupted flow runs the user may continue or discard.
+    pub fn interrupted_flows(&self) -> Result<Vec<Value>> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let current: i64 = vault.db().query_row("SELECT COALESCE((SELECT generation FROM index_state WHERE id=1),0)", [], |r| r.get(0))?;
+        let mut statement = vault.db().prepare(
+            "SELECT f.id,f.root,f.skill,f.flow,f.owner_input,f.snapshot_generation,f.attempts,f.reason,f.created_at,f.updated_at,
+                    (SELECT COUNT(*) FROM generation_requests g WHERE g.root=f.root AND (g.status='unknown' OR (g.status='failed' AND g.error='cancelled')))
+             FROM flow_runs f WHERE f.status='interrupted' ORDER BY f.updated_at DESC",
+        )?;
+        let rows = statement.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, i64>(5)?, r.get::<_, i64>(6)?,
+                r.get::<_, Option<String>>(7)?, r.get::<_, String>(8)?, r.get::<_, String>(9)?, r.get::<_, i64>(10)?))
+        })?;
+        let mut out = vec![];
+        for row in rows {
+            let (run, root, skill, flow, owner_input, generation, attempts, reason, created, updated, unknown) = row?;
+            let input: Value = serde_json::from_str(&owner_input)?;
+            let question: Option<String> = match input["question_id"].as_str() {
+                Some(id) => vault.db().query_row("SELECT text FROM questions WHERE id=?", [id], |r| r.get(0)).optional()?,
+                None => None,
+            };
+            out.push(json!({"run_id": run, "root": root, "skill": skill, "flow": flow, "question": question, "attempts": attempts, "reason": reason,
+                "unknown_requests": unknown, "stale": generation != current, "created_at": created, "updated_at": updated}));
+        }
+        Ok(out)
+    }
+
+    /// The real parameters of a continuation, for the native dialog.
+    pub fn describe_continue(&self, run: &str) -> Result<Value> {
+        let listed = self.interrupted_flows()?.into_iter().find(|r| r["run_id"] == run).ok_or(Error::Denied)?;
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let root = listed["root"].as_str().ok_or(Error::Integrity)?;
+        let (connection, host, max_requests): (String, String, i64) = vault
+            .db()
+            .query_row("SELECT connection_id,host,max_requests FROM egress_grants WHERE root=? AND approved_at IS NOT NULL AND revoked_at IS NULL", [root], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .optional()?
+            .ok_or(Error::Denied)?;
+        let loaded = crate::generation::connections::load(&vault, &connection)?;
+        let used: i64 = vault.db().query_row("SELECT generation FROM roots WHERE id=?", [root], |r| r.get(0))?;
+        let mut out = listed;
+        out["connection"] = json!({"name": loaded.name, "host": host, "model_id": loaded.profile.model_id, "active": loaded.status == "active"});
+        out["used_requests"] = json!(used);
+        out["max_requests"] = json!(max_requests.min(7));
+        Ok(out)
+    }
+
+    /// Continue an interrupted run after the native confirmation: same root,
+    /// same counters, finished steps replayed from receipts. A changed
+    /// material snapshot makes the run stale instead.
+    pub fn flow_continue(self: &Arc<Self>, run: &str) -> Result<String> {
+        let described = self.describe_continue(run)?;
+        if described["connection"]["active"] != json!(true) {
+            return Err(Error::Denied);
+        }
+        let handle = self.vault()?;
+        let (invocation, input, skill) = {
+            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            if described["stale"] == json!(true) {
+                vault.db().execute("UPDATE flow_runs SET status='stale',updated_at=? WHERE id=? AND status='interrupted'", params![now_rfc3339(), run])?;
+                return Err(Error::NeedsInput("rerun"));
+            }
+            let (owner, owner_input, skill): (String, String, String) = vault.db().query_row("SELECT owner,owner_input,skill FROM flow_runs WHERE id=? AND status='interrupted'", [run], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(Error::Denied)?;
+            let invocation = vault.runtime.reload_invocation(&owner)?;
+            let changed = vault.db().execute("UPDATE flow_runs SET status='resuming',attempts=attempts+1,updated_at=? WHERE id=? AND status='interrupted'", params![now_rfc3339(), run])?;
+            if changed != 1 {
+                return Err(Error::Conflict);
+            }
+            (invocation, serde_json::from_str::<Value>(&owner_input)?, skill)
+        };
+        self.services.log.event("flow.continue", &[("skill", crate::logging::Field::Status(skill.clone()))]);
+        self.spawn(&skill, input, handle, invocation)
+    }
+
+    /// Give up an interrupted run: its root is cancelled and its grant revoked.
+    pub fn flow_discard(&self, run: &str) -> Result<()> {
+        let handle = self.vault()?;
+        let mut vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let root: String = vault.db().query_row("SELECT root FROM flow_runs WHERE id=? AND status IN ('interrupted','stale')", [run], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
+        vault.db().execute("UPDATE flow_runs SET status='cancelled',reason='discarded',updated_at=? WHERE id=?", params![now_rfc3339(), run])?;
+        vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE root=? AND revoked_at IS NULL", params![now_rfc3339(), root])?;
+        vault.runtime.cancel_root(&root)
     }
 
     pub fn wait_task(&self, id: &str, timeout: Duration) -> Result<TaskState> {
@@ -819,48 +953,258 @@ impl CoreService {
     /// would be sent, and register an unapproved grant bound to the question,
     /// scope, connection and limits. Approval happens in a native dialog.
     pub fn answer_preview(&self, text: &str, matters: &[String], connection: Option<&str>) -> Result<Value> {
+        self.answer_preview_with(text, matters, connection, false)
+    }
+
+    /// Q&A preview; `deep` approves the planner and narrow roles ("深入分析").
+    pub fn answer_preview_with(&self, text: &str, matters: &[String], connection: Option<&str>, deep: bool) -> Result<Value> {
         let question = self.create_question(text)?;
         let scope = self.create_scope(matters, &[])?;
-        let (connection_id, name, host, model, max_tokens) = {
+        let purpose = if deep { "deep_answer" } else { "answer" };
+        let input = json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "answer"});
+        self.grant_preview(purpose, text, &question, &scope, matters.len(), connection, input, Excerpts::Retrieval, json!({}))
+    }
+
+    /// Preview of a written analysis (contract, loan or budget): its fixed
+    /// roles, the excerpts likely sent and the request limits.
+    pub fn analysis_preview(&self, kind: &str, request: &Value) -> Result<Value> {
+        let text = request["question"].as_str().filter(|t| !t.trim().is_empty()).ok_or(Error::NeedsInput("question"))?;
+        let versions: Vec<String> = request["document_versions"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+        let matter = request["matter_id"].as_str().map(str::to_owned);
+        let question = self.create_question(text)?;
+        let (purpose, input, matters) = match kind {
+            "contract-review" => {
+                if versions.is_empty() {
+                    return Err(Error::NeedsInput("document_versions"));
+                }
+                ("contract_review", json!({"document_versions": versions, "question_id": question, "known_constraint_ids": [], "media_refs": []}), matter.clone().into_iter().collect::<Vec<_>>())
+            }
+            "loan-analysis" => {
+                let matter = matter.clone().ok_or(Error::NeedsInput("matter_id"))?;
+                ("loan_analysis", json!({"matter_id": matter, "document_versions": versions, "question_id": question, "media_refs": []}), vec![matter])
+            }
+            "budget-analysis" => {
+                if versions.is_empty() {
+                    return Err(Error::NeedsInput("document_versions"));
+                }
+                ("budget_analysis", json!({"document_versions": versions, "period": request["period"], "account_ids": request["account_ids"].as_array().cloned().unwrap_or_default(), "question_id": question}),
+                    matter.clone().into_iter().collect::<Vec<_>>())
+            }
+            _ => return Err(Error::Contract),
+        };
+        let scope = self.create_scope(&matters, &versions)?;
+        let roles = match purpose {
+            "budget_analysis" => json!(["金融口径分析者", "声明证据检查者", "结果综合者"]),
+            _ => json!(["法律适用分析者", "金融口径分析者", "声明证据检查者", "结果综合者"]),
+        };
+        self.grant_preview(purpose, text, &question, &scope, matters.len().max(1), request["connection"].as_str(), input, Excerpts::Retrieval, json!({"roles": roles}))
+    }
+
+    /// Preview of a media review: approved images are prepared now (JPEG,
+    /// longest side 2048 px, listed one by one); for audio and video the grant
+    /// approves a bounded policy (frames of the range, at most 12; the range's
+    /// audio, at most 300 s), prepared by the core during the run.
+    pub fn media_preview(&self, kind: &str, request: &Value) -> Result<Value> {
+        let text = request["question"].as_str().filter(|t| !t.trim().is_empty()).ok_or(Error::NeedsInput("question"))?;
+        let question = self.create_question(text)?;
+        let connection_id = self.connection_for(request["connection"].as_str())?;
+        let (vision, audio_input) = {
             let handle = self.vault()?;
             let vault = handle.lock().map_err(|_| Error::Integrity)?;
-            let id = match connection {
-                Some(id) => id.to_owned(),
-                None => crate::generation::connections::default_connection(&vault)?.ok_or(Error::NeedsInput("connection"))?,
-            };
-            let loaded = crate::generation::connections::load(&vault, &id)?;
-            if loaded.status != "active" {
-                return Err(Error::Denied);
-            }
-            if loaded.credential.is_none() && !loaded.profile.endpoint.is_loopback() {
-                return Err(Error::NeedsInput("api_key"));
-            }
-            (id, loaded.name, loaded.profile.endpoint.display_host(), loaded.profile.model_id, loaded.profile.max_output_tokens)
+            let connection = crate::generation::connections::load(&vault, &connection_id)?;
+            (crate::generation::connections::capability(&vault, &connection, "vision")? == "supported",
+             crate::generation::connections::capability(&vault, &connection, "audio_input")? == "supported")
         };
-        // Local-only retrieval for the preview (plain UI root, no generation).
-        let envelope = self.run_skill("lvjin-retrieval", json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "evidence_only"}), "ui")?;
-        let items = match envelope["data_ref"].as_str() {
-            Some(id) => self.result(id)?["payload"]["items"].clone(),
-            None => json!([]),
+        match kind {
+            "image-review" => {
+                let images: Vec<String> = request["image_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
+                if images.is_empty() || images.len() > crate::handlers::observe::MAX_IMAGES_PER_REQUEST {
+                    return Err(Error::NeedsInput("image_refs"));
+                }
+                let (pages, versions) = self.image_pages(&images)?;
+                let scope = self.create_scope(&[], &versions)?;
+                let input = json!({"image_refs": images, "question_id": question, "mode": "analyze"});
+                let mut preview = self.grant_preview("image_review", text, &question, &scope, 0, Some(&connection_id), input, Excerpts::Pages(pages.clone()), json!({}))?;
+                if vision {
+                    let grant = preview["grant_id"].as_str().ok_or(Error::Integrity)?.to_owned();
+                    let media = self.prepare_images(&grant, &pages)?;
+                    preview["native_media"] = json!(media);
+                    self.update_preview(&grant, &preview)?;
+                } else {
+                    preview["native_media_note"] = json!("该连接没有通过图片能力自检；只发送本机识别出的文字，不上传图片。");
+                    self.update_preview(preview["grant_id"].as_str().ok_or(Error::Integrity)?, &preview)?;
+                }
+                Ok(preview)
+            }
+            "audio-review" | "video-review" => {
+                let source = request["source_ref"].as_str().ok_or(Error::NeedsInput("source_ref"))?.to_owned();
+                let (version, media_kind): (String, String) = {
+                    let handle = self.vault()?;
+                    let vault = handle.lock().map_err(|_| Error::Integrity)?;
+                    vault.expect_kind(&source, &["MediaVersionRef"])?;
+                    vault.db().query_row("SELECT v.id,v.media_kind FROM media m JOIN document_versions v ON v.id=m.version_id WHERE m.id=?", [&source], |r| Ok((r.get(0)?, r.get(1)?)))?
+                };
+                if (kind == "video-review") != (media_kind == "video") {
+                    return Err(Error::Contract);
+                }
+                let start = request["range"]["start_s"].as_f64().unwrap_or(0.0).max(0.0);
+                let end = request["range"]["end_s"].as_f64();
+                let range = self.create_range(&source, start, end)?;
+                let scope = self.create_scope(&[], std::slice::from_ref(&version))?;
+                let purpose = if kind == "video-review" { "video_review" } else { "audio_review" };
+                let input = json!({"source_ref": source, "range_ref": range, "question_id": question, "analysis_goal": "analyze"});
+                let policy = json!({"frames": if kind == "video-review" && vision { json!(crate::handlers::observe::MAX_IMAGES_PER_REQUEST) } else { json!(0) },
+                    "audio_seconds": if audio_input { json!(AUDIO_MAX_SECONDS) } else { json!(0) }, "range": {"start_s": start, "end_s": end}});
+                self.grant_preview(purpose, text, &question, &scope, 0, Some(&connection_id), input, Excerpts::Later, json!({"media_policy": policy}))
+            }
+            _ => Err(Error::Contract),
+        }
+    }
+
+    fn connection_for(&self, connection: Option<&str>) -> Result<String> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let id = match connection {
+            Some(id) => id.to_owned(),
+            None => crate::generation::connections::default_connection(&vault)?.ok_or(Error::NeedsInput("connection"))?,
+        };
+        let loaded = crate::generation::connections::load(&vault, &id)?;
+        if loaded.status != "active" {
+            return Err(Error::Denied);
+        }
+        if loaded.credential.is_none() && !loaded.profile.endpoint.is_loopback() {
+            return Err(Error::NeedsInput("api_key"));
+        }
+        Ok(id)
+    }
+
+    /// Pages behind image references (pages or video frames) and their versions.
+    fn image_pages(&self, images: &[String]) -> Result<(Vec<String>, Vec<String>)> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let (mut pages, mut versions) = (vec![], vec![]);
+        for image in images {
+            let page = match vault.object_kind(image)?.as_str() {
+                "PageRef" => image.clone(),
+                "ImageRef" => vault.db().query_row("SELECT page_id FROM frames WHERE id=?", [image], |r| r.get::<_, String>(0))?,
+                _ => return Err(Error::Denied),
+            };
+            let version: String = vault.db().query_row("SELECT version_id FROM pages WHERE id=?", [&page], |r| r.get(0))?;
+            if !versions.contains(&version) {
+                versions.push(version);
+            }
+            pages.push(page);
+        }
+        Ok((pages, versions))
+    }
+
+    /// Model copies of page images, bound to the (unapproved) grant.
+    fn prepare_images(&self, grant: &str, pages: &[String]) -> Result<Vec<Value>> {
+        let handle = self.vault()?;
+        let cancel = AtomicBool::new(false);
+        let mut out = vec![];
+        for page in pages {
+            let (blob, page_no, display): (String, i64, String) = {
+                let vault = handle.lock().map_err(|_| Error::Integrity)?;
+                vault.db().query_row(
+                    "SELECT p.image_blob,p.page_no,d.display_name FROM pages p JOIN document_versions v ON v.id=p.version_id JOIN documents d ON d.id=v.document_id WHERE p.id=? AND p.image_blob IS NOT NULL",
+                    [page], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            };
+            let png = handle.lock().map_err(|_| Error::Integrity)?.get_blob(&blob)?;
+            let encoded = self.services.local.call(&json!({"op": "encode_for_model", "png_base64": base64::engine::general_purpose::STANDARD.encode(&*png), "max_side": MEDIA_MAX_SIDE, "quality": MEDIA_QUALITY}), &cancel, Duration::from_secs(120))?;
+            let jpeg = base64::engine::general_purpose::STANDARD.decode(encoded["jpeg_base64"].as_str().ok_or(Error::Contract)?).map_err(|_| Error::Contract)?;
+            let location = if page_no >= 100_000 { "视频画面".to_owned() } else { format!("第{page_no}页") };
+            let detail = json!({"display": display, "location": location, "page_no": page_no, "width": encoded["width"], "height": encoded["height"]});
+            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let id = crate::handlers::observe::register_native(&vault, grant, page, "image", "image/jpeg", &jpeg, &detail)?;
+            out.push(json!({"media_ref": id, "kind": "image", "page_id": page, "display": display, "location": location, "bytes": jpeg.len(), "width": encoded["width"], "height": encoded["height"]}));
+        }
+        Ok(out)
+    }
+
+    fn update_preview(&self, grant: &str, preview: &Value) -> Result<()> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let mut stored = preview.clone();
+        if let Some(object) = stored.as_object_mut() {
+            for key in ["grant_id", "question_id", "scope_id"] {
+                object.remove(key);
+            }
+        }
+        vault.db().execute("UPDATE egress_grants SET preview=? WHERE id=? AND approved_at IS NULL", params![stored.to_string(), grant])?;
+        Ok(())
+    }
+
+    /// Register an unapproved, single-use grant for one task: destination,
+    /// purpose, question, material scope, limits and the excerpts shown.
+    #[allow(clippy::too_many_arguments)]
+    fn grant_preview(&self, purpose: &str, text: &str, question: &str, scope: &str, matters: usize, connection: Option<&str>, input: Value, excerpts: Excerpts, extra: Value) -> Result<Value> {
+        let connection_id = self.connection_for(connection)?;
+        let (name, host, model, max_tokens) = {
+            let handle = self.vault()?;
+            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let loaded = crate::generation::connections::load(&vault, &connection_id)?;
+            (loaded.name, loaded.profile.endpoint.display_host(), loaded.profile.model_id, loaded.profile.max_output_tokens)
+        };
+        let items = match &excerpts {
+            // Local-only retrieval for the preview (plain UI root, no generation).
+            Excerpts::Retrieval => {
+                let envelope = self.run_skill("lvjin-retrieval", json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "evidence_only"}), "ui")?;
+                match envelope["data_ref"].as_str() {
+                    Some(id) => self.result(id)?["payload"]["items"].clone(),
+                    None => json!([]),
+                }
+            }
+            Excerpts::Pages(pages) => json!(self.page_excerpts(pages)?),
+            Excerpts::Later => json!([]),
         };
         let excerpts: Vec<Value> = items.as_array().cloned().unwrap_or_default().iter().take(EGRESS_MAX_ITEMS as usize).map(|item| json!({
             "evidence_id": item["evidence_id"], "display_name": item["document"]["display_name"], "unit_title": item["unit_title"],
             "pages": item["pages"], "locators": item["locators"], "excerpt": item["exact_text"].as_str().unwrap_or("").chars().take(240).collect::<String>(),
         })).collect();
-        let preview = json!({"question": text.trim(), "connection": {"id": connection_id, "name": name, "host": host, "model_id": model},
-            "purpose": "answer", "excerpts": excerpts, "max_items": EGRESS_MAX_ITEMS, "max_requests": EGRESS_MAX_REQUESTS, "max_output_tokens": max_tokens,
-            "validity": "this_task", "matters": matters.len()});
+        let mut preview = json!({"question": text.trim(), "connection": {"id": connection_id, "name": name, "host": host, "model_id": model},
+            "purpose": purpose, "excerpts": excerpts, "max_items": EGRESS_MAX_ITEMS, "max_requests": EGRESS_MAX_REQUESTS, "max_output_tokens": max_tokens,
+            "validity": "this_task", "matters": matters, "skill_input": input, "native_media": []});
+        for (key, value) in extra.as_object().cloned().unwrap_or_default() {
+            preview[key] = value;
+        }
         let handle = self.vault()?;
         let vault = handle.lock().map_err(|_| Error::Integrity)?;
-        let grant = vault.register("EgressGrantRef", "m2", Some(&question))?;
+        let grant = vault.register("EgressGrantRef", "m2", Some(question))?;
         vault.db().execute(
             "INSERT INTO egress_grants(id,connection_id,host,purpose,scope_id,question_id,max_items,max_requests,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            params![grant, connection_id, host, "answer", scope, question, EGRESS_MAX_ITEMS, EGRESS_MAX_REQUESTS, preview.to_string(), now_rfc3339()],
+            params![grant, connection_id, host, purpose, scope, question, EGRESS_MAX_ITEMS, EGRESS_MAX_REQUESTS, preview.to_string(), now_rfc3339()],
         )?;
-        let mut out = preview;
-        out["grant_id"] = json!(grant);
-        out["question_id"] = json!(question);
-        out["scope_id"] = json!(scope);
+        preview["grant_id"] = json!(grant);
+        preview["question_id"] = json!(question);
+        preview["scope_id"] = json!(scope);
+        Ok(preview)
+    }
+
+    /// OCR text of the given pages as preview excerpts (the chunks that will be sent).
+    fn page_excerpts(&self, pages: &[String]) -> Result<Vec<Value>> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let mut out = vec![];
+        for page in pages {
+            let (version, page_no, display): (String, i64, String) = vault.db().query_row(
+                "SELECT p.version_id,p.page_no,d.display_name FROM pages p JOIN document_versions v ON v.id=p.version_id JOIN documents d ON d.id=v.document_id WHERE p.id=?",
+                [page], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            let mut statement = vault.db().prepare("SELECT c.id,c.body,c.spans,c.unit_title FROM chunks c JOIN objects o ON o.id=c.id WHERE c.version_id=? AND o.active=1 ORDER BY c.ordinal")?;
+            let rows = statement.query_map([&version], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
+            for row in rows {
+                let (id, body, spans, unit) = row?;
+                let blocks: Vec<i64> = serde_json::from_str::<Vec<Value>>(&spans)?.iter().filter_map(|s| s["block"].as_i64()).collect();
+                let mut on_page = false;
+                for block in blocks {
+                    let owner: Option<String> = vault.db().query_row("SELECT page_id FROM blocks WHERE rowid=?", [block], |r| r.get(0)).optional()?.flatten();
+                    on_page |= owner.as_deref() == Some(page.as_str());
+                }
+                if on_page && out.len() < EGRESS_MAX_ITEMS as usize {
+                    out.push(json!({"evidence_id": id, "document": {"display_name": display}, "unit_title": unit, "pages": [page_no], "locators": [], "exact_text": body}));
+                }
+            }
+        }
         Ok(out)
     }
 
@@ -877,27 +1221,41 @@ impl CoreService {
         Ok(serde_json::from_str(&preview)?)
     }
 
-    /// Called only after the native confirmation; then starts the answer task
-    /// under a confirmed root that holds generation.request and this grant.
+    /// Called only after the native confirmation; then starts the task of the
+    /// grant's purpose under a confirmed root that holds generation.request
+    /// and this grant. Excluded excerpts and media tighten the grant.
     pub fn answer_start(self: &Arc<Self>, grant: &str, excluded: &[String]) -> Result<String> {
-        let (question, scope) = {
+        self.grant_start(grant, excluded, &[])
+    }
+
+    pub fn grant_start(self: &Arc<Self>, grant: &str, excluded: &[String], excluded_media: &[String]) -> Result<String> {
+        let (purpose, input) = {
             let handle = self.vault()?;
             let vault = handle.lock().map_err(|_| Error::Integrity)?;
-            let (question, scope): (String, String) = vault.db().query_row("SELECT question_id,scope_id FROM egress_grants WHERE id=? AND approved_at IS NULL AND root IS NULL AND revoked_at IS NULL", [grant], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
-            if !excluded.is_empty() {
-                // Excluded excerpts tighten the grant: they are removed from the
-                // scope by version so they cannot be sent in this task.
-                let mut preview: Value = serde_json::from_str(&vault.db().query_row::<String, _, _>("SELECT preview FROM egress_grants WHERE id=?", [grant], |r| r.get(0))?)?;
+            let (purpose, preview): (String, String) = vault.db().query_row("SELECT purpose,preview FROM egress_grants WHERE id=? AND approved_at IS NULL AND root IS NULL AND revoked_at IS NULL", [grant], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
+            let mut preview: Value = serde_json::from_str(&preview)?;
+            if !excluded.is_empty() || !excluded_media.is_empty() {
+                // Excluded excerpts and media cannot be sent in this task.
                 preview["excluded"] = json!(excluded);
+                preview["excluded_media"] = json!(excluded_media);
                 vault.db().execute("UPDATE egress_grants SET preview=? WHERE id=?", params![preview.to_string(), grant])?;
             }
             vault.db().execute("UPDATE egress_grants SET approved_at=? WHERE id=?", params![now_rfc3339(), grant])?;
-            (question, scope)
+            (purpose, preview["skill_input"].clone())
         };
-        let input = json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "answer"});
-        let (handle, invocation) = self.begin_with("lvjin-retrieval", &input, "confirm", Some(grant))?;
-        self.services.log.event("egress.approved", &[("purpose", crate::logging::Field::Code("answer"))]);
-        self.spawn("lvjin-retrieval", input, handle, invocation)
+        let skill = match purpose.as_str() {
+            "answer" | "deep_answer" => "lvjin-retrieval",
+            "contract_review" => "contract-review",
+            "loan_analysis" => "loan-analysis",
+            "budget_analysis" => "budget-analysis",
+            "image_review" => "image-review",
+            "audio_review" => "audio-review",
+            "video_review" => "video-review",
+            _ => return Err(Error::Integrity),
+        };
+        let (handle, invocation) = self.begin_with(skill, &input, "confirm", Some(grant))?;
+        self.services.log.event("egress.approved", &[("purpose", crate::logging::Field::Status(purpose.clone()))]);
+        self.spawn(skill, input, handle, invocation)
     }
 
     pub fn answer_cancel_preview(&self, grant: &str) -> Result<()> {
@@ -981,8 +1339,9 @@ impl CoreService {
     }
 }
 
-/// Read-only inspection for the synthetic M1 tests and benchmarks. Compiled
-/// only with `m0-harness`; production builds have no raw SQL entry point.
+/// Inspection (and simulated crash states) for the synthetic tests and
+/// benchmarks. Compiled only with `m0-harness`; production builds have no raw
+/// SQL entry point.
 #[cfg(feature = "m0-harness")]
 impl CoreService {
     pub fn harness_rows(&self, sql: &str, args: &[&str]) -> Result<Vec<Vec<Value>>> {
@@ -1010,6 +1369,13 @@ impl CoreService {
         self.harness_rows(sql, args)?.first().and_then(|r| r.first()).and_then(Value::as_i64).ok_or(Error::Integrity)
     }
 
+    /// Simulate on-disk states that only a process crash leaves behind.
+    pub fn harness_execute(&self, sql: &str, args: &[&str]) -> Result<usize> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        Ok(vault.db().execute(sql, rusqlite::params_from_iter(args.iter()))?)
+    }
+
     /// Encrypted object files currently registered in the unlocked vault.
     pub fn harness_blob_files(&self) -> Result<Vec<(String, PathBuf)>> {
         let handle = self.vault()?;
@@ -1035,27 +1401,15 @@ impl std::io::Write for HashWriter<'_> {
     }
 }
 
+fn interrupted_run(handle: &VaultHandle, root: &str) -> Option<String> {
+    let vault = handle.lock().ok()?;
+    vault.db().query_row("SELECT id FROM flow_runs WHERE root=? AND status='interrupted' ORDER BY updated_at DESC", [root], |r| r.get(0)).optional().ok()?
+}
+
 fn wav_from_f32(bytes: &[u8]) -> Vec<u8> {
     let samples: Vec<i16> = bytes
         .chunks_exact(4)
         .map(|c| (f32::from_le_bytes([c[0], c[1], c[2], c[3]]).clamp(-1.0, 1.0) * 32767.0) as i16)
         .collect();
-    let data_len = (samples.len() * 2) as u32;
-    let mut out = Vec::with_capacity(44 + data_len as usize);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16u32.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&16000u32.to_le_bytes());
-    out.extend_from_slice(&32000u32.to_le_bytes());
-    out.extend_from_slice(&2u16.to_le_bytes());
-    out.extend_from_slice(&16u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for sample in samples {
-        out.extend_from_slice(&sample.to_le_bytes());
-    }
-    out
+    crate::generation::probe::wav_pcm16(&samples, 16_000)
 }

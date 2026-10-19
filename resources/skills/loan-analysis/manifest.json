@@ -48,9 +48,9 @@
       "rule": "默认空；获准录音/视频版本及时间范围由核心解析，不能传任意路径"
     }
   ],
-  "version": "0.3.0-m2",
+  "version": "0.4.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "generation-pending",
+  "implementation_status": "local-analysis",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

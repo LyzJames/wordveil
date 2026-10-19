@@ -40,9 +40,9 @@
       "rule": "仅提取不自动请求生成；analyze按能力/授权执行复核"
     }
   ],
-  "version": "0.3.0-m2",
+  "version": "0.4.0-m2",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "generation-pending",
+  "implementation_status": "local-media",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

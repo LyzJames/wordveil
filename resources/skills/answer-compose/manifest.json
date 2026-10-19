@@ -49,7 +49,7 @@
       "rule": "首答为空；修订必须指向与draft_ref同版本的验证报告"
     }
   ],
-  "version": "0.3.0-m2",
+  "version": "0.4.0-m2",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "generation",
   "input_schema": "input.schema.json",
