@@ -58,4 +58,19 @@ impl EventLog {
     pub fn directory(&self) -> &PathBuf {
         &self.directory
     }
+
+    /// Remove daily files older than `days` (lvjin-YYYYMMDD.log only).
+    pub fn prune(&self, days: i64) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.directory) else { return 0 };
+        let cutoff = (chrono::Local::now() - chrono::Duration::days(days)).format("%Y%m%d").to_string();
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(date) = name.strip_prefix("lvjin-").and_then(|n| n.strip_suffix(".log")) else { continue };
+            if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) && date < cutoff.as_str() && std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
+    }
 }

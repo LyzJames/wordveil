@@ -1,5 +1,5 @@
 // Inspector (design 8.11, 9.4): page images with normalized text boxes and
-// the cited ones highlighted, page navigation, zoom and box toggle; text
+// the cited ones highlighted, page navigation with thumbnails, zoom and box toggle; text
 // blocks of non-paged documents; transcript segments and video frames; and
 // the evidence list of an answer with the selected source below it.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -204,7 +204,8 @@ function DocumentPane({ target, embedded }: { target: ViewerTarget; embedded?: b
   );
   const content = (
     <>
-      {current && <PagePane pageId={current} highlight={target.highlight?.filter((l) => !l.page_id || l.page_id === current)} zoom={zoom} boxes={boxes} />}
+      {!embedded && list.length > 1 && <Thumbs pages={list} current={current} onPick={setPage} />}
+      {current && <PagePane pageId={current} highlight={target.highlight?.filter((l) => !l.page_id || l.page_id === current)} zoom={zoom} boxes={boxes} pageCount={list.length} />}
       {pages.data.blocks.length > 0 && <BlocksPane blocks={pages.data.blocks} highlight={target.highlight} />}
       {list.length === 0 && pages.data.blocks.length === 0 && <p className="text-secondary">该资料没有可显示的文字。</p>}
     </>
@@ -222,11 +223,71 @@ function DocumentPane({ target, embedded }: { target: ViewerTarget; embedded?: b
   );
 }
 
+// One thumbnail at a time: the open page's own image is never stuck behind a
+// whole strip of renders in the local worker.
+let thumbQueue: Promise<unknown> = Promise.resolve();
+function thumbUrl(page: string): Promise<string> {
+  const next = thumbQueue.then(() => api.view<{ token: string }>('page_thumb', page)).then((r) => assetUrl(r.token));
+  thumbQueue = next.catch(() => undefined);
+  return next;
+}
+
+/** Page strip (design 9.4): small thumbnails made on this computer, loaded
+ *  as they scroll into view. */
+function Thumbs({ pages, current, onPick }: { pages: { page_id: string; page_no: number }[]; current?: string; onPick: (page: string) => void }) {
+  const strip = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    strip.current?.querySelector('[aria-current="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [current]);
+  return (
+    <div className="thumbs" ref={strip} aria-label="页面缩略图">
+      {pages.map((p, i) => (
+        <Thumb key={p.page_id} page={p.page_id} n={i + 1} total={pages.length} current={p.page_id === current} strip={strip} onPick={onPick} />
+      ))}
+    </div>
+  );
+}
+
+function Thumb({ page, n, total, current, strip, onPick }: { page: string; n: number; total: number; current: boolean; strip: React.RefObject<HTMLDivElement | null>; onPick: (page: string) => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { root: strip.current, rootMargin: '0px 160px' });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [strip]);
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    thumbUrl(page).then((u) => alive && setUrl(u)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [visible, page]);
+  return (
+    <button ref={ref} aria-current={current ? 'true' : undefined} aria-label={`第 ${n}/${total} 页`} title={`第 ${n}/${total} 页`} onClick={() => onPick(page)}>
+      {url ? <img src={url} alt="" draggable={false} /> : <span className="thumb-blank" />}
+      <span>{n}</span>
+    </button>
+  );
+}
+
 function sameBox(a?: number[], b?: number[]) {
   return !!a && !!b && a.length === 4 && b.length === 4 && a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
 }
 
-export function PagePane({ pageId, highlight, zoom = 'fit', boxes = true }: { pageId: string; highlight?: Locator[]; zoom?: 'fit' | 'actual'; boxes?: boolean }) {
+export function PagePane({ pageId, highlight, zoom = 'fit', boxes = true, pageCount }: { pageId: string; highlight?: Locator[]; zoom?: 'fit' | 'actual'; boxes?: boolean; pageCount?: number }) {
   const [view, setView] = useState<PageView | null>(null);
   const [error, setError] = useState('');
   const [active, setActive] = useState<number | null>(null);
@@ -254,7 +315,7 @@ export function PagePane({ pageId, highlight, zoom = 'fit', boxes = true }: { pa
   return (
     <div className="page-pane">
       <div className="page-meta">
-        <span className="t-caption text-secondary">第 {frame ? view.page_no - 100000 + 1 : view.page_no} {frame ? '帧' : '页'}</span>
+        <span className="t-caption text-secondary">第 {frame ? view.page_no - 100000 + 1 : view.page_no}{!frame && pageCount ? `/${pageCount}` : ''} {frame ? '帧' : '页'}</span>
         {view.rotation_turns > 0 && <Chip>已按方向旋转 {view.rotation_turns * 90}° 识别</Chip>}
         {view.unwarped && <Chip>已矫正弯曲</Chip>}
         {lowConfidence > 0 && <Chip tone="outline">{lowConfidence} 行置信度较低</Chip>}

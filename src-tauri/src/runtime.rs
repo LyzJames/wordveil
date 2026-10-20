@@ -486,12 +486,15 @@ impl Runtime {
             agent: None,
         };
         self.save(&invocation)?;
+        // The skill a user starts owns the delivered result; a written analysis
+        // hands that ownership to the lvjin-retrieval child its flow opens.
         if matches!(
             skill,
             "lvjin-retrieval"
                 | "answer-compose"
                 | "contract-review"
                 | "loan-analysis"
+                | "budget-analysis"
                 | "image-review"
                 | "audio-review"
                 | "video-review"
@@ -1028,6 +1031,9 @@ impl Runtime {
                         "KnownConstraintRef" => &["KnownConstraintRef", "FactRef"],
                         "ResultRef" => RESULT_KINDS,
                         "ComponentOrTaskRef" => &["ComponentRef", "TaskRef"],
+                        // A targeted re-look names the observation whose field
+                        // comparison (direct reading vs local extraction) it checks.
+                        "ExtractionAndObservationRef" => &["MediaObservationRef"],
                         _ => &[expected.as_str()],
                     };
                     if object_scope != scope || !alternatives.contains(&kind.as_str()) {

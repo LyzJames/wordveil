@@ -79,6 +79,9 @@ pub struct VaultKeys {
     pub objects: SecretKey,
     pub index: SecretKey,
     pub backup: SecretKey,
+    /// Secret DPAPI entropy for this vault's API keys: they can be unsealed
+    /// only while the vault is unlocked, not by any process of the same user.
+    pub credential: SecretKey,
 }
 
 impl VaultKeys {
@@ -89,6 +92,7 @@ impl VaultKeys {
             objects: master.derive(salt, b"lvjin/v1/objects")?,
             index: master.derive(salt, b"lvjin/v1/index-snapshot")?,
             backup: master.derive(salt, b"lvjin/v1/backup")?,
+            credential: master.derive(salt, b"lvjin/v2/credential-entropy")?,
             master,
         })
     }
@@ -247,13 +251,10 @@ pub fn read_header(directory: &Path) -> Result<VaultHeader> {
     Ok(header)
 }
 
-/// Atomic replace: write a sibling temporary file, then rename over the header.
+/// Atomic, durable replace: the header holds both key wraps, so a power loss
+/// while changing the passphrase must leave the old or the new header whole.
 pub fn write_header(directory: &Path, header: &VaultHeader) -> Result<()> {
-    let target = directory.join(HEADER_FILE);
-    let temporary = directory.join(format!("{HEADER_FILE}.{}.tmp", uuid::Uuid::new_v4().simple()));
-    std::fs::write(&temporary, serde_json::to_vec_pretty(header)?)?;
-    std::fs::rename(&temporary, &target)?;
-    Ok(())
+    crate::durable::write(&directory.join(HEADER_FILE), &serde_json::to_vec_pretty(header)?)
 }
 
 #[derive(Clone, Debug, Serialize)]

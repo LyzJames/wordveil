@@ -194,7 +194,7 @@ fn egress_text(preview: &Value, excluded: usize, excluded_media: &[String]) -> S
         "contract_review" => "合同书面分析（法律适用、金融口径、证据检查、结果综合）",
         "loan_analysis" => "借款书面分析（金融口径、法律适用、证据检查、结果综合）",
         "budget_analysis" => "预算书面分析（金融口径、证据检查、结果综合）",
-        "image_review" => "图片分析（直接读取所列图片，并与本机识别文字核对）",
+        "image_review" => "图片分析（直接读取所列图片，并与本机识别文字核对；不一致时针对有分歧的图片再读一次）",
         "audio_review" => "录音分析（本机转写；接口通过音频自检时直接听取所选时段）",
         "video_review" => "视频分析（本机抽帧识别与转写；接口通过自检时直接读取抽帧画面与音轨）",
         _ => "生成这一次回答（不包含联网搜索）",
@@ -209,11 +209,11 @@ fn egress_text(preview: &Value, excluded: usize, excluded_media: &[String]) -> S
     ];
     if !media.is_empty() {
         let bytes: u64 = media.iter().filter_map(|m| m["bytes"].as_u64()).sum();
-        lines.push(format!("将上传原始图片：{} 张（JPEG，长边不超过 2048 像素，共约 {} KB）", media.len(), bytes.div_ceil(1024)));
+        lines.push(format!("将上传原始图片：{} 张（JPEG，长边不超过 2048 像素，共约 {} KB）；与本机识别不一致时，有分歧的图片会再上传一次", media.len(), bytes.div_ceil(1024)));
     }
     if let Some(policy) = preview["media_policy"].as_object() {
         if policy["frames"].as_u64().unwrap_or(0) > 0 {
-            lines.push(format!("将上传：所选时段内均匀抽取的画面，最多 {} 张（JPEG）", policy["frames"]));
+            lines.push(format!("将上传：所选时段内均匀抽取的画面，最多 {} 张（JPEG）；不上传音频时，与本机识别不一致的画面可能再上传一次", policy["frames"]));
         }
         if policy["audio_seconds"].as_f64().unwrap_or(0.0) > 0.0 {
             lines.push(format!("将上传：所选时段的原始音频，最长 {:.0} 秒", policy["audio_seconds"].as_f64().unwrap_or(0.0)));
@@ -246,15 +246,17 @@ async fn flow_continue(app: AppHandle, shell: State<'_, Shell>, run: String) -> 
     blocking(move || {
         let info = core.describe_continue(&run).map_err(|e| message(&e))?;
         let unknown = info["unknown_requests"].as_i64().unwrap_or(0);
+        let (used, max) = (info["used_requests"].as_i64().unwrap_or(0), info["max_requests"].as_i64().unwrap_or(0));
         let text = format!(
-            "问题：{}\n接收方：{}（{}）\n模型：{}\n已用请求：{} / {} 次\n{}\n继续后从中断处接着执行，已完成的步骤不会重复。已发送的内容无法从服务方撤回。",
+            "问题：{}\n接收方：{}（{}）\n模型：{}\n已用请求：{} / {} 次\n{}{}\n继续后从中断处接着执行，已完成的步骤不会重复。已发送的内容无法从服务方撤回。",
             info["question"].as_str().unwrap_or("（无）"),
             info["connection"]["name"].as_str().unwrap_or(""),
             info["connection"]["host"].as_str().unwrap_or(""),
             info["connection"]["model_id"].as_str().unwrap_or(""),
-            info["used_requests"].as_i64().unwrap_or(0),
-            info["max_requests"].as_i64().unwrap_or(0),
+            used,
+            max,
             if unknown > 0 { format!("有 {unknown} 次请求在中断时已发出但没有收到回应，结果未知，已计入额度；继续时该步骤会在剩余额度内重新请求。\n") } else { String::new() },
+            if max - used <= 2 { "剩余额度不多：可能不够再做检查与修订，回答会按“部分完成”交付并标出未核实的句子。\n" } else { "" },
         );
         if !confirm(&app, "继续中断的任务", &text, "继续") {
             return Err("已取消，未发送任何内容".into());
@@ -286,7 +288,7 @@ async fn app_status(shell: State<'_, Shell>) -> Reply {
         Ok(core) => {
             let vaults = core.list_vaults().map_err(|e| message(&e))?;
             Ok(json!({"milestone": MILESTONE, "version": env!("CARGO_PKG_VERSION"), "installation_ok": true, "production": production, "unlocked": core.is_unlocked(),
-                "session": core.session_handle(), "vaults": vaults, "generation": "not_configured", "network": "not_in_m1"}))
+                "session": core.session_handle(), "vaults": vaults}))
         }
     }
 }
@@ -384,6 +386,18 @@ async fn task_cancel(shell: State<'_, Shell>, task_id: String) -> Reply {
     core(&shell)?.cancel_task(&task_id).map(|_| Value::Null).map_err(|e| message(&e))
 }
 
+#[tauri::command]
+async fn feedback_remove(shell: State<'_, Shell>, id: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.remove_feedback(&id).map(|_| Value::Null).map_err(|e| message(&e))).await
+}
+
+#[tauri::command]
+async fn task_retry(shell: State<'_, Shell>, task_id: String) -> Reply {
+    let core = core(&shell)?.clone();
+    blocking(move || core.retry_task(&task_id).map(Value::String).map_err(|e| message(&e))).await
+}
+
 // ------------------------------------------------------------ core objects
 
 #[tauri::command]
@@ -398,6 +412,7 @@ async fn create_object(shell: State<'_, Shell>, kind: String, value: Value) -> R
             "filter" => core.create_filter(value["kind"].as_str().unwrap_or(""), &list("ids")),
             "change" => core.draft_change(value["matter"].as_str().unwrap_or(""), &value["change"]),
             "component" => core.component_ref(value["name"].as_str().unwrap_or("")),
+            "feedback" => core.create_feedback(value["result"].as_str().unwrap_or(""), value["claim_id"].as_str(), value["issue"].as_str().unwrap_or(""), value["note"].as_str().unwrap_or("")),
             _ => return Err("未知的对象类型".into()),
         };
         id.map(Value::String).map_err(|e| message(&e))
@@ -448,7 +463,7 @@ fn describe(change: &Value) -> (String, String, String) {
             (
                 "删除资料版本".into(),
                 format!(
-                    "将从事务“{matter}”删除《{}》第 {} 版。\n\n一并删除：{} 页、{} 个文字块、{} 个检索片段、{} 条事实（其中已确认 {} 条）、{} 条金额记录、{} 个音视频记录，以及引用它的检索快照和导出草稿。\n\n已有备份不受影响；普通删除不能保证擦除硬盘上的物理残留。",
+                    "将从事务“{matter}”删除《{}》第 {} 版。\n\n一并删除：{} 页、{} 个文字块、{} 个检索片段、{} 条事实（其中已确认 {} 条）、{} 条金额记录、{} 个音视频记录，以及引用它的检索快照、回答与分析、导出草稿、为生成接口准备的媒体副本和外发预览中的摘录。\n\n已有备份不受影响；普通删除不能保证擦除硬盘上的物理残留。",
                     doc["display_name"].as_str().unwrap_or("未命名"), doc["version_no"], n("pages"), n("blocks"), n("chunks"), n("facts"), n("confirmed_facts"), n("cashflows"), n("media")
                 ),
                 "确认删除".into(),
@@ -544,9 +559,12 @@ async fn view(shell: State<'_, Shell>, kind: String, id: String) -> Reply {
             "segment_audio" => core.segment_audio(&id),
             "interrupted" => core.interrupted_imports().map(|v| json!(v)),
             "render_page" => core.render_page(&id),
+            "page_thumb" => core.page_thumb(&id),
             "media" => core.media_view(&id),
             "skills" => core.skills().map(|v| json!(v)),
             "models" => core.models(),
+            "lock_policy" => core.lock_policy(),
+            "feedback" => core.feedback(&id),
             _ => return Err("未知的视图".into()),
         }
         .map_err(|e| message(&e))
@@ -575,7 +593,7 @@ fn layout(root: &Path) -> Result<(Layout, PathBuf, bool), String> {
             Some(path) => path,
             None => docs.join("runtime/m1-dev"),
         };
-        let webview = docs.join("build/webview2-fixed/Microsoft.WebView2.FixedVersionRuntime.155.0.4283.60.x64");
+        let webview = docs.join("build/webview2-fixed/Microsoft.WebView2.FixedVersionRuntime.155.0.4283.62.x64");
         let _ = root;
         return Layout::development(&docs, &app, &data).map(|l| (l, webview, false)).map_err(|e| message(&e));
     }
@@ -628,6 +646,7 @@ fn main() {
     };
     let protocol_core = core.as_ref().ok().cloned();
     let lock_core = core.as_ref().ok().cloned();
+    let watch_core = core.as_ref().ok().cloned();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("lvjin", move |ctx, request, responder| {
@@ -661,6 +680,28 @@ fn main() {
                     }
                 });
             }
+            // Windows lock screen or sleep: lock the vault (setting, on by default).
+            if let Some(core) = watch_core {
+                let app = app.handle().clone();
+                lvjin_core::system_events::watch(Arc::new(move |event: &'static str| {
+                    if !core.lock_on_system_lock() {
+                        return;
+                    }
+                    let (core, app) = (core.clone(), app.clone());
+                    let (sent, done) = std::sync::mpsc::channel::<()>();
+                    std::thread::spawn(move || {
+                        if core.lock().is_ok() {
+                            let _ = app.emit("lvjin://locked", json!({"reason": event}));
+                        }
+                        let _ = sent.send(());
+                    });
+                    // Windows waits for this callback before sleeping: give the
+                    // lock a moment to drop the session and stop the workers.
+                    if event == "suspend" {
+                        let _ = done.recv_timeout(Duration::from_secs(2));
+                    }
+                }));
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&format!("律金智库 · {MILESTONE} 内部版"));
             }
@@ -676,8 +717,8 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_status, touch, vault_create, vault_unlock, vault_lock, vault_restore, change_passphrase, run_skill, start_skill, tasks, task_cancel,
-            create_object, import_files, resume_import, commit_change, export_commit, backup, privacy, view, connections, connection_save,
+            app_status, touch, vault_create, vault_unlock, vault_lock, vault_restore, change_passphrase, run_skill, start_skill, tasks, task_cancel, task_retry,
+            create_object, feedback_remove, import_files, resume_import, commit_change, export_commit, backup, privacy, view, connections, connection_save,
             connection_probe, connection_revoke, connection_default, answer_preview, answer_start, answer_discard, generation_requests,
             flows_interrupted, flow_continue, flow_discard, analysis_preview, media_preview
         ])

@@ -4,9 +4,10 @@
 // observations with the local comparison, the execution process, the two-step
 // egress approval, and interrupted tasks that can continue after a new
 // confirmation.
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  api, type AnswerPreview, type ChallengeSummary, type ClaimRow, type EvidenceItem, type InterruptedFlow, type ObservationSummary, type ProcessStep,
+  api, type AnswerPreview, type ChallengeSummary, type ClaimRow, type EvidenceItem, type Feedback, type InterruptedFlow, type ObservationSummary, type ProcessStep,
   type RetrievalResult, type RoleSummary, type TaskPlanSummary, type TaskState,
 } from './api';
 import { CalculationSummary } from './analysis';
@@ -16,7 +17,7 @@ import { ExportButton } from './export';
 import { Icon } from './icons';
 import { sourceOf, useSession, type EvidencePanel } from './session';
 import { generates, KIND_LABEL, kindOfRun, newTurnId, ROLE_TITLE, type QaTurn, type TurnKind } from './turns';
-import { Busy, Callout, Chip, ErrorLine, Segmented, useDismiss, useLoad, useNotice } from './ui';
+import { Busy, Callout, Chip, ErrorLine, Field, FieldGroup, Segmented, useAction, useDismiss, useLoad, useNotice } from './ui';
 
 export type { QaTurn } from './turns';
 
@@ -168,6 +169,12 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
     if (running?.task) api.cancelTask(running.task).then(() => notice('info', '已请求停止')).catch(() => {});
   }
 
+  /** A suggested follow-up goes into the composer; sending still previews first. */
+  function ask(question: string) {
+    setText(question);
+    window.requestAnimationFrame(() => composer.current?.focus());
+  }
+
   /** Continue an interrupted run (the core opens a native confirmation). */
   async function resume(run: string, question: string | null, kind: TurnKind) {
     try {
@@ -240,6 +247,7 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
             latest={index === qa.turns.length - 1}
             onStop={stop}
             onRetry={(asMode) => submit(turn.question, asMode, turn.matters)}
+            onAsk={ask}
             onResume={() => turn.run && resume(turn.run, turn.question, turn.kind)}
             onDiscard={() => turn.run && abandon(turn.run)}
           />
@@ -379,8 +387,8 @@ const RUNNING_TEXT: Record<TurnKind, string> = {
   video: '正在分析视频：抽帧识别与转写 → 直接读取画面与音轨 → 核对 → 起草与核查',
 };
 
-function TurnView({ turn, latest, onStop, onRetry, onResume, onDiscard }: {
-  turn: QaTurn; latest: boolean; onStop: () => void; onRetry: (mode: Mode) => void; onResume: () => void; onDiscard: () => void;
+function TurnView({ turn, latest, onStop, onRetry, onAsk, onResume, onDiscard }: {
+  turn: QaTurn; latest: boolean; onStop: () => void; onRetry: (mode: Mode) => void; onAsk: (question: string) => void; onResume: () => void; onDiscard: () => void;
 }) {
   const { matters } = useSession();
   const ref = useRef<HTMLElement>(null);
@@ -443,7 +451,7 @@ function TurnView({ turn, latest, onStop, onRetry, onResume, onDiscard }: {
           {turn.kind === 'answer' || turn.kind === 'deep' ? '可以调整问题或范围后重新提问；只找原文不会发送任何内容。' : undefined}
         </Callout>
       )}
-      {turn.state === 'done' && turn.resultRef && <TurnResult turn={turn} latest={latest} />}
+      {turn.state === 'done' && turn.resultRef && <TurnResult turn={turn} latest={latest} onAsk={onAsk} />}
     </section>
   );
 }
@@ -451,7 +459,7 @@ function TurnView({ turn, latest, onStop, onRetry, onResume, onDiscard }: {
 type ReviewPayload = {
   answer?: RetrievalResult['answer']; analysis?: string | null; retrieval?: string | null; evidence_read?: string | null; calculation?: string | null;
   roles?: RoleSummary[]; challenge?: ChallengeSummary | null; process?: ProcessStep[]; observations?: ObservationSummary[]; visual_check?: string; direct_audio_check?: string;
-  flow_run?: string | null; usage?: RetrievalResult['usage']; connection?: RetrievalResult['connection'];
+  flow_run?: string | null; usage?: RetrievalResult['usage']; connection?: RetrievalResult['connection']; created_at?: string;
 };
 
 /** Plain Q&A results are retrieval results; analyses and media reviews are
@@ -466,15 +474,15 @@ async function loadResult(turn: QaTurn): Promise<RetrievalResult> {
     question: turn.question, items, answer: review.answer ?? null, process: review.process ?? [], query_rewrites: [], plan: { fallback: true, rewrites: [], missing_facts: [] },
     usage: review.usage ?? child?.usage ?? { requests: 0, input_tokens: 0, output_tokens: 0 }, connection: review.connection ?? child?.connection ?? null, requested_output: 'answer', evidence_bundle: null,
     roles: review.roles ?? [], challenge: review.challenge ?? null, task_plan: null, observations: review.observations ?? [], calculation,
-    visual_check: review.visual_check, direct_audio_check: review.direct_audio_check, flow_run: review.flow_run,
+    visual_check: review.visual_check, direct_audio_check: review.direct_audio_check, flow_run: review.flow_run, created_at: review.created_at,
   };
 }
 
-function TurnResult({ turn, latest }: { turn: QaTurn; latest: boolean }) {
+function TurnResult({ turn, latest, onAsk }: { turn: QaTurn; latest: boolean; onAsk: (question: string) => void }) {
   const result = useLoad(() => loadResult(turn), [turn.resultRef]);
   if (result.error) return <ErrorLine text={result.error} />;
   if (!result.data) return <Busy label="正在打开结果…" />;
-  return result.data.answer ? <AnswerCard turn={turn} result={result.data} latest={latest} /> : <EvidenceCard turn={turn} result={result.data} />;
+  return result.data.answer ? <AnswerCard turn={turn} result={result.data} latest={latest} onAsk={onAsk} /> : <EvidenceCard turn={turn} result={result.data} />;
 }
 
 const seconds = (turn: QaTurn) => (turn.finished ? Math.max(1, Math.round((turn.finished - turn.started) / 1000)) : null);
@@ -532,26 +540,53 @@ function numberOf(label: string) {
   return label.replace(/^E/, '');
 }
 
-function AnswerCard({ turn, result, latest }: { turn: QaTurn; result: RetrievalResult; latest: boolean }) {
+const ISSUE_LABEL: Record<Feedback['issue'], string> = { unsupported: '引用不支持这句话', wrong_source: '引用的位置不对', contradiction: '与原文矛盾', other: '其他问题' };
+const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}…` : text);
+
+/** The local check of one sentence, as plain text for copies. */
+const checkMark = (c: ClaimRow) => (c.status === 'unsupported' ? '（未找到依据）' : c.status === 'partial' ? '（部分有依据）' : c.status === 'unchecked' ? '（未核查）' : '');
+
+/** Explicit label for generated text that leaves the app (GB 45438-2025):
+ *  generated by AI, by which service and model, when, and how it was checked. */
+function aiLabel(connection: RetrievalResult['connection'], at: string | number | undefined): string {
+  const by = connection ? `${connection.name}（${connection.host}）的模型 ${connection.model_id}` : '你连接的生成接口';
+  const when = at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '';
+  return `【AI 生成】以下内容由人工智能生成：${by}${when ? `，生成于 ${when}` : ''}。只依据所选资料中的原文，并已在本机逐句核对依据；标有“未找到依据”“部分有依据”“未核查”的句子请谨慎使用。不构成法律或财务意见。`;
+}
+
+/** Evidence of the answer being read, for the citation previews. */
+const CiteItems = React.createContext<Map<string, EvidenceItem>>(new Map());
+
+/** Where a citation preview goes: below the marker, or above it near the bottom. */
+function previewPlace(rect: DOMRect): React.CSSProperties {
+  const width = Math.min(360, window.innerWidth - 16);
+  const left = Math.max(8, Math.min(rect.left - 16, window.innerWidth - width - 8));
+  return rect.bottom + 240 < window.innerHeight ? { left, top: rect.bottom + 6, width } : { left, bottom: window.innerHeight - rect.top + 6, width };
+}
+
+function AnswerCard({ turn, result, latest, onAsk }: { turn: QaTurn; result: RetrievalResult; latest: boolean; onAsk: (question: string) => void }) {
   const { inspect, inspector } = useSession();
   const notice = useNotice();
+  const [flagging, setFlagging] = useState(false);
+  const notes = useLoad(() => api.view<Feedback[]>('feedback', turn.resultRef!), [turn.resultRef]);
   const answer = result.answer!;
   const s = answer.sections;
   const labels = useMemo(() => Object.fromEntries(answer.labels.map((l) => [l.evidence_id, numberOf(l.label)])), [answer.labels]);
   const byLabel = useMemo(() => new Map(answer.labels.map((l) => [l.label, l.evidence_id])), [answer.labels]);
-  const sent = useMemo(() => {
-    const byId = new Map(result.items.map((i) => [i.evidence_id, i]));
-    return answer.labels.map((l) => byId.get(l.evidence_id)).filter((i): i is EvidenceItem => !!i);
-  }, [answer.labels, result.items]);
+  const byId = useMemo(() => new Map(result.items.map((i) => [i.evidence_id, i])), [result.items]);
+  const sent = useMemo(() => answer.labels.map((l) => byId.get(l.evidence_id)).filter((i): i is EvidenceItem => !!i), [answer.labels, byId]);
   const claims = [...s.conclusion, ...s.basis, ...s.calculations];
   const state = claims.some((c) => c.status === 'unsupported') ? 'unsupported' : claims.some((c) => c.status === 'partial') ? 'partial' : claims.some((c) => c.status === 'unchecked') ? 'unchecked' : 'supported';
+  const texts = useMemo(() => new Map([...s.conclusion, ...s.basis, ...s.calculations, ...s.next_steps].map((c) => [c.claim_id, c.text])), [s]);
+  const flagged = useMemo(() => new Map((notes.data ?? []).filter((n) => n.claim_id).map((n) => [n.claim_id!, ISSUE_LABEL[n.issue]])), [notes.data]);
+  const noteText = (n: Feedback) => `${n.claim_id && texts.has(n.claim_id) ? `“${clip(texts.get(n.claim_id)!, 40)}”` : '整体'}：${ISSUE_LABEL[n.issue]}${n.note ? `。${n.note}` : ''}`;
 
   function panel(current: string | null): EvidencePanel {
     const unsent = result.items.length - sent.length;
     return { title: `依据（${sent.length}）`, note: `本次回答发送并可引用的原文${unsent > 0 ? `；另有 ${unsent} 段只在本机检索到，未发送` : ''}`, items: sent, labels, current };
   }
   function cite(evidence: string) {
-    const item = sent.find((i) => i.evidence_id === evidence) ?? result.items.find((i) => i.evidence_id === evidence);
+    const item = sent.find((i) => i.evidence_id === evidence) ?? byId.get(evidence);
     inspect({ kind: 'evidence', evidence: panel(evidence), source: item ? sourceOf(item) : undefined });
   }
   // The newest answer opens its evidence beside it once (design 9.5).
@@ -564,8 +599,9 @@ function AnswerCard({ turn, result, latest }: { turn: QaTurn; result: RetrievalR
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latest]);
 
+  /** Copies carry the explicit AI label and each sentence's check result. */
   function copy() {
-    const line = (c: ClaimRow) => `${c.text.replace(/E(\d+)/g, (m, n) => (byLabel.has(m) ? `[${n}]` : m))}${c.evidence.map((e) => `[${numberOf(e.label)}]`).join('')}`;
+    const line = (c: ClaimRow) => `${c.text.replace(/E(\d+)/g, (m, n) => (byLabel.has(m) ? `[${n}]` : m))}${c.evidence.map((e) => `[${numberOf(e.label)}]`).join('')}${checkMark(c)}`;
     const parts: string[] = [];
     const add = (title: string, rows: string[]) => rows.length && parts.push(`${title}：\n${rows.join('\n')}`);
     add('结论', s.conclusion.map(line));
@@ -575,74 +611,184 @@ function AnswerCard({ turn, result, latest }: { turn: QaTurn; result: RetrievalR
     add('缺失信息', s.missing_information);
     add('资料之间的矛盾', s.conflicts);
     add('下一步', s.next_steps.map(line));
+    add('你标注的问题', (notes.data ?? []).map(noteText));
     const sources = sent.map((i) => `[${labels[i.evidence_id]}] ${i.document.display_name} ${locatorLabel(i.locators)}`);
     add('引用', sources);
-    navigator.clipboard.writeText(`问题：${turn.question}\n\n${parts.join('\n\n')}`).then(() => notice('ok', '已复制回答与引用'), () => notice('error', '无法写入剪贴板'));
+    const text = `${aiLabel(result.connection, result.created_at ?? turn.finished)}\n\n问题：${turn.question}\n\n${parts.join('\n\n')}`;
+    navigator.clipboard.writeText(text).then(() => notice('ok', '已复制回答与引用（含 AI 生成标识）'), () => notice('error', '无法写入剪贴板'));
+  }
+
+  async function withdraw(id: string) {
+    try {
+      await api.feedbackRemove(id);
+      notes.reload();
+    } catch (e) {
+      notice('error', message(e));
+    }
   }
 
   const other = (turn.warnings ?? []).filter((w) => !['unsupported_claims', 'insufficient_evidence'].includes(w.code));
+  const followUps = latest ? (answer.follow_ups ?? []).filter(Boolean).slice(0, 3) : [];
   return (
-    <article className="answer" aria-label="回答">
-      <div className="answer-head">
-        <Icon name="robot" />
-        <span>{result.connection ? `${result.connection.name} · ${result.connection.model_id}` : '生成接口'}</span>
-        <span>·</span>
-        <button className="btn btn-link t-caption" onClick={() => inspect({ kind: 'evidence', evidence: panel(null) })}>发送原文 {sent.length} 段</button>
-        {seconds(turn) && (
-          <>
-            <span>·</span>
-            <span>{seconds(turn)} 秒</span>
-          </>
+    <CiteItems.Provider value={byId}>
+      <article className="answer" aria-label="回答">
+        <div className="answer-head">
+          <Icon name="robot" />
+          <span title="这段回答由人工智能生成，并已在本机逐句核对依据">AI 生成</span>
+          <span>·</span>
+          <span>{result.connection ? `${result.connection.name} · ${result.connection.model_id}` : '生成接口'}</span>
+          <span>·</span>
+          <button className="btn btn-link t-caption" onClick={() => inspect({ kind: 'evidence', evidence: panel(null) })}>发送原文 {sent.length} 段</button>
+          {seconds(turn) && (
+            <>
+              <span>·</span>
+              <span>{seconds(turn)} 秒</span>
+            </>
+          )}
+          {answer.revisions > 0 && (
+            <>
+              <span>·</span>
+              <span>已修订 {answer.revisions} 次</span>
+            </>
+          )}
+          <span className="spacer" />
+          {state === 'supported' && <Chip tone="ok" icon="check">已核查</Chip>}
+          {state === 'partial' && <Chip tone="warn" icon="highlight">部分有依据</Chip>}
+          {state === 'unsupported' && <Chip tone="danger" icon="warning">有内容未找到依据</Chip>}
+          {state === 'unchecked' && <Chip icon="unknown">部分未核查</Chip>}
+        </div>
+        <div className="answer-body">
+          {answer.insufficient_evidence && <Callout tone="attention" title="依据不足">资料中没有足够的原文支持完整结论；下面说明了缺少哪些信息。可以导入补充资料，或只看找到的原文。</Callout>}
+          {state === 'unsupported' && <Callout tone="danger" title="有内容未找到依据，请谨慎使用">红色虚线标出的句子在所引原文中找不到支持。</Callout>}
+          {other.length > 0 && <Callout tone="warning" title="部分完成">{other.map((w) => w.message).join('；')}</Callout>}
+          {(notes.data?.length ?? 0) > 0 && (
+            <Callout tone="attention" icon="flag" title={`你标注了 ${notes.data!.length} 处问题`}>
+              <ul className="plain-list">
+                {notes.data!.map((n) => (
+                  <li key={n.id}>
+                    {noteText(n)}
+                    <button className="btn btn-link t-caption" onClick={() => withdraw(n.id)}>撤回</button>
+                  </li>
+                ))}
+              </ul>
+            </Callout>
+          )}
+          <Part title="结论" claims={s.conclusion} onCite={cite} byLabel={byLabel} flagged={flagged} className="conclusion" />
+          <Part title="适用前提" items={s.assumptions} />
+          <Part title="依据" claims={s.basis} onCite={cite} byLabel={byLabel} flagged={flagged} />
+          <Part title="计算" claims={s.calculations} onCite={cite} byLabel={byLabel} flagged={flagged} />
+          <Part title="缺失信息" items={s.missing_information} />
+          <Part title="资料之间的矛盾" items={s.conflicts} />
+          <Part title="下一步" claims={s.next_steps} onCite={cite} byLabel={byLabel} flagged={flagged} />
+          {result.calculation && <CalculationSummary result={result.calculation} />}
+        </div>
+        {result.observations && result.observations.length > 0 && <Observations rows={result.observations} visual={result.visual_check} audio={result.direct_audio_check} />}
+        {((result.roles?.length ?? 0) > 0 || result.task_plan || result.challenge) && (
+          <Roles roles={result.roles ?? []} plan={result.task_plan ?? null} challenge={result.challenge ?? null} labels={labels} onCite={cite} />
         )}
-        {answer.revisions > 0 && (
-          <>
-            <span>·</span>
-            <span>已修订 {answer.revisions} 次</span>
-          </>
+        <Process steps={result.process} running={false} />
+        <div className="answer-foot">
+          <button className="btn btn-xs btn-subtle" onClick={copy}>
+            <Icon name="copy" />
+            复制
+          </button>
+          <ExportButton resultRefs={async () => [turn.resultRef!]} name={turn.question.slice(0, 30)} label="导出" small />
+          <button className="btn btn-xs btn-subtle" aria-expanded={flagging} onClick={() => setFlagging(!flagging)}>
+            <Icon name="flag" />
+            依据有误？
+          </button>
+          <span style={{ flex: 1 }} />
+          <span className="t-caption text-tertiary" title={answer.verification_note}>结论只基于你的资料，不构成法律意见</span>
+        </div>
+        {flagging && (
+          <FeedbackForm
+            result={turn.resultRef!}
+            sections={[['结论', s.conclusion], ['依据', s.basis], ['计算', s.calculations], ['下一步', s.next_steps]]}
+            onClose={() => setFlagging(false)}
+            onSaved={() => {
+              setFlagging(false);
+              notes.reload();
+            }}
+          />
         )}
-        <span className="spacer" />
-        {state === 'supported' && <Chip tone="ok" icon="check">已核查</Chip>}
-        {state === 'partial' && <Chip tone="warn" icon="highlight">部分有依据</Chip>}
-        {state === 'unsupported' && <Chip tone="danger" icon="warning">有内容未找到依据</Chip>}
-        {state === 'unchecked' && <Chip icon="unknown">部分未核查</Chip>}
-      </div>
-      <div className="answer-body">
-        {answer.insufficient_evidence && <Callout tone="attention" title="依据不足">资料中没有足够的原文支持完整结论；下面说明了缺少哪些信息。可以导入补充资料，或只看找到的原文。</Callout>}
-        {state === 'unsupported' && <Callout tone="danger" title="有内容未找到依据，请谨慎使用">红色虚线标出的句子在所引原文中找不到支持。</Callout>}
-        {other.length > 0 && <Callout tone="warning" title="部分完成">{other.map((w) => w.message).join('；')}</Callout>}
-        <Part title="结论" claims={s.conclusion} onCite={cite} byLabel={byLabel} className="conclusion" />
-        <Part title="适用前提" items={s.assumptions} />
-        <Part title="依据" claims={s.basis} onCite={cite} byLabel={byLabel} />
-        <Part title="计算" claims={s.calculations} onCite={cite} byLabel={byLabel} />
-        <Part title="缺失信息" items={s.missing_information} />
-        <Part title="资料之间的矛盾" items={s.conflicts} />
-        <Part title="下一步" claims={s.next_steps} onCite={cite} byLabel={byLabel} />
-        {result.calculation && <CalculationSummary result={result.calculation} />}
-      </div>
-      {result.observations && result.observations.length > 0 && <Observations rows={result.observations} visual={result.visual_check} audio={result.direct_audio_check} />}
-      {((result.roles?.length ?? 0) > 0 || result.task_plan || result.challenge) && (
-        <Roles roles={result.roles ?? []} plan={result.task_plan ?? null} challenge={result.challenge ?? null} labels={labels} onCite={cite} />
+      </article>
+      {followUps.length > 0 && (
+        <div className="followups" role="group" aria-label="追问建议">
+          <span className="t-caption text-tertiary">追问：</span>
+          {followUps.map((q) => (
+            <button key={q} title="填入输入框；发送前仍会预览并请你确认" onClick={() => onAsk(q)}>
+              {q}
+            </button>
+          ))}
+        </div>
       )}
-      <Process steps={result.process} running={false} />
-      <div className="answer-foot">
-        <button className="btn btn-xs btn-subtle" onClick={copy}>
-          <Icon name="copy" />
-          复制
-        </button>
-        <ExportButton resultRefs={async () => [turn.resultRef!]} name={turn.question.slice(0, 30)} label="导出依据" small />
-        <span style={{ flex: 1 }} />
-        <span className="t-caption text-tertiary" title={answer.verification_note}>结论只基于你的资料，不构成法律意见</span>
-      </div>
-    </article>
+    </CiteItems.Provider>
   );
 }
 
-function Part({ title, claims, items, onCite, byLabel, className }: { title: string; claims?: ClaimRow[]; items?: string[]; onCite?: (evidence: string) => void; byLabel?: Map<string, string>; className?: string }) {
+/** "依据有误？": the user's own note on one sentence or the whole answer.
+ *  It stays in this vault, is never sent, and goes with copies and exports. */
+function FeedbackForm({ result, sections, onClose, onSaved }: { result: string; sections: [string, ClaimRow[]][]; onClose: () => void; onSaved: () => void }) {
+  const [claim, setClaim] = useState('');
+  const [issue, setIssue] = useState<Feedback['issue']>('unsupported');
+  const [note, setNote] = useState('');
+  const { busy, run } = useAction();
+  const ref = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>('select')?.focus();
+  }, []);
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const done = await run(() => api.object('feedback', { result, claim_id: claim || null, issue, note: note.trim() }), '已记下这条标注');
+    if (done) onSaved();
+  }
+  return (
+    <form
+      className="feedback-form"
+      ref={ref}
+      onSubmit={save}
+      aria-label="标注依据问题"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      <Field label="哪一句有问题">
+        <select value={claim} onChange={(e) => setClaim(e.target.value)}>
+          <option value="">整体或多处</option>
+          {sections.filter(([, rows]) => rows.length > 0).map(([title, rows]) => (
+            <optgroup key={title} label={title}>
+              {rows.map((c) => (
+                <option key={c.claim_id} value={c.claim_id}>{clip(c.text, 40)}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </Field>
+      <FieldGroup label="问题">
+        <Segmented label="问题" value={issue} onChange={setIssue} items={[['unsupported', '引用不支持'], ['wrong_source', '位置不对'], ['contradiction', '与原文矛盾'], ['other', '其他']]} />
+      </FieldGroup>
+      <Field label="说明（可选）" hint="标注只保存在本机加密空间，不会发送给任何服务；复制和导出这个回答时一并附上。">
+        <textarea rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
+      </Field>
+      <div className="actions end">
+        <button type="button" className="btn btn-sm" onClick={onClose}>取消</button>
+        <button className="btn btn-sm btn-primary" disabled={busy}>保存标注</button>
+      </div>
+    </form>
+  );
+}
+
+function Part({ title, claims, items, onCite, byLabel, flagged, className }: {
+  title: string; claims?: ClaimRow[]; items?: string[]; onCite?: (evidence: string) => void; byLabel?: Map<string, string>; flagged?: Map<string, string>; className?: string;
+}) {
   const rows = claims ?? [];
   const texts = items ?? [];
   if (!rows.length && !texts.length) return null;
   const body = claims
-    ? rows.map((c) => <Claim key={c.claim_id} claim={c} onCite={onCite!} byLabel={byLabel ?? new Map()} />)
+    ? rows.map((c) => <Claim key={c.claim_id} claim={c} onCite={onCite!} byLabel={byLabel ?? new Map()} flag={flagged?.get(c.claim_id)} />)
     : texts.map((t, i) => <React.Fragment key={i}>{t}</React.Fragment>);
   return (
     <section className={`answer-part${className ? ` ${className}` : ''}`}>
@@ -661,7 +807,7 @@ function inlineCites(text: string, byLabel: Map<string, string>, onCite: (eviden
     const evidence = byLabel.get(m[0]);
     if (!evidence || m.index === undefined) continue;
     out.push(text.slice(at, m.index));
-    out.push(<Cite key={m.index} label={m[1]} onOpen={() => onCite(evidence)} />);
+    out.push(<Cite key={m.index} label={m[1]} evidence={evidence} onOpen={() => onCite(evidence)} />);
     at = m.index + m[0].length;
   }
   if (!out.length) return text;
@@ -669,7 +815,7 @@ function inlineCites(text: string, byLabel: Map<string, string>, onCite: (eviden
   return out;
 }
 
-function Claim({ claim, onCite, byLabel }: { claim: ClaimRow; onCite: (evidence: string) => void; byLabel: Map<string, string> }) {
+function Claim({ claim, onCite, byLabel, flag }: { claim: ClaimRow; onCite: (evidence: string) => void; byLabel: Map<string, string>; flag?: string }) {
   let text: React.ReactNode = inlineCites(claim.text, byLabel, onCite);
   if (claim.status === 'unsupported') {
     text = <span className="claim-unsupported" title={`未找到依据：${claim.message || '所引原文不支持这句话'}`}>{claim.text}</span>;
@@ -690,19 +836,120 @@ function Claim({ claim, onCite, byLabel }: { claim: ClaimRow; onCite: (evidence:
     <span className="claim">
       {text}
       {claim.evidence.map((e) => (
-        <Cite key={e.evidence_id} label={numberOf(e.label)} onOpen={() => onCite(e.evidence_id)} />
+        <Cite key={e.evidence_id} label={numberOf(e.label)} evidence={e.evidence_id} onOpen={() => onCite(e.evidence_id)} />
       ))}
       {claim.status === 'unsupported' && <span className="claim-status"><Chip tone="danger">未找到依据</Chip></span>}
       {claim.status === 'unchecked' && <span className="claim-status"><Chip title="超出核查预算或输入过长，这句话没有核查">未核查</Chip></span>}
+      {flag && <span className="claim-status"><Chip tone="warn" icon="flag" title={`你的标注：${flag}`}>已标注</Chip></span>}
     </span>
   );
 }
 
-function Cite({ label, onOpen }: { label: string; onOpen: () => void }) {
+/** Citation marker (design 8.14): after 300 ms of hover, or on keyboard
+ *  focus, a preview shows the file, location and the cited passage; click or
+ *  Enter opens the passage in the inspector on the right. */
+function Cite({ label, evidence, onOpen }: { label: string; evidence: string; onOpen: () => void }) {
+  const item = useContext(CiteItems).get(evidence);
+  const [place, setPlace] = useState<React.CSSProperties | null>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const timer = useRef(0);
+  const id = useId();
+  const clear = () => window.clearTimeout(timer.current);
+  const show = () => {
+    if (!item) return;
+    clear();
+    timer.current = window.setTimeout(() => {
+      const rect = button.current?.getBoundingClientRect();
+      if (rect) setPlace(previewPlace(rect));
+    }, 300);
+  };
+  const hide = (delay = 150) => {
+    clear();
+    timer.current = window.setTimeout(() => setPlace(null), delay);
+  };
+  const open = () => {
+    clear();
+    setPlace(null);
+    onOpen();
+  };
+  // The preview follows its marker when the thread scrolls (the newest answer
+  // keeps itself in view) and closes once the marker leaves the window;
+  // scrolling elsewhere, such as the inspector, does not affect it.
+  const shown = !!place;
+  useEffect(() => {
+    if (!shown) return;
+    const follow = (e: Event) => {
+      const marker = button.current;
+      if (!marker || (e.target instanceof Node && e.target !== document && !e.target.contains(marker))) return;
+      const rect = marker.getBoundingClientRect();
+      setPlace(rect.bottom < 0 || rect.top > window.innerHeight ? null : previewPlace(rect));
+    };
+    const close = () => setPlace(null);
+    window.addEventListener('scroll', follow, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', follow, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [shown]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
   return (
-    <button className="cite" aria-label={`依据 ${label}，在右侧打开`} title={`依据 ${label}：在右侧打开原文`} onClick={onOpen}>
-      {label}
-    </button>
+    <>
+      <button
+        ref={button}
+        className="cite"
+        aria-label={`依据 ${label}，在右侧打开`}
+        aria-describedby={place ? id : undefined}
+        aria-expanded={place ? true : undefined}
+        onClick={open}
+        onMouseEnter={show}
+        onMouseLeave={() => hide()}
+        onFocus={show}
+        onBlur={() => hide(0)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && place) {
+            e.stopPropagation();
+            setPlace(null);
+          }
+        }}
+      >
+        {label}
+      </button>
+      {place && item && createPortal(
+        <div id={id} role="tooltip" className="popover cite-card fade-in" style={place} onMouseEnter={clear} onMouseLeave={() => hide()}>
+          <div className="evidence-head">
+            <span className="n">{label}</span>
+            <span className="t-strong ellipsis" title={item.document.display_name}>{item.document.display_name}</span>
+          </div>
+          <div className="t-caption text-tertiary">{[locatorLabel(item.locators), `第 ${item.document.version_no} 版`].filter(Boolean).join(' · ')}</div>
+          <Excerpt item={item} />
+          <button className="btn btn-xs" tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={open}>
+            <Icon name="openPane" />
+            在右侧打开
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/** The cited passage in a little of its context, the cited part highlighted. */
+function Excerpt({ item }: { item: EvidenceItem }) {
+  const exact = item.exact_text.trim();
+  const context = item.text || exact;
+  const at = exact ? context.indexOf(exact) : -1;
+  if (at < 0) return <div className="quote"><mark>{clip(exact, 220)}</mark></div>;
+  const from = Math.max(0, at - 60);
+  const to = Math.min(context.length, at + exact.length + 60);
+  return (
+    <div className="quote">
+      {from > 0 ? '…' : ''}
+      {context.slice(from, at)}
+      <mark>{clip(exact, 220)}</mark>
+      {context.slice(at + exact.length, to)}
+      {to < context.length ? '…' : ''}
+    </div>
   );
 }
 
@@ -714,7 +961,7 @@ function GoalText({ text, taskLabels, labels, onCite }: { text: string; taskLabe
       {text.split(/(?<![A-Za-z])(E\d{1,2})(?!\d)/).map((part, i) => {
         if (i % 2 === 0) return part;
         const id = taskLabels[part];
-        return id && labels[id] ? <Cite key={i} label={labels[id]} onOpen={() => onCite(id)} /> : null;
+        return id && labels[id] ? <Cite key={i} label={labels[id]} evidence={id} onOpen={() => onCite(id)} /> : null;
       })}
     </>
   );
@@ -753,7 +1000,7 @@ function Roles({ roles, plan, challenge, labels, onCite }: { roles: RoleSummary[
             {role.claims.map((claim, i) => (
               <li key={i}>
                 {claim.text}
-                {claim.evidence.map((e) => (labels[e.evidence_id] ? <Cite key={e.evidence_id} label={labels[e.evidence_id]} onOpen={() => onCite(e.evidence_id)} /> : null))}
+                {claim.evidence.map((e) => (labels[e.evidence_id] ? <Cite key={e.evidence_id} label={labels[e.evidence_id]} evidence={e.evidence_id} onOpen={() => onCite(e.evidence_id)} /> : null))}
               </li>
             ))}
             {role.limitations.map((limit, i) => (
@@ -783,16 +1030,22 @@ const FIELD: Record<string, string> = { amount: '金额', date: '日期', name: 
 /** What the model read directly from the approved media, and how its key
  *  fields compare with the local OCR/ASR of the same source. */
 function Observations({ rows, visual, audio }: { rows: ObservationSummary[]; visual?: string; audio?: string }) {
-  const disagreements = rows.flatMap((r) => r.comparison.disagreements);
+  // A targeted re-look replaces the first reading of the same images.
+  const superseded = new Set(rows.map((r) => r.supersedes).filter((r): r is string => !!r));
+  const current = rows.filter((r) => !superseded.has(r.observation_ref));
+  const disagreements = current.flatMap((r) => r.comparison.disagreements);
+  const relooked = rows.some((r) => r.mode === 'targeted_compare');
   return (
     <details className="roles" open={disagreements.length > 0}>
       <summary>
         <Icon name="view" />
-        直接读取媒体{visual === 'performed' ? ' · 已看图' : ''}{audio === 'performed' ? ' · 已听音频' : ''}{disagreements.length ? ` · ${disagreements.length} 处与本机识别不一致` : ' · 关键字段与本机识别一致'}
+        直接读取媒体{visual === 'performed' ? ' · 已看图' : ''}{relooked ? ' · 已定向复看' : ''}{audio === 'performed' ? ' · 已听音频' : ''}{disagreements.length ? ` · ${disagreements.length} 处与本机识别不一致` : ' · 关键字段与本机识别一致'}
       </summary>
       <p className="t-caption text-tertiary">直接读取与本机识别来自同一份原件，一致只是核对信号，不证明原件真实；不一致处请回到原图或回放核对。</p>
       {rows.map((row) => (
         <section key={row.observation_ref} className="role-block">
+          {row.mode === 'targeted_compare' && <h4>定向复看：只针对与本机识别不一致的图片再读一次</h4>}
+          {superseded.has(row.observation_ref) && <p className="t-caption text-tertiary">首次读取；不一致的字段已由定向复看重新核对，以复看结果为准。</p>}
           <ul>
             {row.observations.map((text, i) => <li key={i}>{text}</li>)}
             {row.limitations.map((text, i) => <li key={`l${i}`} className="text-secondary">局限：{text}</li>)}

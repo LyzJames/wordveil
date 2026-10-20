@@ -11,8 +11,8 @@ use crate::{
 use serde_json::{Value, json};
 
 fn store(ctx: &Ctx) -> Result<CredentialStore> {
-    let vault_id = ctx.lock()?.id.clone();
-    CredentialStore::for_vault(&ctx.services.layout.data_root, &vault_id)
+    let vault = ctx.lock()?;
+    CredentialStore::for_vault(&ctx.services.layout.data_root, &vault.id, &vault.keys.credential)
 }
 
 pub fn settings(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
@@ -44,16 +44,16 @@ pub fn settings(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
         "probe" => {
             ctx.authorize(invocation, "network.probe")?;
             let connection_id = draft.connection_id.clone().ok_or(Error::Contract)?;
-            let (connection, vault_id) = {
+            let connection = {
                 let vault = ctx.lock()?;
                 connections::consume_draft(&vault, &draft_id)?;
-                (connections::load(&vault, &connection_id)?, vault.id.clone())
+                connections::load(&vault, &connection_id)?
             };
             if connection.status != "active" {
                 return Err(Error::Denied);
             }
             let key = match &connection.credential {
-                Some(id) => Some(CredentialStore::for_vault(&ctx.services.layout.data_root, &vault_id)?.get(id)?),
+                Some(id) => Some(store(ctx)?.get(id)?),
                 None if connection.profile.endpoint.is_loopback() => None,
                 None => return Err(Error::NeedsInput("api_key")),
             };

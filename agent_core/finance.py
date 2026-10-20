@@ -93,9 +93,17 @@ def _in_period(record: dict, assumptions: dict) -> bool:
     return True
 
 
+def _refund_policy(ctx: Context) -> str:
+    policy = ctx.assumptions.get('refund_policy', 'separate')
+    if policy not in ('separate', 'net'):
+        raise InputError('invalid_refund_policy')
+    ctx.used['refund_policy'] = policy
+    return policy
+
+
 def calc_sum(records: list[dict], ctx: Context) -> dict:
     exclude = set(ctx.assumptions.get('exclude_kinds', ['transfer']))
-    refunds = ctx.assumptions.get('refund_policy', 'separate')
+    refunds = _refund_policy(ctx)
     totals = defaultdict(lambda: {'in': Decimal(0), 'out': Decimal(0), 'refund': Decimal(0)})
     categories = defaultdict(lambda: defaultdict(Decimal))
     included, excluded = [], []
@@ -109,7 +117,8 @@ def calc_sum(records: list[dict], ctx: Context) -> dict:
             continue
         bucket = totals[record['currency']]
         if kind == 'refund' and refunds == 'separate':
-            bucket['refund'] += record['amount']
+            # A refund received adds back; a refund the user paid out takes away.
+            bucket['refund'] += record['amount'] if record['direction'] == 'in' else -record['amount']
         else:
             bucket[record['direction']] += record['amount']
         sign = Decimal(1) if record['direction'] == 'in' else Decimal(-1)
@@ -131,8 +140,10 @@ def _month(day: date) -> str:
 
 def calc_budget(records: list[dict], ctx: Context) -> dict:
     exclude = set(ctx.assumptions.get('exclude_kinds', ['transfer']))
+    refunds = _refund_policy(ctx)
     threshold = _decimal(ctx.assumptions.get('anomaly_threshold', '0.30'), 'anomaly_threshold')
     months = defaultdict(lambda: defaultdict(lambda: defaultdict(Decimal)))
+    refunded = defaultdict(lambda: defaultdict(Decimal))
     payees = defaultdict(list)
     included, excluded = [], []
     for record in records:
@@ -141,13 +152,24 @@ def calc_budget(records: list[dict], ctx: Context) -> dict:
             continue
         month = _month(record['date'])
         category = record.get('category') or '未分类'
+        signed = record['amount'] if record['direction'] == 'in' else -record['amount']
+        if record.get('kind', '') == 'refund':
+            # Same rule as the totals: refunds are listed apart by default, or
+            # ('net') reduce the spending of their category.
+            if refunds == 'separate':
+                refunded[record['currency']][month] += signed
+            else:
+                months[record['currency']][month][('out', category)] -= signed
+            included.append(record.get('id'))
+            continue
         months[record['currency']][month][(record['direction'], category)] += record['amount']
         if record['direction'] == 'out' and record.get('counterparty'):
             payees[(record['currency'], record['counterparty'].strip())].append(record)
         included.append(record.get('id'))
     output = {}
-    for currency, by_month in sorted(months.items()):
-        ordered = sorted(by_month)
+    for currency in sorted(set(months) | set(refunded)):
+        by_month = months[currency]
+        ordered = sorted(set(by_month) | set(refunded[currency]))
         table, anomalies = [], []
         previous = None
         for month in ordered:
@@ -155,6 +177,7 @@ def calc_budget(records: list[dict], ctx: Context) -> dict:
             expense = sum((v for (d, _), v in cells.items() if d == 'out'), Decimal(0))
             income = sum((v for (d, _), v in cells.items() if d == 'in'), Decimal(0))
             row = {'month': month, 'income': ctx.money(income, currency), 'expense': ctx.money(expense, currency),
+                   'refund': ctx.money(refunded[currency][month], currency),
                    'categories': {f'{d}:{c}': ctx.money(v, currency) for (d, c), v in sorted(cells.items())}}
             if previous is not None and previous > 0:
                 change = (expense - previous) / previous
@@ -173,7 +196,7 @@ def calc_budget(records: list[dict], ctx: Context) -> dict:
                 recurring.append({'counterparty': payee, 'months': distinct, 'typical_amount': ctx.money(sorted(amounts)[len(amounts) // 2], currency),
                                   'record_ids': [r.get('id') for r in items]})
         output[currency] = {'months': table, 'anomalies': anomalies, 'recurring': sorted(recurring, key=lambda r: r['counterparty'])}
-    return {'by_currency': output, 'trace': {'included_ids': included, 'excluded': excluded, 'anomaly_threshold': format(threshold, 'f')}}
+    return {'by_currency': output, 'trace': {'included_ids': included, 'excluded': excluded, 'anomaly_threshold': format(threshold, 'f'), 'refund_policy': refunds}}
 
 
 # ------------------------------------------------------------------ IRR / XIRR
@@ -275,23 +298,61 @@ def calc_loan(records: list[dict], ctx: Context) -> dict:
                 'cashflows': [{'id': r.get('id'), 'date': r['date'].isoformat(), 'direction': r['direction'], 'amount': ctx.money(r['amount'], currency), 'kind': r.get('kind')} for r in ordered]}
     if mode != 'reconcile':
         raise InputError('invalid_loan_mode')
-    # Lender perspective: money lent out increases the balance owed; repayments reduce it.
+    requested = ctx.assumptions.get('loan_perspective', 'auto')
+    perspective = _loan_perspective(ordered, requested)
+    ctx.used['loan_perspective'] = requested
+    # The user's side of the loan: the lender lends out and is repaid; the
+    # borrower receives principal and repays. Interest and fees are kept apart
+    # from principal by the record type; payments of type "repayment" or
+    # "payment" count as principal (no statutory allocation, see note).
+    lending = 'out' if perspective == 'lender' else 'in'
+    principal = repaid = interest = fees = Decimal(0)
     balance = Decimal(0)
     rows = []
-    lent = repaid = Decimal(0)
     for record in ordered:
         kind = record.get('kind', '')
-        if record['direction'] == 'out':
+        if kind == 'interest':
+            part = 'interest'
+            interest += record['amount']
+        elif kind == 'fee':
+            part = 'fee'
+            fees += record['amount']
+        elif record['direction'] == lending:
+            part = 'principal'
+            principal += record['amount']
             balance += record['amount']
-            lent += record['amount']
         else:
-            balance -= record['amount']
+            part = 'repayment'
             repaid += record['amount']
-        rows.append({'id': record.get('id'), 'date': record['date'].isoformat(), 'direction': record['direction'], 'kind': kind,
-                     'amount': ctx.money(record['amount'], currency), 'balance_after': ctx.money(balance, currency)})
+            balance -= record['amount']
+        rows.append({'id': record.get('id'), 'date': record['date'].isoformat(), 'direction': record['direction'], 'kind': kind, 'part': part,
+                     'amount': ctx.money(record['amount'], currency), 'principal_balance_after': ctx.money(balance, currency)})
     status = 'outstanding' if balance > 0 else ('settled' if balance == 0 else 'overpaid')
-    return {'mode': 'reconcile', 'currency': currency, 'total_lent': ctx.money(lent, currency), 'total_repaid': ctx.money(repaid, currency),
-            'outstanding': ctx.money(balance, currency), 'status': status, 'rows': rows}
+    return {'mode': 'reconcile', 'currency': currency, 'perspective': perspective,
+            'principal': ctx.money(principal, currency), 'principal_repaid': ctx.money(repaid, currency), 'outstanding': ctx.money(balance, currency),
+            'interest': ctx.money(interest, currency), 'fees': ctx.money(fees, currency), 'status': status, 'rows': rows,
+            'note': '按记录类型区分本金、利息与费用；类型为“还款/付款”的金额全部按本金冲减。未按约定利率计算应计利息，'
+                    '也未按《民法典》第五百六十一条（实现债权的费用→利息→主债务）自动抵充；有约定时以约定为准。'}
+
+
+def _loan_perspective(records: list[dict], requested: str) -> str:
+    """The user's side of the loan, as requested or from the record types:
+    money lent out ("loan_out") makes the user the lender, principal received
+    ("principal_received") the borrower; both at once cannot be reconciled."""
+    if requested in ('lender', 'borrower'):
+        return requested
+    if requested != 'auto':
+        raise InputError('invalid_loan_perspective')
+    kinds = {(r.get('kind', ''), r['direction']) for r in records}
+    lender = ('loan_out', 'out') in kinds
+    borrower = ('principal_received', 'in') in kinds
+    if lender and borrower:
+        raise InputError('loan_perspective_ambiguous')
+    if borrower:
+        return 'borrower'
+    if lender:
+        return 'lender'
+    raise InputError('loan_perspective_unknown')
 
 
 def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:

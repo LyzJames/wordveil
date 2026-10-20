@@ -31,7 +31,7 @@ export type AppStatus = {
 export type UnlockInfo = { handle: string; vault_id: string; root_matter: string; name: string };
 export type Progress = { skill: string; stage: string; done: number; total: number };
 export type TaskEvent = { task_id: string; kind: 'progress' | 'finished'; progress: Progress | null; envelope: (Envelope & { flow_run?: string }) | null };
-export type TaskState = { task_id: string; skill: string; root: string; status: string; progress: Progress | null; envelope: (Envelope & { flow_run?: string }) | null; started_at: string };
+export type TaskState = { task_id: string; skill: string; root: string; status: string; progress: Progress | null; envelope: (Envelope & { flow_run?: string }) | null; started_at: string; retryable?: boolean };
 
 export type Locator = { type: string; page_no?: number; page_id?: string; bbox?: number[]; polygon?: number[][]; frame?: string; low_confidence?: boolean; start_s?: number; end_s?: number; segment_id?: string; sheet?: string; row?: number; line?: number; paragraph?: number; table?: number; outside_page?: boolean; rotation_turns?: number; unwarped?: boolean };
 export type Block = { block: number; text: string; locator: Locator; confidence: number | null; kind: string };
@@ -44,10 +44,13 @@ export type DocumentRow = { document_id: string; display_name: string; version_i
 export type Fact = { id: string; fact_type: string; value: Record<string, string>; label: string | null; status: string; origin: string; source_version: string | null; source: { block?: number; start?: number; end?: number; page_id?: string | null; block_locator?: Locator } | null; created_at: string };
 export type Cashflow = { id: string; date: string; amount: string; currency: string; direction: 'in' | 'out'; kind: string; category: string | null; counterparty: string | null; description: string | null; status: string; account_id: string | null; source_version: string | null };
 export type Todo = { id: string; title: string; due_on: string | null; status: string; source_fact: string | null };
+/** An open todo of any matter that is overdue or due within two weeks (workbench). */
+export type DueTodo = { id: string; title: string; due_on: string; matter_id: string; matter_title: string };
 export type Relation = { id: string; src: string; dst: string; relation_type: string; origin: string; status: string; created_at: string };
 export type Snapshot = {
   matter: { id: string; title: string; matter_type: string; region: string | null; status: string; is_root: number; notes: string | null };
   matters?: Matter[];
+  due_todos?: DueTodo[];
   documents: DocumentRow[];
   facts: Fact[];
   cashflows: Cashflow[];
@@ -82,13 +85,19 @@ export type Answer = {
   draft_ref: string; validation_report_ref: string; version: number; revisions: number; insufficient_evidence: boolean;
   sections: { conclusion: ClaimRow[]; basis: ClaimRow[]; calculations: ClaimRow[]; next_steps: ClaimRow[]; assumptions: string[]; missing_information: string[]; conflicts: string[] };
   labels: { label: string; evidence_id: string }[]; coverage: { checked: number; groundable: number }; verification_note: string;
+  /** Suggested follow-up questions (plain text for the composer). */
+  follow_ups?: string[] | null;
 };
 export type ProcessStep = { step: string; status: string; ms?: number; rewrites?: number; queries?: number; candidates?: number; evidence?: number; supported?: number; problems?: number; code?: string; role?: string; roles?: number; challenges?: number; observations?: number };
 export type RoleSummary = { analysis_ref: string; role: string; role_title: string; claims: { kind: string; text: string; evidence: { label: string; evidence_id: string }[] }[]; limitations: string[]; proposed_skill_ids: string[] };
 export type TaskPlanSummary = { task_plan_ref: string; tasks: { node_id: string; role_id: string; depends_on: string[]; goal: string | null; acceptance: string | null; labels?: Record<string, string> }[] };
 export type ChallengeSummary = { challenge_ref: string; draft_ref: string; challenges: { claim_id: string; issue_type: string; evidence_refs: string[]; proposed_action: string }[] };
 export type FieldCheck = { media_ref: string; name: string; observed: string; extracted: string | null };
-export type ObservationSummary = { observation_ref: string; observations: string[]; limitations: string[]; comparison: { agreements: FieldCheck[]; disagreements: FieldCheck[]; method: string }; media: { label: string; media_ref: string; kind: string; detail: Record<string, unknown> }[] };
+export type ObservationSummary = {
+  observation_ref: string; observations: string[]; limitations: string[]; comparison: { agreements: FieldCheck[]; disagreements: FieldCheck[]; method: string }; media: { label: string; media_ref: string; kind: string; detail: Record<string, unknown> }[];
+  /** `targeted_compare`: a second look at the images whose fields disagreed with the local OCR. */
+  mode?: 'first_read' | 'targeted_compare' | null; supersedes?: string | null;
+};
 export type InterruptedFlow = { run_id: string; root: string; skill: string; flow: string; question: string | null; attempts: number; reason: string | null; unknown_requests: number; stale: boolean; created_at: string; updated_at: string };
 export type RetrievalResult = {
   question: string; items: EvidenceItem[]; answer: Answer | null; process: ProcessStep[]; query_rewrites: string[];
@@ -98,7 +107,11 @@ export type RetrievalResult = {
   roles?: RoleSummary[]; task_plan?: TaskPlanSummary | null; challenge?: ChallengeSummary | null; observations?: ObservationSummary[];
   /** Written analyses and media reviews: what was checked locally and how. */
   calculation?: Record<string, unknown> | null; visual_check?: string; direct_audio_check?: string;
+  created_at?: string;
 };
+/** The user's own note on a result ("依据有误？"); kept in the vault, never sent. */
+export type Feedback = { id: string; claim_id: string | null; issue: 'unsupported' | 'wrong_source' | 'contradiction' | 'other'; note: string | null; created_at: string };
+export type LockPolicy = { auto_lock_minutes: number; lock_on_system_lock: boolean };
 export type GenerationRequestRow = { purpose: string; host: string; model_id: string; status: string; error: string | null; input_tokens: number | null; output_tokens: number | null; started_at: string; connection: string | null };
 
 export class CoreError extends Error {}
@@ -121,7 +134,10 @@ export const api = {
   start: (skill: string, input: object) => wrap(invoke<string>('start_skill', { skill, input })),
   tasks: () => wrap(invoke<TaskState[]>('tasks')),
   cancelTask: (taskId: string) => wrap(invoke<null>('task_cancel', { taskId })),
-  object: (kind: 'question' | 'scope' | 'range' | 'filter' | 'change' | 'component', value: object) => wrap(invoke<string>('create_object', { kind, value })),
+  /** Start a failed or stopped local task again with its original input. */
+  retryTask: (taskId: string) => wrap(invoke<string>('task_retry', { taskId })),
+  object: (kind: 'question' | 'scope' | 'range' | 'filter' | 'change' | 'component' | 'feedback', value: object) => wrap(invoke<string>('create_object', { kind, value })),
+  feedbackRemove: (id: string) => wrap(invoke<null>('feedback_remove', { id })),
   importFiles: (matter: string, mode: 'copy' | 'new_version') => wrap(invoke<{ task_id: string; display_name: string; selection_id: string }[]>('import_files', { matter, mode })),
   resumeImport: (selection: string, matter: string) => wrap(invoke<string>('resume_import', { selection, matter })),
   commit: (matter: string, changeRef: string) => wrap(invoke<Envelope | Declined>('commit_change', { matter, changeRef })),

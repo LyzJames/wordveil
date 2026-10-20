@@ -55,7 +55,9 @@ impl MediaTools {
         let policy = SpawnPolicy {
             executable: self.bin.join(tool),
             arguments,
-            read_only: vec![self.bin.clone(), scratch.input_dir.clone()],
+            // The tools are shared; the decrypted input is this process's alone.
+            runtime: vec![self.bin.clone()],
+            read_only: vec![scratch.input_dir.clone()],
             scratch: scratch.output_dir.clone(),
             memory_limit: 1024 * 1024 * 1024,
         };

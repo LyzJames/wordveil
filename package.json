@@ -1,8 +1,21 @@
 {
-  "name":"lvjin-desktop",
-  "version":"0.1.0",
-  "private":true,
-  "type":"module",
-  "dependencies":{"@tauri-apps/api":"2.12.4","react":"19.3.1","react-dom":"19.3.1"},
-  "devDependencies":{"esbuild":"0.28.2","typescript":"7.0.2","@types/react":"19.3.0","@types/react-dom":"19.3.0"}
+  "name": "lvjin-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.tsx --bundle --outfile=dist/app.js --format=esm --platform=browser --target=chrome120 --minify --legal-comments=linked --jsx=automatic --loader:.css=css && node -e \"require('fs').copyFileSync('src/index.html','dist/index.html')\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
+  }
 }

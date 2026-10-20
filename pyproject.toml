@@ -1,6 +1,6 @@
 [project]
 name = "lvjin-worker"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic==2.14.1",
@@ -15,6 +15,3 @@ dependencies = [
     "langchain-core==1.6.6",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["../docs/tests/m0"]
-cache_dir = "../docs/cache/pytest"

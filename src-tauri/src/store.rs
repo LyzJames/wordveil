@@ -20,7 +20,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const M1_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -104,6 +104,15 @@ CREATE TABLE IF NOT EXISTS context_packets(id TEXT PRIMARY KEY REFERENCES object
 CREATE TABLE IF NOT EXISTS native_media(id TEXT PRIMARY KEY REFERENCES objects(id), grant_id TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, blob TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
 "#;
 
+/// M2 fix round: the user's own "依据有误？" notes on a result (they stay in
+/// the vault, are never sent and go when the result is removed), and an owner
+/// index for blob lookups such as cached page thumbnails.
+const M4_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY REFERENCES objects(id), result_ref TEXT NOT NULL, claim_id TEXT, issue TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS feedback_result ON feedback(result_ref);
+CREATE INDEX IF NOT EXISTS blobs_owner ON blobs(owner, purpose);
+"#;
+
 /// An unlocked vault. Dropping it closes SQLCipher and zeroizes keys.
 pub struct Vault {
     pub id: String,
@@ -177,13 +186,15 @@ impl Vault {
         {
             let mut writer = BufWriter::new(File::create(&temporary)?);
             let sealed = seal_stream(&self.keys.objects, &self.blob_context(&blob, purpose), &mut hasher, length, &mut writer);
-            if let Err(error) = sealed.and_then(|_| writer.flush().map_err(Error::from)) {
-                drop(writer);
+            // The ciphertext reaches the device before the database row that
+            // refers to it can be committed.
+            let finished = sealed.and_then(|_| writer.into_inner().map_err(|e| Error::Io(e.into_error()))).and_then(|file| file.sync_all().map_err(Error::from));
+            if let Err(error) = finished {
                 let _ = std::fs::remove_file(&temporary);
                 return Err(error);
             }
         }
-        std::fs::rename(&temporary, &path)?;
+        crate::durable::replace(&temporary, &path)?;
         let digest = format!("{:x}", hasher.digest.finalize());
         self.db().execute(
             "INSERT INTO blobs(id,owner,purpose,file,bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -368,6 +379,13 @@ pub(crate) fn migrate(db: &Connection) -> Result<()> {
     }
     if version < 3 {
         let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M3_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-3') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=3;COMMIT;"));
+        if let Err(error) = applied {
+            let _ = db.execute_batch("ROLLBACK;");
+            return Err(error.into());
+        }
+    }
+    if version < 4 {
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M4_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-4') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=4;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());

@@ -3,17 +3,17 @@
 // sidebar; the content stage with the inspector beside or over it.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, onLocked, onTask, relative, skillName, snapshot, stageName, statusLabel, type AppStatus, type Connection, type Matter, type TaskState, type UnlockInfo } from './api';
+import { api, onLocked, onTask, relative, skillName, snapshot, stageName, statusLabel, type AppStatus, type Connection, type DueTodo, type Matter, type TaskState, type UnlockInfo } from './api';
 import { ConnectionsPage } from './connections';
 import { Icon, type IconName } from './icons';
 import { LockScreen } from './lock';
 import { MatterList, MatterPage } from './matters';
 import { QaPage, watchQaTasks, type QaTurn } from './qa';
 import { SessionContext, useSession, type InspectorTarget, type Session, type View } from './session';
-import { applyPreferences, preference, savePreference, SettingsPage } from './settings';
+import { applyPreferences, isLockKey, lockKeyLabel, preference, savePreference, SettingsPage, usePreferences } from './settings';
 import { Busy, Empty, Notices, useDismiss, useFocusTrap, useNotice } from './ui';
 import { Inspector } from './viewer';
-import { NewMatter, Workbench } from './workbench';
+import { NewMatter, RetryButton, Workbench } from './workbench';
 import './tokens.css';
 import './style.css';
 import './app.css';
@@ -66,6 +66,7 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
   const [tasks, setTasks] = useState<TaskState[]>([]);
   const [revision, setRevision] = useState(0);
   const [matters, setMatters] = useState<Matter[] | null>(null);
+  const [due, setDue] = useState<DueTodo[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [connectionTick, setConnectionTick] = useState(0);
   const [turns, setTurns] = useState<QaTurn[]>([]);
@@ -98,14 +99,20 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
   }, [notice, refreshTasks]);
 
   useEffect(() => {
-    snapshot(info.root_matter).then((s) => setMatters(s.matters ?? [])).catch(() => setMatters((m) => m ?? []));
+    snapshot(info.root_matter)
+      .then((s) => {
+        setMatters(s.matters ?? []);
+        setDue(s.due_todos ?? []);
+      })
+      .catch(() => setMatters((m) => m ?? []));
   }, [info.root_matter, revision]);
   useEffect(() => {
     api.connections().then(setConnections).catch(() => setConnections([]));
   }, [connectionTick]);
   useEffect(() => watchQaTasks(tasks, setTurns), [tasks, turns]);
 
-  // Activity keeps the auto-lock timer fresh (at most every 30 seconds).
+  // Activity keeps the auto-lock timer fresh (at most every 30 seconds):
+  // typing, clicking, scrolling and moving the pointer over the window.
   useEffect(() => {
     const ping = () => {
       const now = Date.now();
@@ -114,11 +121,10 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
         api.touch().catch(() => {});
       }
     };
-    window.addEventListener('keydown', ping);
-    window.addEventListener('pointerdown', ping);
+    const events = ['keydown', 'pointerdown', 'pointermove', 'wheel'] as const;
+    for (const name of events) window.addEventListener(name, ping, { passive: true });
     return () => {
-      window.removeEventListener('keydown', ping);
-      window.removeEventListener('pointerdown', ping);
+      for (const name of events) window.removeEventListener(name, ping);
     };
   }, []);
 
@@ -142,7 +148,7 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
       const ctrl = e.ctrlKey && !e.altKey && !e.shiftKey;
       // Lock always works; other shortcuts wait until open dialogs close.
       const blocked = !!document.querySelector('.overlay');
-      if (ctrl && e.key.toLowerCase() === 'l') {
+      if (isLockKey(e)) {
         e.preventDefault();
         lock();
       } else if (blocked) {
@@ -171,7 +177,7 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
   const connection = connections.find((c) => c.is_default) ?? connections[0] ?? null;
   const session = useMemo<Session>(
     () => ({
-      info, view, go, inspector, tasks, revision, matters: matters ?? [], mattersLoaded: matters !== null, connections, connection,
+      info, view, go, inspector, tasks, revision, matters: matters ?? [], mattersLoaded: matters !== null, due, connections, connection,
       open: (source) => setInspector({ kind: 'source', source }),
       inspect: setInspector,
       refresh: () => setRevision((r) => r + 1),
@@ -180,7 +186,7 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
       lock,
       qa: { turns, update: setTurns },
     }),
-    [info, view, go, inspector, tasks, revision, matters, connections, connection, lock, turns],
+    [info, view, go, inspector, tasks, revision, matters, due, connections, connection, lock, turns],
   );
 
   useEffect(() => setExpandedOnce(false), [inspector === null]);
@@ -241,6 +247,8 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
 function AppBar({ collapsed, onToggle, onPalette }: { collapsed: boolean; onToggle: () => void; onPalette: () => void }) {
   const { info, tasks, connection, lock } = useSession();
   const [panel, setPanel] = useState<'status' | 'tasks' | null>(null);
+  usePreferences();
+  const lockHint = lockKeyLabel();
   const running = tasks.filter((t) => t.status === 'running');
   const fractions = running.map((t) => (t.progress && t.progress.total > 0 ? t.progress.done / t.progress.total : 0));
   const progress = fractions.length ? Math.round((fractions.reduce((a, b) => a + b, 0) / fractions.length) * 100) : 0;
@@ -277,7 +285,7 @@ function AppBar({ collapsed, onToggle, onPalette }: { collapsed: boolean; onTogg
         {running.length ? <span className="ring" style={{ ['--p' as string]: `${Math.max(progress, 8)}%` } as React.CSSProperties} /> : <Icon name="clock" />}
         {running.length > 0 && <span className="badge">{running.length}</span>}
       </button>
-      <button className="btn btn-sm lock-button" title="锁定（Ctrl+L）" onClick={lock}>
+      <button className="btn btn-sm lock-button" title={lockHint ? `锁定（${lockHint}）` : '锁定'} onClick={lock}>
         <Icon name="lock" />
         锁定
       </button>
@@ -376,7 +384,10 @@ function TaskCenter({ onClose }: { onClose: () => void }) {
             <div className="ellipsis">{skillName(t.skill)}</div>
             <div className="t-caption text-tertiary">{relative(t.started_at)}{t.envelope?.warnings.length ? ` · ${t.envelope.warnings[0].message}` : ''}</div>
           </div>
-          <span className={`chip ${t.status === 'completed' ? 'success' : t.status === 'partial' ? 'attention' : t.status === 'cancelled' ? '' : 'danger'}`.trim()}>{statusLabel(t.status)}</span>
+          <div className="actions">
+            <RetryButton task={t} />
+            <span className={`chip ${t.status === 'completed' ? 'success' : t.status === 'partial' ? 'attention' : t.status === 'cancelled' ? '' : 'danger'}`.trim()}>{statusLabel(t.status)}</span>
+          </div>
         </div>
       ))}
     </div>
@@ -448,7 +459,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
   }
   const actions: Command[] = [
     { group: '操作', icon: 'add', label: '新建事务', hint: 'Ctrl N', run: newMatter },
-    { group: '操作', icon: 'lock', label: '锁定私密空间', hint: 'Ctrl L', run: lock },
+    { group: '操作', icon: 'lock', label: '锁定私密空间', hint: lockKeyLabel().replace(/\+/g, ' ') || undefined, run: lock },
   ];
   commands.push(...actions.filter((a) => !needle || a.label.includes(q)));
   const selected = Math.min(index, Math.max(commands.length - 1, 0));

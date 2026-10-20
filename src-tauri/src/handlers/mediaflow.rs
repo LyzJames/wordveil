@@ -348,10 +348,12 @@ fn native_review(ctx: &Ctx, invocation: &Invocation, input: &Value, question: &s
         }
     };
     let mut observations = vec![];
+    // At most two native readings per root: a first reading per modality, or
+    // a first reading of the images and one targeted re-look.
     for id in out["observations"].as_array().cloned().unwrap_or_default().into_iter().take(2) {
         if let Some((id, payload)) = super::flows::owned_result(ctx, &id, "MediaObservationRef", root)? {
             observations.push(json!({"observation_ref": id, "observations": payload["observation"]["observations"], "limitations": payload["observation"]["limitations"],
-                "comparison": payload["comparison"], "media": payload["media"]}));
+                "comparison": payload["comparison"], "media": payload["media"], "mode": payload["mode"], "supersedes": payload["supersedes"]}));
         }
     }
     let read = |kind: &str| observations.iter().any(|o| o["media"].as_array().is_some_and(|m| m.iter().any(|x| x["kind"] == kind)));

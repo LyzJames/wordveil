@@ -60,8 +60,16 @@ fn export_database(db: &Connection, target: &Path, key: &SecretKey) -> Result<()
         db.execute_batch(&statement)
     };
     attached?;
+    // sqlcipher_export copies FTS5 shadow tables with ordinary writes, which
+    // defensive mode refuses on current SQLCipher builds; it is switched off
+    // only for this trusted copy of the database's own content.
+    use rusqlite::config::DbConfig;
+    let defensive = db.db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE)?;
+    db.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, false)?;
     let exported = db.query_row("SELECT sqlcipher_export('backup')", [], |_| Ok(()));
+    let restored = db.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, defensive);
     let detached = db.execute_batch("DETACH DATABASE backup;");
+    restored?;
     exported?;
     detached?;
     Ok(())
@@ -78,6 +86,8 @@ pub fn backup(vault: &crate::store::Vault, destination: &Path) -> Result<Value> 
     let outcome = (|| -> Result<Value> {
         let db_path = root.join("vault.db");
         export_database(vault.db(), &db_path, &backup_db_key(&vault.keys, &backup_id)?)?;
+        // Every file reaches the device before backup.json marks the package complete.
+        crate::durable::sync_file(&db_path)?;
         let (db_sha, db_bytes) = file_sha256(&db_path)?;
         let mut objects = vec![];
         for (_, source) in vault.blob_files()? {
@@ -86,6 +96,7 @@ pub fn backup(vault: &crate::store::Vault, destination: &Path) -> Result<Value> 
             let target = root.join("objects").join(&shard).join(&file_name);
             std::fs::create_dir_all(target.parent().ok_or(Error::Integrity)?)?;
             std::fs::copy(&source, &target)?;
+            crate::durable::sync_file(&target)?;
             let (source_sha, _) = file_sha256(&source)?;
             let (copied_sha, bytes) = file_sha256(&target)?;
             if source_sha != copied_sha {
@@ -100,7 +111,7 @@ pub fn backup(vault: &crate::store::Vault, destination: &Path) -> Result<Value> 
         let public = json!({"format": BACKUP_FORMAT, "backup_id": backup_id, "vault_id": vault.id, "created_at": manifest["created_at"],
             "header": vault::backup_header(&vault.header), "manifest": STANDARD.encode(sealed),
             "notice": "加密备份：需要原口令或恢复码才能恢复；API 密钥与外部连接不在备份内。"});
-        std::fs::write(root.join("backup.json"), serde_json::to_vec_pretty(&public)?)?;
+        crate::durable::write(&root.join("backup.json"), &serde_json::to_vec_pretty(&public)?)?;
         Ok(json!({"backup_name": name, "backup_id": backup_id, "objects": manifest["objects"].as_array().map(Vec::len), "database_bytes": db_bytes}))
     })();
     if outcome.is_err() {
@@ -185,6 +196,7 @@ pub fn restore(package: &BackupPackage, keys: &VaultKeys, vaults_root: &Path) ->
             let destination = target.join(relative);
             std::fs::create_dir_all(destination.parent().ok_or(Error::Integrity)?)?;
             std::fs::copy(package.root.join(relative), &destination)?;
+            crate::durable::sync_file(&destination)?;
         }
         let source = Connection::open(package.root.join("vault.db"))?;
         apply_key(&source, &backup_db_key(keys, backup_id)?)?;
@@ -197,6 +209,8 @@ pub fn restore(package: &BackupPackage, keys: &VaultKeys, vaults_root: &Path) ->
         let level = manifest["schema_version"].as_i64().filter(|v| (1..=crate::store::SCHEMA_VERSION).contains(v)).ok_or(Error::Integrity)?;
         restored.execute_batch(&format!("PRAGMA user_version={level};"))?;
         drop(restored);
+        crate::durable::sync_file(&target.join(vault::DB_FILE))?;
+        // The header comes last: a restore cut short leaves no openable vault.
         vault::write_header(&target, &package.header)?;
         Ok(())
     })();
@@ -306,6 +320,10 @@ pub fn privacy(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Enve
                     return Err(Error::Contract);
                 }
                 vault.set_setting("auto_lock_minutes", &minutes.to_string())?;
+            }
+            if let Some(flag) = payload.get("lock_on_system_lock") {
+                let flag = flag.as_bool().ok_or(Error::Contract)?;
+                vault.set_setting("lock_on_system_lock", if flag { "1" } else { "0" })?;
             }
             json!({"operation": operation, "applied": payload.as_object().map(|m| m.keys().cloned().collect::<Vec<_>>())})
         }

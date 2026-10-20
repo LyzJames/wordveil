@@ -14,7 +14,7 @@
 //! result is validated against the compiled purpose contract.
 use super::*;
 use crate::{
-    generation::{GenRequest, GenResponse, Message, OutputMode, Part, adapters, connections, credentials::CredentialStore, probe},
+    generation::{GenRequest, GenResponse, Message, OutputMode, Part, connections, credentials::CredentialStore, probe},
     vault::now_rfc3339,
 };
 use rusqlite::{OptionalExtension, params};
@@ -125,7 +125,7 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
     let _slot = ctx.services.generation_slots.acquire(ctx.cancel)?;
     ctx.check()?;
     let request_id = format!("gen_{}", uuid::Uuid::new_v4().simple());
-    let (profile, credential, audit, vault_id) = {
+    let (profile, credential, audit, store) = {
         let mut vault = ctx.lock()?;
         let connection = connections::load(&vault, &grant.connection_id)?;
         if connection.status != "active" || connection.profile.endpoint.display_host() != grant.host {
@@ -155,17 +155,19 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
         let materials = json!({"question_id": call.question, "evidence_ids": call.evidence, "media_ids": call.media,
             "prompt": format!("{}@{}", call.prompt, &call.prompt_sha[..12])});
         let audit = connections::begin_request(&vault, invocation.root_id(), invocation.id(), &connection, call.purpose, &materials)?;
-        (connection.profile, connection.credential, audit, vault.id.clone())
+        let store = CredentialStore::for_vault(&ctx.services.layout.data_root, &vault.id, &vault.keys.credential)?;
+        (connection.profile, connection.credential, audit, store)
     };
     let started = std::time::Instant::now();
     let outcome = (|| {
         let key = match &credential {
-            Some(id) => Some(CredentialStore::for_vault(&ctx.services.layout.data_root, &vault_id)?.get(id)?),
+            Some(id) => Some(store.get(id)?),
             None if profile.endpoint.is_loopback() => None,
             None => return Err(Error::NeedsInput("api_key")),
         };
-        let mut progress = |_: &str| {};
-        adapters::call(&profile, key.as_ref(), request, ctx.cancel, &mut progress)
+        // Lock, cancel or exit stop the wait at once; the request's outcome
+        // is then unknown and is never re-sent under the same key.
+        crate::generation::call_cancellable(&profile, key.as_ref(), request, ctx.cancel)
     })();
     let vault = ctx.lock()?;
     match &outcome {
@@ -289,6 +291,44 @@ pub fn strip_labels(text: &str) -> (String, usize) {
         index += 1;
     }
     (out.trim().to_owned(), removed)
+}
+
+/// Bare evidence labels ("见 E4 中的约定") that are known labels of this
+/// answer, as whole tokens. Calculation and media labels are left alone in
+/// bare form: "C1", "M1" are also ordinary words (licence class, money supply).
+pub fn strip_bare_labels(text: &str, known: &[String]) -> (String, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut removed = 0;
+    let mut index = 0;
+    while index < chars.len() {
+        let boundary = index == 0 || !chars[index - 1].is_ascii_alphanumeric();
+        if boundary && chars[index] == 'E' {
+            let digits = chars[index + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+            let end = index + 1 + digits;
+            let whole = digits > 0 && chars.get(end).is_none_or(|c| !c.is_ascii_alphanumeric());
+            let token: String = chars[index..end].iter().collect();
+            if whole && known.contains(&token) {
+                removed += 1;
+                // Drop one adjoining space so "见 E4 中" keeps a single space.
+                if out.ends_with(' ') && chars.get(end) == Some(&' ') {
+                    out.pop();
+                }
+                index = end;
+                continue;
+            }
+        }
+        out.push(chars[index]);
+        index += 1;
+    }
+    (out.trim().to_owned(), removed)
+}
+
+/// Bracketed labels anywhere, bare known evidence labels as well.
+fn clean_text(text: &str, known: &[String]) -> (String, usize) {
+    let (text, bracketed) = strip_labels(text);
+    let (text, bare) = strip_bare_labels(&text, known);
+    (text, bracketed + bare)
 }
 
 // ------------------------------------------------------------ evidence text
@@ -688,9 +728,15 @@ fn draft_answer(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
     }
     if !observations.is_empty() {
         user.push_str("\n直接读取媒体的观察（与本机识别同源，是候选观察，不是独立证据）：\n");
-        for (_, observation) in &observations {
+        // A targeted re-look re-checks the first reading's disagreements;
+        // only its comparison counts for the media it covered.
+        let superseded: Vec<&str> = observations.iter().filter_map(|(_, o)| o["supersedes"].as_str()).collect();
+        for (id, observation) in &observations {
             for row in observation["observation"]["observations"].as_array().cloned().unwrap_or_default() {
                 user.push_str(&format!("- {}\n", row.as_str().unwrap_or("")));
+            }
+            if superseded.contains(&id.as_str()) {
+                continue;
             }
             for row in observation["comparison"]["disagreements"].as_array().cloned().unwrap_or_default() {
                 user.push_str(&format!("- 与本机识别不一致：{}（直接读取：{}；本机识别：{}）\n", row["name"].as_str().unwrap_or(""), row["observed"].as_str().unwrap_or(""), row["extracted"].as_str().unwrap_or("未找到")));
@@ -721,12 +767,15 @@ fn draft_answer(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
         }
         user.push_str("\n只修正这些问题：删去或改写缺乏依据的内容，补上正确的证据编号；不要新增证据里没有的事实。输出新的完整 JSON。");
     } else {
-        user.push_str("\n请生成回答 JSON：conclusion 用 1–3 句直接回答问题；basis 列出支撑结论的原文要点；calculations 只复述给出的计算结果；assumptions 写适用前提；missing_information 写资料里缺少、会影响结论的信息（资料外的规定写“需核实的规定”）；conflicts 写相互矛盾的证据或意见；next_steps 写可执行的下一步。每条 conclusion、basis、calculations 都在 evidence 中写出支持它的证据编号（如 \"E1\"）或计算编号（如 \"C1\"），正文不写编号。");
+        user.push_str("\n请生成回答 JSON：conclusion 用 1–3 句直接回答问题；basis 列出支撑结论的原文要点；calculations 只复述给出的计算结果；assumptions 写适用前提；missing_information 写资料里缺少、会影响结论的信息（资料外的规定写“需核实的规定”）；conflicts 写相互矛盾的证据或意见；next_steps 写可执行的下一步；follow_up_questions 写 0–3 个可以继续用这些资料核对的追问。每条 conclusion、basis、calculations 都在 evidence 中写出支持它的证据编号（如 \"E1\"）或计算编号（如 \"C1\"），正文不写编号。");
     }
     let evidence_ids: Vec<String> = evidence.iter().map(|e| e.evidence_id.clone()).collect();
     let (system, prompt, prompt_sha) = system_prompt(ctx, &["draft_answer"])?;
     let call = Call { purpose: "draft_answer", prompt, prompt_sha, question: question.clone(), evidence: evidence_ids.clone(), media: vec![] };
-    let (wire, request_id, response) = if evidence.is_empty() {
+    // On the 16 GiB tier the flow already preloads the grounding model at its
+    // start; below it the model may only load once retrieval is done, so it
+    // loads while this draft is being generated.
+    let (wire, request_id, response) = if evidence.is_empty() || ctx.services.residency.preloads("grounding") {
         generate_json(ctx, invocation, &call, &system, &user, vec![], 2400)?
     } else {
         preload_grounding(ctx, || generate_json(ctx, invocation, &call, &system, &user, vec![], 2400))?
@@ -738,14 +787,43 @@ fn draft_answer(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
             rows.push((kind.into(), row));
         }
     }
-    let (mut claims, invalid, removed) = map_claims(&rows, &labels, &calc_labels, 1);
+    let (mut claims, invalid, mut removed) = map_claims(&rows, &labels, &calc_labels, 1);
+    // Labels belong in the evidence fields: the core also removes them from
+    // the next steps, premises, conflicts and missing information.
+    let known: Vec<String> = labels.keys().cloned().collect();
+    let mut clean = |value: &Value| -> Value {
+        match value.as_str() {
+            Some(text) => {
+                let (cleaned, count) = clean_text(text, &known);
+                removed += count;
+                if cleaned.is_empty() { value.clone() } else { json!(cleaned) }
+            }
+            None => value.clone(),
+        }
+    };
     for step in wire["next_steps"].as_array().cloned().unwrap_or_default() {
         let claim_id = format!("c{}", claims.len() + 1);
-        claims.push(json!({"claim_id": claim_id, "kind": "next_step", "text": step, "evidence_refs": [], "calculation_refs": []}));
+        claims.push(json!({"claim_id": claim_id, "kind": "next_step", "text": clean(&step), "evidence_refs": [], "calculation_refs": []}));
     }
-    let core = json!({"question_id": question, "claims": claims, "assumptions": wire["assumptions"], "conflicts": wire["conflicts"], "unknowns": wire["missing_information"]});
+    let mut clean_list = |value: &Value| -> Value {
+        match value.as_array() {
+            Some(rows) => Value::Array(rows.iter().map(&mut clean).collect()),
+            None => value.clone(),
+        }
+    };
+    let (assumptions, conflicts, unknowns) = (clean_list(&wire["assumptions"]), clean_list(&wire["conflicts"]), clean_list(&wire["missing_information"]));
+    // Suggested follow-up questions: plain text for the composer, never claims.
+    let asked = question_text(ctx, &question).unwrap_or_default();
+    let mut follow_ups: Vec<String> = vec![];
+    for row in clean_list(&wire["follow_up_questions"]).as_array().cloned().unwrap_or_default() {
+        let text = row.as_str().unwrap_or("").trim().to_owned();
+        if !text.is_empty() && text.chars().count() <= 80 && text != asked.trim() && !follow_ups.contains(&text) && follow_ups.len() < 3 {
+            follow_ups.push(text);
+        }
+    }
+    let core = json!({"question_id": question, "claims": claims, "assumptions": assumptions, "conflicts": conflicts, "unknowns": unknowns});
     ctx.lock()?.runtime.validate_generation_output(invocation, &core)?;
-    let payload = json!({"draft": core, "wire": wire, "version": previous_version + 1, "insufficient_evidence": wire["insufficient_evidence"],
+    let payload = json!({"draft": core, "wire": wire, "version": previous_version + 1, "insufficient_evidence": wire["insufficient_evidence"], "follow_ups": follow_ups,
         "evidence_labels": labels, "calculation_labels": calc_labels, "invalid_citations": invalid, "labels_removed": removed, "evidence_bundle_id": bundle, "revised_from": draft,
         "analyses": analyses.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(), "observations": observations.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
         "request_id": request_id, "prompt": format!("{}@{}", call.prompt, call.prompt_sha), "usage": usage(&response), "created_at": now_rfc3339()});
@@ -930,80 +1008,336 @@ fn context_brief(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
 
 // ------------------------------------------------------------- answer-grounding
 
-/// Numbers that matter for verification: amounts, percentages and figures of
-/// three or more digits. Small bare numbers ("7 日") are not compared because
-/// the evidence may spell them in Chinese numerals.
-pub fn key_numbers(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = vec![];
-    let mut index = 0;
+fn cn_digit(c: char) -> Option<u32> {
+    Some(match c {
+        '零' | '〇' => 0,
+        '一' | '壹' => 1,
+        '二' | '贰' | '貳' | '两' | '兩' => 2,
+        '三' | '叁' | '參' => 3,
+        '四' | '肆' => 4,
+        '五' | '伍' => 5,
+        '六' | '陆' | '陸' => 6,
+        '七' | '柒' => 7,
+        '八' | '捌' => 8,
+        '九' | '玖' => 9,
+        _ => return None,
+    })
+}
+
+fn cn_unit(c: char) -> Option<f64> {
+    Some(match c {
+        '十' | '拾' => 10.0,
+        '百' | '佰' => 100.0,
+        '千' | '仟' => 1_000.0,
+        '万' | '萬' => 10_000.0,
+        '亿' | '億' => 100_000_000.0,
+        _ => return None,
+    })
+}
+
+/// An Arabic number at `start`: digits, thousands separators followed by a
+/// digit and one decimal part. Returns the value and the index after it.
+fn read_arabic(chars: &[char], start: usize) -> (f64, usize) {
+    let mut index = start;
+    let mut raw = String::new();
     while index < chars.len() {
-        if chars[index].is_ascii_digit() {
-            let start = index;
-            let mut raw = String::new();
-            while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == ',' || chars[index] == '，' && index + 1 < chars.len() && chars[index + 1].is_ascii_digit() || chars[index] == '.') {
-                if chars[index] != ',' && chars[index] != '，' {
-                    raw.push(chars[index]);
-                }
+        let c = chars[index];
+        let next_digit = chars.get(index + 1).is_some_and(|n| n.is_ascii_digit());
+        if c.is_ascii_digit() {
+            raw.push(c);
+        } else if matches!(c, ',' | '，') && next_digit && !raw.contains('.') {
+        } else if c == '.' && next_digit && !raw.contains('.') {
+            raw.push(c);
+        } else {
+            break;
+        }
+        index += 1;
+    }
+    (raw.parse().unwrap_or(0.0), index)
+}
+
+enum Token {
+    Number(f64, bool),
+    Zero,
+    Unit(f64),
+}
+
+/// The number written at `start`: Arabic digits, Chinese numerals in full or
+/// spoken form ("两万七" = 27000, "三千五" = 3500, "一百零五" = 105),
+/// financial capitals ("壹万贰仟"), digit strings ("二〇二六") and mixes such
+/// as "1.5万" or "3千". `Err(end)` marks a run that is not one definite number
+/// (a range like "七八千"), so the caller skips it.
+pub fn read_number(chars: &[char], start: usize) -> std::result::Result<(f64, usize), usize> {
+    let mut index = start;
+    let mut tokens: Vec<Token> = vec![];
+    while index < chars.len() {
+        let c = chars[index];
+        if c.is_ascii_digit() {
+            if matches!(tokens.last(), Some(Token::Number(..))) {
+                break;
+            }
+            let (value, next) = read_arabic(chars, index);
+            tokens.push(Token::Number(value, false));
+            index = next;
+        } else if let Some(digit) = cn_digit(c) {
+            tokens.push(if digit == 0 { Token::Zero } else { Token::Number(f64::from(digit), true) });
+            index += 1;
+        } else if let Some(unit) = cn_unit(c).filter(|_| !tokens.is_empty() || matches!(c, '十' | '拾')) {
+            tokens.push(Token::Unit(unit));
+            index += 1;
+        } else if c == '点' && !tokens.is_empty() && chars.get(index + 1).is_some_and(|n| cn_digit(*n).is_some()) {
+            // Chinese decimal part ("三点五万"): digits after 点 are tenths, hundredths...
+            index += 1;
+            let mut scale = 0.1;
+            let mut fraction = 0.0;
+            while let Some(digit) = chars.get(index).and_then(|n| cn_digit(*n)) {
+                fraction += f64::from(digit) * scale;
+                scale /= 10.0;
                 index += 1;
             }
-            let raw = raw.trim_end_matches('.').to_owned();
-            // Skip dates; they are compared separately.
-            let next = chars.get(index).copied();
-            if matches!(next, Some('年') | Some('月') | Some('日') | Some('号') | Some('-') | Some('/')) || (start > 0 && matches!(chars[start - 1], '-' | '/')) {
-                continue;
-            }
-            let multiplier = if next == Some('万') { 10_000.0 } else if next == Some('亿') { 100_000_000.0 } else { 1.0 };
-            let marked = matches!(next, Some('元') | Some('万') | Some('亿') | Some('%') | Some('％')) || (start > 0 && matches!(chars[start - 1], '¥' | '￥'))
-                || text[..text.char_indices().nth(start).map(|(i, _)| i).unwrap_or(0)].ends_with("人民币");
-            let Ok(number) = raw.parse::<f64>() else { continue };
-            let value = number * multiplier;
-            if marked || value >= 100.0 {
-                let formatted = if (value - value.round()).abs() < 1e-9 { format!("{}", value.round() as i64) } else { format!("{:.4}", value).trim_end_matches('0').trim_end_matches('.').to_owned() };
-                if !out.contains(&formatted) {
-                    out.push(formatted);
-                }
+            match tokens.last_mut() {
+                Some(Token::Number(value, _)) => *value += fraction,
+                Some(slot @ Token::Zero) => *slot = Token::Number(fraction, false),
+                _ => return Err(index),
             }
         } else {
-            index += 1;
+            break;
+        }
+    }
+    let end = index;
+    if !tokens.iter().any(|t| matches!(t, Token::Unit(_))) {
+        // No units: one Arabic number, or a Chinese digit string ("二〇二六").
+        return match tokens.as_slice() {
+            [Token::Number(value, false)] => Ok((*value, end)),
+            _ if tokens.iter().all(|t| matches!(t, Token::Zero | Token::Number(_, true))) && !tokens.is_empty() => {
+                let digits: String = tokens.iter().map(|t| match t { Token::Number(v, _) => char::from(b'0' + *v as u8), _ => '0' }).collect();
+                digits.parse::<f64>().map(|v| (v, end)).map_err(|_| end)
+            }
+            _ => Err(end),
+        };
+    }
+    let (mut total, mut section) = (0.0f64, 0.0f64);
+    let mut pending: Option<(f64, bool)> = None;
+    let mut last_unit: Option<f64> = None;
+    let mut zero = false;
+    for token in &tokens {
+        match token {
+            Token::Number(value, _) => {
+                if pending.is_some() {
+                    return Err(end);
+                }
+                // A digit right after 零 is never shortened ("一万零八" = 10008);
+                // otherwise a last single digit is ("两万七", "1万2" = 12000).
+                pending = Some((*value, !zero && value.fract() == 0.0));
+                zero = false;
+            }
+            Token::Zero => zero = true,
+            Token::Unit(unit) if *unit < 10_000.0 => {
+                let value = match pending.take() {
+                    Some((value, _)) => value,
+                    None if *unit == 10.0 => 1.0,
+                    None => return Err(end),
+                };
+                section += value * unit;
+                last_unit = Some(*unit);
+                zero = false;
+            }
+            Token::Unit(unit) => {
+                section += pending.take().map(|(value, _)| value).unwrap_or(0.0);
+                if section == 0.0 && total == 0.0 {
+                    return Err(end);
+                }
+                if *unit >= 100_000_000.0 {
+                    total = (total + section) * unit;
+                } else {
+                    total += section * unit;
+                }
+                section = 0.0;
+                last_unit = Some(*unit);
+                zero = false;
+            }
+        }
+    }
+    if let Some((value, shortened)) = pending {
+        // Spoken numbers drop the last unit: "两万七" is 两万七千, "三千五" 三千五百.
+        let factor = match last_unit {
+            Some(unit) if shortened && unit >= 100.0 && value < 10.0 => unit / 10.0,
+            _ => 1.0,
+        };
+        section += value * factor;
+    }
+    Ok((total + section, end))
+}
+
+fn format_number(value: f64) -> String {
+    if (value - value.round()).abs() < 1e-9 {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{:.4}", value).trim_end_matches('0').trim_end_matches('.').to_owned()
+    }
+}
+
+/// Numbers that matter for verification: amounts, percentages and figures of
+/// at least 100, written in Arabic digits or Chinese numerals (both sides of
+/// a comparison are normalised the same way, so "两万七" equals "27,000").
+/// Small bare numbers ("7 日", "三个月") are not compared.
+pub fn key_numbers(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for (number, _) in marked_numbers(text) {
+        if !out.contains(&number) {
+            out.push(number);
         }
     }
     out
 }
 
-/// Dates written as 2026年11月1日, 2026-11-01 or 2026/11/1, normalised.
+/// The key numbers of `text` in order, each with whether it is written as a
+/// percentage ("60%", "百分之六十").
+fn marked_numbers(text: &str) -> Vec<(String, bool)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = vec![];
+    let mut index = 0;
+    while index < chars.len() {
+        let c = chars[index];
+        if !(c.is_ascii_digit() || cn_digit(c).is_some() || matches!(c, '十' | '拾')) {
+            index += 1;
+            continue;
+        }
+        // Only whole tokens: "E1", "M2", "v3" are labels or names, not numbers.
+        if c.is_ascii_digit() && index > 0 && chars[index - 1].is_ascii_alphabetic() {
+            index = read_arabic(&chars, index).1;
+            continue;
+        }
+        let start = index;
+        let (value, end) = match read_number(&chars, start) {
+            Ok(found) => found,
+            Err(end) => {
+                index = end.max(start + 1);
+                continue;
+            }
+        };
+        index = end.max(start + 1);
+        let next = chars.get(end).copied();
+        let previous = start.checked_sub(1).map(|i| chars[i]);
+        // Dates and date parts are compared separately.
+        if matches!(next, Some('年' | '月' | '日' | '号' | '-' | '/')) || matches!(previous, Some('-' | '/')) {
+            continue;
+        }
+        let before: String = chars[start.saturating_sub(3)..start].iter().collect();
+        let percent = before == "百分之" || matches!(next, Some('%' | '％'));
+        let marked = percent
+            || before == "千分之"
+            || matches!(next, Some('元' | '块'))
+            || matches!(previous, Some('¥' | '￥'))
+            || before.ends_with("人民币");
+        if marked || value >= 100.0 {
+            out.push((format_number(value), percent));
+        }
+    }
+    out
+}
+
+/// Percent values of the decimal fractions in `text` ("0.6000" is 60,
+/// "-0.1429" is 14.29): calculation results give changes and thresholds as
+/// ratios, and an answer may restate them as percentages.
+fn ratio_percents(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out: Vec<String> = vec![];
+    let mut index = 0;
+    while index < chars.len() {
+        let whole = index == 0 || !(chars[index - 1].is_ascii_alphanumeric() || chars[index - 1] == '.');
+        if !(chars[index].is_ascii_digit() && whole) {
+            index += 1;
+            continue;
+        }
+        let (value, end) = read_arabic(&chars, index);
+        if chars[index..end].contains(&'.') && value < 10.0 {
+            let percent = format_number(value * 100.0);
+            if !out.contains(&percent) {
+                out.push(percent);
+            }
+        }
+        index = end;
+    }
+    out
+}
+
+/// Whether every key number of `claim` appears in `source`. A percentage may
+/// restate a ratio of the source ("增加约60%" for 0.6000, "下降14.29%" for
+/// -0.1429); a ratio written as a percentage ("0.6%") still does not match.
+pub fn numbers_supported(claim: &str, source: &str) -> bool {
+    let (numbers, ratios) = (key_numbers(source), ratio_percents(source));
+    marked_numbers(claim).iter().all(|(number, percent)| numbers.contains(number) || (*percent && ratios.contains(number)))
+}
+
+/// A whole number (Arabic or Chinese) at `start`, for dates.
+fn read_integer(chars: &[char], start: usize) -> Option<(u32, usize, bool)> {
+    let c = *chars.get(start)?;
+    if !(c.is_ascii_digit() || cn_digit(c).is_some() || matches!(c, '十' | '拾')) {
+        return None;
+    }
+    if c.is_ascii_digit() {
+        let digits: String = chars[start..].iter().take_while(|d| d.is_ascii_digit()).collect();
+        return Some((digits.parse().ok()?, start + digits.chars().count(), digits.len() == 4));
+    }
+    let end = chars[start..].iter().position(|d| !(cn_digit(*d).is_some() || matches!(*d, '十' | '拾'))).map(|p| start + p).unwrap_or(chars.len());
+    let (value, _) = read_number(&chars[..end], start).ok()?;
+    let positional = chars[start..end].iter().all(|d| cn_digit(*d).is_some());
+    Some((value as u32, end, positional && end - start == 4))
+}
+
+/// Dates written as 2026年11月1日, 2026-11-01, 2026/11/1, 二〇二六年十一月一日,
+/// normalised to YYYY-MM-DD, and dates without a year (5月6号, 五月六日) as
+/// --MM-DD, which only `date_supported` can match against a full date.
 pub fn key_dates(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = vec![];
     let mut index = 0;
-    while index + 4 <= chars.len() {
-        if chars[index..index + 4].iter().all(|c| c.is_ascii_digit()) && (index == 0 || !chars[index - 1].is_ascii_digit()) {
-            let year: String = chars[index..index + 4].iter().collect();
-            let mut cursor = index + 4;
-            let separator = chars.get(cursor).copied();
-            if matches!(separator, Some('年') | Some('-') | Some('/') | Some('.')) {
-                cursor += 1;
-                let month: String = chars[cursor..].iter().take_while(|c| c.is_ascii_digit()).collect();
-                cursor += month.len();
-                if !month.is_empty() && matches!(chars.get(cursor), Some('月') | Some('-') | Some('/') | Some('.')) {
-                    cursor += 1;
-                    let day: String = chars[cursor..].iter().take_while(|c| c.is_ascii_digit()).collect();
-                    if let (Ok(m), Ok(d)) = (month.parse::<u32>(), day.parse::<u32>()) {
-                        if (1..=12).contains(&m) && (1..=31).contains(&d) {
-                            let date = format!("{year}-{m:02}-{d:02}");
-                            if !out.contains(&date) {
-                                out.push(date);
-                            }
-                            index = cursor + day.len();
-                            continue;
-                        }
-                    }
+    while index < chars.len() {
+        let boundary = index == 0 || !(chars[index - 1].is_ascii_digit() || cn_digit(chars[index - 1]).is_some() || matches!(chars[index - 1], '十' | '拾'));
+        let found = if boundary { read_date(&chars, index) } else { None };
+        match found {
+            Some((date, end)) => {
+                if !out.contains(&date) {
+                    out.push(date);
                 }
+                index = end;
             }
+            None => index += 1,
         }
-        index += 1;
     }
     out
+}
+
+fn read_date(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let (first, after, year_like) = read_integer(chars, start)?;
+    let separator = *chars.get(after)?;
+    if year_like && matches!(separator, '年' | '-' | '/' | '.') {
+        let (month, after_month, _) = read_integer(chars, after + 1)?;
+        if !matches!(chars.get(after_month), Some('月' | '-' | '/' | '.')) {
+            return None;
+        }
+        let (day, after_day, _) = read_integer(chars, after_month + 1)?;
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            return None;
+        }
+        let end = if matches!(chars.get(after_day), Some('日' | '号')) { after_day + 1 } else { after_day };
+        return Some((format!("{first:04}-{month:02}-{day:02}"), end));
+    }
+    if separator == '月' && (1..=12).contains(&first) {
+        let (day, after_day, _) = read_integer(chars, after + 1)?;
+        if (1..=31).contains(&day) && matches!(chars.get(after_day), Some('日' | '号')) {
+            return Some((format!("--{first:02}-{day:02}"), after_day + 1));
+        }
+    }
+    None
+}
+
+/// Whether a date appears among `source` dates: a date without a year
+/// (--MM-DD) is supported by the same month and day in any year; a full date
+/// needs the same full date.
+pub fn date_supported(date: &str, source: &[String]) -> bool {
+    source.iter().any(|s| s == date) || (date.starts_with("--") && source.iter().any(|s| s.ends_with(&date[1..])))
 }
 
 pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
@@ -1053,13 +1387,12 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
         }
         let cited: Vec<&EvidenceText> = refs.iter().filter_map(|r| by_id.get(r).copied()).collect();
         let source_text: String = cited.iter().map(|e| e.text.as_str()).chain(calc_refs.iter().filter_map(|r| calc_by_ref.get(r).map(String::as_str))).collect::<Vec<_>>().join("\n");
-        let source_numbers = key_numbers(&source_text);
         if !refs.is_empty() || !calc_refs.is_empty() {
-            if key_numbers(&text).iter().any(|n| !source_numbers.contains(n)) {
+            if !numbers_supported(&text, &source_text) {
                 checks.push("amount_not_in_evidence");
             }
             let source_dates = key_dates(&source_text);
-            if key_dates(&text).iter().any(|d| !source_dates.contains(d)) {
+            if key_dates(&text).iter().any(|d| !date_supported(d, &source_dates)) {
                 checks.push("date_not_in_evidence");
             }
         }

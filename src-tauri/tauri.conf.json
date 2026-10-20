@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "identifier": "cn.lvjin.desktop",
   "build": {
-    "frontendDist": "../../docs/build/frontend"
+    "frontendDist": "../dist"
   },
   "app": {
     "windows": [
@@ -26,7 +26,7 @@
   "bundle": {
     "active": false,
     "icon": [
-      "../../docs/build/icons/icon.ico"
+      "icons/icon.ico"
     ]
   }
 }

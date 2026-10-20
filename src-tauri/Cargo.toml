@@ -15,7 +15,7 @@ desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
 # Development and test builds may launch the Python worker from source under
 # docs. Production desktop builds use only the frozen, hash-pinned worker.
 dev-worker = []
-# Test-only desktop build: exposes the WebView2 DevTools port for docs/tests/m1 e2e.
+# Test-only desktop build: exposes the WebView2 DevTools port for the e2e tests.
 e2e = ["desktop"]
 
 [dependencies]
@@ -26,7 +26,8 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 base64 = "0.22.1"
 jsonschema = { version = "0.33", default-features = false }
 rand = "0.8.5"
-rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher-vendored-openssl"] }
+# SQLCipher links a separately built static OpenSSL 3.5 LTS (OPENSSL_DIR, see build.rs).
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10.9"
@@ -46,112 +47,12 @@ cc = "1"
 tauri-build = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_Security_Cryptography", "Win32_System_Registry"] }
-
-[target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Security_Credentials"] }
-
-[[test]]
-name = "m0_core"
-path = "../../docs/tests/m0/core.rs"
-required-features = ["m0-harness"]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_Security_Cryptography", "Win32_System_Registry", "Win32_System_Power", "Win32_System_RemoteDesktop", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
 
 [[bin]]
 name = "lvjin"
 path = "src/main.rs"
 required-features = ["desktop"]
 
-[[bin]]
-name = "m0-verify"
-path = "../../docs/tests/m0/verify_installation.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_sqlcipher_diagnostic"
-path = "../../docs/tests/m0/sqlcipher_diagnostic.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_isolation"
-path = "../../docs/tests/m0/isolation.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_model_pool"
-path = "../../docs/tests/m0/model_pool.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_index"
-path = "../../docs/tests/m0/index.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_geometry"
-path = "../../docs/tests/m0/geometry.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_frozen_nine"
-path = "../../docs/tests/m0/frozen_nine.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m0_frozen_diagnostic"
-path = "../../docs/tests/m0/frozen_diagnostic.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m1_vault"
-path = "../../docs/tests/m1/vault.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m1_contracts"
-path = "../../docs/tests/m1/contracts.rs"
-required-features = ["m0-harness", "dev-worker"]
-
-[[test]]
-name = "m1_pipeline"
-path = "../../docs/tests/m1/pipeline.rs"
-required-features = ["m0-harness", "dev-worker"]
-
-[[test]]
-name = "m1_bench"
-path = "../../docs/tests/m1/bench.rs"
-required-features = ["m0-harness", "dev-worker"]
-
-[[bin]]
-name = "m1-verify"
-path = "../../docs/tests/m1/verify_installation.rs"
-required-features = ["m0-harness"]
-
-[[test]]
-name = "m2_generation"
-path = "../../docs/tests/m2/generation.rs"
-
-[[test]]
-name = "m2_pipeline"
-path = "../../docs/tests/m2/pipeline.rs"
-required-features = ["m0-harness", "dev-worker"]
-
-[[test]]
-name = "m2_flows"
-path = "../../docs/tests/m2/flows.rs"
-required-features = ["m0-harness", "dev-worker"]
-
-[[test]]
-name = "m2_roles"
-path = "../../docs/tests/m2/roles.rs"
-required-features = ["m0-harness", "dev-worker"]
-
-[[test]]
-name = "m2_isolation"
-path = "../../docs/tests/m2/isolation_acl.rs"
-required-features = ["m0-harness"]
-
-# Opt-in real-service check (ignored by default; needs the user's key and network).
-[[test]]
-name = "m2_real_deepseek"
-path = "../../docs/tests/m2/real_deepseek.rs"
-required-features = ["m0-harness", "dev-worker"]
+# Tests, benchmarks and the validation programs (m0-verify, m1-verify) build
+# from the docs workspace (docs/tests/Cargo.toml) against this library.

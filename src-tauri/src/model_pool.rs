@@ -17,7 +17,9 @@ impl ModelKey {
 
 /// Large-model residency (active plus idle). Default: one large owner. With at
 /// least 16 GiB installed memory the embedding/reranker pair may stay resident
-/// together (user decision 2026-10-17); heavy stages remain serialized.
+/// together (user decision 2026-10-17) and, while a generation flow runs, the
+/// grounding model joins them: it is preloaded in the background so its load
+/// overlaps retrieval (user decision 2026-10-20). Inference stays serialized.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResidencyPolicy { pub max_large: usize, pub coresident: Vec<String> }
 impl Default for ResidencyPolicy {
@@ -27,7 +29,7 @@ impl ResidencyPolicy {
     pub const TIER_BYTES: u64 = 16 * 1024 * 1024 * 1024;
     pub fn for_installed_memory(bytes: Option<u64>) -> Self {
         match bytes {
-            Some(value) if value >= Self::TIER_BYTES => Self { max_large: 2, coresident: vec!["embedding".into(), "reranker".into()] },
+            Some(value) if value >= Self::TIER_BYTES => Self { max_large: 3, coresident: vec!["embedding".into(), "reranker".into(), "grounding".into()] },
             _ => Self::default(),
         }
     }
@@ -37,7 +39,9 @@ impl ResidencyPolicy {
                 && self.coresident.iter().any(|m| m == model)
                 && existing.iter().all(|e| self.coresident.iter().any(|m| m == e)))
     }
-    fn max_idle(&self) -> usize { if self.max_large >= 2 { 2 } else { 1 } }
+    fn max_idle(&self) -> usize { self.max_large.max(1) }
+    /// Whether `model` may be loaded in the background next to the others.
+    pub fn preloads(&self, model: &str) -> bool { self.max_large > 1 && self.coresident.iter().any(|m| m == model) }
 }
 
 /// Installed (not OS-visible) physical memory, matching the user-facing size.
@@ -68,7 +72,9 @@ pub struct ModelMemory {pub working_set:usize,pub peak_working_set:usize,pub pri
 type Factory = dyn Fn(&ModelKey,&AtomicBool,Instant) -> Result<Box<dyn ManagedModel>> + Send + Sync;
 type Owner = (String,String,String);
 struct Resident { key:ModelKey, leases:usize, idle_since:Option<Instant>, model:Arc<Mutex<Box<dyn ManagedModel>>>, failed:bool }
-struct State { residents:BTreeMap<Owner,Resident>, faulted:bool }
+/// `loading`: owners a background preload is loading right now (singleflight
+/// marker; their large-model slot is already taken).
+struct State { residents:BTreeMap<Owner,Resident>, faulted:bool, loading:BTreeMap<Owner,String> }
 struct Inner { state:Mutex<State>, heavy:Mutex<()>, changed:Condvar, factory:Box<Factory>, allowed:Vec<AllowedArtifact>, idle_ttl:Duration, residency:ResidencyPolicy }
 
 #[derive(Clone)]
@@ -97,7 +103,7 @@ impl ModelPool {
         *global=Some((identity,pool.inner.clone()));Ok(pool)
     }
     fn new_inner(allowed:Vec<AllowedArtifact>, factory:Box<Factory>, residency:ResidencyPolicy) -> Self {
-        let inner=Arc::new(Inner { state:Mutex::new(State { residents:BTreeMap::new(),faulted:false }),heavy:Mutex::new(()),changed:Condvar::new(),factory,allowed,idle_ttl:Duration::from_secs(60),residency });
+        let inner=Arc::new(Inner { state:Mutex::new(State { residents:BTreeMap::new(),faulted:false,loading:BTreeMap::new() }),heavy:Mutex::new(()),changed:Condvar::new(),factory,allowed,idle_ttl:Duration::from_secs(60),residency });
         let weak=Arc::downgrade(&inner);
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(1));
@@ -120,6 +126,12 @@ impl ModelPool {
             let stale:Vec<_>=state.residents.iter().filter(|(_,resident)| resident.leases==0 && resident.idle_since.is_some_and(|idle|idle.elapsed()>=self.inner.idle_ttl)).map(|(owner,_)|owner.clone()).collect();
             for owner in stale { evict(&mut state,&owner)?; }
             let owner=key.owner();
+            if state.loading.contains_key(&owner) {
+                // A background preload is loading this owner: wait for it (singleflight).
+                let remaining=deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50));
+                state=self.inner.changed.wait_timeout(state,remaining).map_err(|_|Error::Integrity)?.0;
+                continue;
+            }
             if let Some(resident)=state.residents.get_mut(&owner) {
                 if resident.failed {
                     if resident.leases==0 { evict(&mut state,&owner)?; continue; }
@@ -136,10 +148,11 @@ impl ModelPool {
                 }
             } else {
                 let large:Vec<(Owner,usize,String)>=state.residents.iter().filter(|(_,resident)|resident.key.large()).map(|(owner,resident)|(owner.clone(),resident.leases,resident.key.model.clone())).collect();
-                let names:Vec<String>=large.iter().map(|(_,_,model)|model.clone()).collect();
+                let mut names:Vec<String>=large.iter().map(|(_,_,model)|model.clone()).collect();
+                names.extend(state.loading.values().cloned());
                 let coresides=!key.large() || self.inner.residency.may_add(&names,&key.model);
-                if !coresides && large.iter().any(|(_,leases,_)|*leases>0) {
-                    // Another active owner must release before a different large load.
+                if !coresides && (large.iter().any(|(_,leases,_)|*leases>0) || !state.loading.is_empty()) {
+                    // Another active (or loading) owner must finish before a different large load.
                 } else {
                     if !coresides {
                         for (owner,_,_) in &large { evict(&mut state,owner)?; }
@@ -159,6 +172,42 @@ impl ModelPool {
             let remaining=deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50));
             state=self.inner.changed.wait_timeout(state,remaining).map_err(|_|Error::Integrity)?.0;
         }
+    }
+
+    /// Load `key` in the background without the core gate, so the load
+    /// overlaps inference of the models already resident. Only when the
+    /// policy lets the model join them without evicting anything; the owner
+    /// then waits idle for a lease (idle TTL applies). Returns whether the
+    /// owner is resident afterwards (loaded now or already).
+    pub fn preload(&self, key:&ModelKey, cancellation:&AtomicBool, deadline:Instant) -> Result<bool> {
+        if !self.inner.allowed.iter().any(|artifact| artifact.model==key.model && artifact.revision==key.revision && artifact.artifact==key.artifact && artifact.verified_keys.contains(key)) { return Err(Error::Denied); }
+        let owner=key.owner();
+        {
+            let mut state=lock_cancellable(&self.inner.state,cancellation,deadline)?;
+            if state.faulted { return Err(Error::Integrity); }
+            if state.residents.get(&owner).is_some_and(|resident|resident.key==*key && !resident.failed) { return Ok(true); }
+            if state.residents.contains_key(&owner) || state.loading.contains_key(&owner) { return Ok(false); }
+            let mut names:Vec<String>=state.residents.values().filter(|resident|resident.key.large()).map(|resident|resident.key.model.clone()).collect();
+            names.extend(state.loading.values().cloned());
+            if !self.inner.residency.preloads(&key.model) || (key.large() && !self.inner.residency.may_add(&names,&key.model)) { return Ok(false); }
+            state.loading.insert(owner.clone(),key.model.clone());
+        }
+        let loaded=(self.inner.factory)(key,cancellation,deadline);
+        let mut state=self.inner.state.lock().map_err(|_|Error::Integrity)?;
+        state.loading.remove(&owner);
+        let outcome=match loaded {
+            Ok(mut model) if cancellation.load(Ordering::Acquire) || Instant::now()>=deadline => {
+                let _=model.shutdown();
+                Err(Error::Cancelled)
+            }
+            Ok(model) => {
+                state.residents.insert(owner,Resident { key:key.clone(),leases:0,idle_since:Some(Instant::now()),model:Arc::new(Mutex::new(model)),failed:false });
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        };
+        self.inner.changed.notify_all();
+        outcome
     }
 
     pub fn evict_idle(&self) -> Result<()> {

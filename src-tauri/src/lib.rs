@@ -1,5 +1,10 @@
 //! Trusted core. Worker input never carries actor, grants or root limits.
+
+/// Application version (the validation programs report it).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod crypto;
+pub mod durable;
 pub mod index;
 pub mod geometry;
 pub mod ledger;
@@ -26,6 +31,8 @@ pub mod handlers;
 pub mod service;
 #[cfg(windows)]
 pub mod generation;
+#[cfg(windows)]
+pub mod system_events;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

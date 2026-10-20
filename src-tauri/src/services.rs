@@ -185,11 +185,19 @@ impl Services {
         std::fs::create_dir_all(temp.join("workers"))?;
         std::fs::create_dir_all(temp.join("media"))?;
         std::fs::create_dir_all(layout.vaults_root())?;
+        // Worker profiles a crash left behind (none of this process exists yet).
+        let stale_profiles = crate::isolation::cleanup_stale_profiles();
         let tokenizer = layout.tokenizer.canonicalize().ok();
+        let log = EventLog::new(layout.logs_root());
+        // Redacted event logs are kept for 90 days.
+        log.prune(90);
+        if stale_profiles > 0 {
+            log.event("isolation.stale_profiles_removed", &[("count", crate::logging::Field::Count(i64::from(stale_profiles)))]);
+        }
         Ok(Self {
             local: LocalWorker::new(layout.launcher.clone(), tokenizer, temp.join("workers")),
             media: MediaTools { bin: layout.ffmpeg_bin.clone(), work_root: temp.join("media") },
-            log: EventLog::new(layout.logs_root()),
+            log,
             residency: ResidencyPolicy::for_installed_memory(installed_memory_bytes()),
             generation_slots: Slots::new(GENERATION_CONCURRENCY),
             pool: Mutex::new(None),
@@ -223,6 +231,16 @@ impl Services {
         self.pool()?.acquire(&key, cancellation, Instant::now() + Duration::from_secs(600))
     }
 
+    /// Background load next to the resident models, when the residency
+    /// policy allows it (16 GiB tier); otherwise nothing happens.
+    pub fn preload(&self, model: &str, cancellation: &AtomicBool) -> Result<bool> {
+        if !self.residency.preloads(model) {
+            return Ok(false);
+        }
+        let key = self.key(model)?;
+        self.pool()?.preload(&key, cancellation, Instant::now() + Duration::from_secs(600))
+    }
+
     /// One fixed-model inference through the shared owner (singleflight, one
     /// heavy stage). The lease is released afterwards (idle TTL applies).
     pub fn predict(&self, model: &str, request: &Value, cancellation: &AtomicBool) -> Result<Value> {
@@ -251,7 +269,8 @@ impl Services {
             return Ok(SpawnPolicy {
                 executable: python.clone(),
                 arguments: vec!["-I".into(), "-B".into(), "-u".into(), script.to_string_lossy().to_string(), scenario.into()],
-                read_only: vec![base.clone(), directory],
+                runtime: vec![base.clone(), directory],
+                read_only: vec![],
                 scratch,
                 memory_limit: ORCHESTRATOR_MEMORY,
             });

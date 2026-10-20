@@ -1,8 +1,8 @@
 // Settings (design 9.10): security, appearance, backup, diagnostics, Skill
 // status and the bundled models. Appearance preferences are display-only and
 // live in local storage (not private data).
-import React, { useState } from 'react';
-import { api, bytes, ensure, relative, SKILL_STATUS, type Envelope } from './api';
+import React, { useEffect, useState } from 'react';
+import { api, bytes, ensure, relative, SKILL_STATUS, type Envelope, type LockPolicy } from './api';
 import { Icon } from './icons';
 import { useSession } from './session';
 import { Busy, Callout, Chip, ErrorLine, Field, FieldGroup, Segmented, Skeleton, Tabs, useAction, useLoad, type Tone } from './ui';
@@ -26,6 +26,39 @@ export function savePreference(key: string, value: string | null) {
   }
 }
 
+/** Lock shortcut (design 9.10); a display preference like the theme. */
+export type LockKey = 'ctrl+l' | 'ctrl+shift+l' | 'ctrl+alt+l' | 'off';
+export const LOCK_KEYS: [LockKey, string][] = [['ctrl+l', 'Ctrl+L'], ['ctrl+shift+l', 'Ctrl+Shift+L'], ['ctrl+alt+l', 'Ctrl+Alt+L'], ['off', '不使用']];
+
+export function lockKey(): LockKey {
+  const value = preference('lvjin-lock-key');
+  return LOCK_KEYS.some(([key]) => key === value) ? (value as LockKey) : 'ctrl+l';
+}
+
+/** "Ctrl+L", or empty when the shortcut is turned off. */
+export function lockKeyLabel(key: LockKey = lockKey()): string {
+  return key === 'off' ? '' : LOCK_KEYS.find(([k]) => k === key)?.[1] ?? 'Ctrl+L';
+}
+
+export function isLockKey(e: KeyboardEvent, key: LockKey = lockKey()): boolean {
+  if (key === 'off' || !e.ctrlKey || e.metaKey || e.key.toLowerCase() !== 'l') return false;
+  if (key === 'ctrl+l') return !e.shiftKey && !e.altKey;
+  if (key === 'ctrl+shift+l') return e.shiftKey && !e.altKey;
+  return e.altKey && !e.shiftKey;
+}
+
+const PREFERENCES_EVENT = 'lvjin:preferences';
+
+/** Re-render when a preference changes on the settings page. */
+export function usePreferences() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const changed = () => setTick((t) => t + 1);
+    window.addEventListener(PREFERENCES_EVENT, changed);
+    return () => window.removeEventListener(PREFERENCES_EVENT, changed);
+  }, []);
+}
+
 /** Theme, interface scale and motion from the saved preferences. */
 export function applyPreferences() {
   const root = document.documentElement;
@@ -36,6 +69,7 @@ export function applyPreferences() {
   root.style.setProperty('--ui-scale', scale >= 0.9 && scale <= 1.25 ? String(scale) : '1');
   if (preference('lvjin-motion') === 'reduce') root.dataset.motion = 'reduce';
   else delete root.dataset.motion;
+  window.dispatchEvent(new Event(PREFERENCES_EVENT));
 }
 
 type Tab = 'security' | 'appearance' | 'backup' | 'diagnostics' | 'skills' | 'about';
@@ -75,6 +109,14 @@ function Security() {
   const [form, setForm] = useState({ current: '', next: '', again: '' });
   const [error, setError] = useState('');
   const [minutes, setMinutes] = useState('15');
+  const [system, setSystem] = useState(true);
+  const [shortcut, setShortcut] = useState<LockKey>(lockKey);
+  const policy = useLoad(() => api.view<LockPolicy>('lock_policy'), []);
+  useEffect(() => {
+    if (!policy.data) return;
+    setMinutes(String(policy.data.auto_lock_minutes));
+    setSystem(policy.data.lock_on_system_lock);
+  }, [policy.data]);
   const [grants, setGrants] = useState<{ root: string; action: string; cancelled: boolean; created_at: string | null; capabilities: string | null }[] | null>(null);
   async function change(e: React.FormEvent) {
     e.preventDefault();
@@ -97,17 +139,26 @@ function Security() {
         </form>
         <div className="form">
           <h2 className="t-subtitle">自动锁定</h2>
-          <Field label="无操作多少分钟后锁定">
-            <select value={minutes} onChange={(e) => setMinutes(e.target.value)}>{['5', '10', '15', '30', '60'].map((m) => <option key={m} value={m}>{m} 分钟</option>)}</select>
+          <Field label="无操作多少分钟后锁定" hint="后台任务仍在推进时最多再延后 30 分钟；5 分钟没有进展的任务不会推迟锁定。">
+            <select value={minutes} onChange={(e) => setMinutes(e.target.value)}>
+              {[...new Set(['5', '10', '15', '30', '60', minutes])].sort((a, b) => Number(a) - Number(b)).map((m) => <option key={m} value={m}>{m} 分钟</option>)}
+            </select>
           </Field>
+          <label className="check">
+            <input type="checkbox" checked={system} onChange={(e) => setSystem(e.target.checked)} />
+            Windows 锁屏、切换用户或电脑睡眠时立即锁定私密空间
+          </label>
           <div className="actions">
-            <button className="btn" disabled={busy} onClick={() => run(async () => ensure(await api.privacy('change_policy', { auto_lock_minutes: Number(minutes) })), '已保存')}>保存</button>
+            <button className="btn" disabled={busy || !policy.data} onClick={() => run(async () => ensure(await api.privacy('change_policy', { auto_lock_minutes: Number(minutes), lock_on_system_lock: system })), '已保存')}>保存</button>
             <button className="btn btn-danger" onClick={lock}>
               <Icon name="lock" />
               立即锁定
             </button>
           </div>
-          <p className="t-caption text-tertiary">锁定（Ctrl+L）会停止进行中的任务、关闭本机处理进程并清除页面图像的临时访问令牌；中断的导入可在解锁后继续。</p>
+          <FieldGroup label="锁定快捷键" hint="只在本应用窗口内有效；偏好保存在这台电脑上。">
+            <Segmented label="锁定快捷键" value={shortcut} onChange={(v) => { setShortcut(v); savePreference('lvjin-lock-key', v === 'ctrl+l' ? null : v); applyPreferences(); }} items={LOCK_KEYS} />
+          </FieldGroup>
+          <p className="t-caption text-tertiary">锁定{lockKeyLabel(shortcut) ? `（${lockKeyLabel(shortcut)}）` : ''}会立即停止进行中的任务、关闭本机处理进程并清除页面图像的临时访问令牌，不必等任务结束；中断的导入和分析可在解锁后继续。</p>
         </div>
       </section>
       <section className="section">
@@ -262,7 +313,7 @@ function About() {
         <div className="figure"><dt>版本</dt><dd>{status.data?.version}</dd></div>
         <div className="figure"><dt>阶段</dt><dd>{status.data?.milestone}<small>内部版</small></dd></div>
         <div className="figure"><dt>运行</dt><dd>CPU<small>本机模型断网可用</small></dd></div>
-        <div className="figure"><dt>大模型常驻</dt><dd>{models.data ? (models.data.residency.max_large > 1 ? '双模型' : '单个') : '—'}<small>{models.data && models.data.residency.max_large > 1 ? '≥16 GB 内存' : ''}</small></dd></div>
+        <div className="figure"><dt>大模型常驻</dt><dd>{models.data ? `最多 ${models.data.residency.max_large} 个` : '—'}<small>{models.data && models.data.residency.max_large > 1 ? '≥16 GB 内存；回答核查模型提前加载' : '按需加载'}</small></dd></div>
       </dl>
       <h2 className="t-subtitle">随软件安装的九个辅助模型</h2>
       <p className="t-caption text-tertiary">内置模型随完整安装介质提供并在本机运行；应用不提供下载、导入、切换或卸载。安装文件损坏时请使用同版本完整介质修复。</p>

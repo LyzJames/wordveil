@@ -3,7 +3,9 @@ the approved images (and listens to approved audio) without the local text,
 the core compares the key fields with the local OCR/ASR, then the
 synthesizer drafts from the local text evidence with the observation as a
 candidate, verification, one check, at most one revision. Images and audio
-go in separate requests (no joint media input)."""
+go in separate requests (no joint media input). When an image reading
+disagrees with the local OCR and no audio shares the root's two native
+readings, the reader takes one targeted re-look at the disagreeing images."""
 from __future__ import annotations
 
 from typing import Any
@@ -14,7 +16,7 @@ from ..core import Core, data, status, warnings
 from ..rpc import CoreError
 from . import roles
 
-VERSION = '1'
+VERSION = '2'
 
 
 class State(roles.Roles, total=False):
@@ -62,6 +64,32 @@ def build(core: Core) -> StateGraph:
                 out['observations'].append(data(envelope))
             out['process'].append(step.done(status(envelope), observations=int(view.get('observations', 0))))
             out['warnings'] += warnings(envelope)
+            if name == 'images' and data(envelope) and not state.get('audio'):
+                out = relook(state, agent, media, data(envelope), view, out)
+        return out
+
+    def relook(state: State, agent: str, media: list[str], first: str, view: dict[str, Any], out: dict[str, Any]) -> dict[str, Any]:
+        """One targeted re-look at the images whose fields disagreed with the
+        local OCR; the core keeps the native and per-reader budgets."""
+        disagreeing = [ref for ref in view.get('disagreement_media') or [] if isinstance(ref, str) and ref in media]
+        if not disagreeing:
+            return out
+        step = core.step('observe')
+        try:
+            result = core.generate('observe:images:relook', state['owner'], agent, {'media_refs': disagreeing, 'question_id': state['question_id'],
+                                                                                   'observation_mode': 'targeted_compare', 'comparison_ref': first})
+        except CoreError as error:
+            if error.code in roles.INTERRUPTED:
+                raise
+            out['process'].append(step.done('failed', code=error.code))
+            return out
+        envelope, relooked = result['envelope'], result.get('view') or {}
+        if status(envelope) == 'cancelled':
+            raise CoreError('cancelled')
+        if data(envelope):
+            out['observations'].append(data(envelope))
+        out['process'].append(step.done(status(envelope), observations=int(relooked.get('observations', 0))))
+        out['warnings'] += warnings(envelope)
         return out
 
     def after_observe(state: State) -> str:

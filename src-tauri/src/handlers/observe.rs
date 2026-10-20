@@ -5,7 +5,7 @@
 //! key fields the model reports with the local extraction of the same source.
 //! Native video and joint media inputs are not sent by this version.
 use super::*;
-use super::answers::{Call, generate_json, generation_available, grant_for_root, key_dates, key_numbers, system_prompt};
+use super::answers::{Call, date_supported, generate_json, generation_available, grant_for_root, key_dates, key_numbers, system_prompt};
 use crate::{generation::{Part, connections}, vault::now_rfc3339};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{OptionalExtension, params};
@@ -64,10 +64,10 @@ fn compare(ctx: &Ctx, media: &[Media], fields: &[Value]) -> Result<Value> {
         let name = field["name"].as_str().unwrap_or("");
         let value = field["value"].as_str().unwrap_or("");
         let source = texts.get(media_ref).cloned().unwrap_or_default();
-        // Amounts and dates are compared as values when they normalize
-        // (Arabic digits, dates with a year). A value written otherwise
-        // ("两万七", "5月6号") is compared as text, so a spelling the
-        // normalizer does not read is not reported as a conflict.
+        // Amounts and dates are compared as values: Arabic digits and Chinese
+        // numerals both normalise ("两万七" = 27000), and a date without a year
+        // ("5月6号") matches the same month and day. Anything the normaliser
+        // does not read is compared as text, so a spelling is not a conflict.
         let as_text = || !compact(value).is_empty() && compact(&source).contains(&compact(value));
         let found = match name {
             "amount" => {
@@ -76,14 +76,14 @@ fn compare(ctx: &Ctx, media: &[Media], fields: &[Value]) -> Result<Value> {
             }
             "date" => {
                 let observed = key_dates(value);
-                if observed.is_empty() { as_text() } else { observed.iter().all(|d| key_dates(&source).contains(d)) }
+                if observed.is_empty() { as_text() } else { observed.iter().all(|d| date_supported(d, &key_dates(&source))) }
             }
             _ => as_text(),
         };
         let row = json!({"media_ref": media_ref, "name": name, "observed": value, "extracted": if found { json!(value) } else { Value::Null }});
         if found { agreements.push(row) } else { disagreements.push(row) }
     }
-    Ok(json!({"agreements": agreements, "disagreements": disagreements, "method": "确定性字段比对：阿拉伯数字金额与带年份的日期归一化后比较，其余（含中文数字、不带年份的日期）按去空白后的原文包含关系；中文数字与阿拉伯数字之间不换算"}))
+    Ok(json!({"agreements": agreements, "disagreements": disagreements, "method": "确定性字段比对：金额按数值比较（阿拉伯数字与中文数字、口语省略写法如“两万七”统一换算）；日期归一化后比较，不带年份的日期按月日比较；其余字段按去空白后的原文包含关系"}))
 }
 
 pub fn media_observe(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
@@ -136,23 +136,25 @@ pub fn media_observe(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
     let question_text: String = ctx.lock()?.db().query_row("SELECT text FROM questions WHERE id=?", [&question], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
     let listing: String = labels.iter().map(|(label, m)| format!("{}\n", describe(m, label))).collect();
     let (system, prompt, prompt_sha, comparison) = if mode == "targeted_compare" {
-        // A second, targeted look at fields the comparison found inconsistent.
+        // A second, targeted look at fields the comparison of this root's
+        // first reading found inconsistent, for the media that had them.
         let reference = text_of(input, "comparison_ref")?;
-        let (_, kind, previous) = ctx.lock()?.get_result(&reference)?;
-        if kind != "MediaObservationRef" {
+        let (reference, previous) = super::flows::owned_result(ctx, &json!(reference), "MediaObservationRef", invocation.root_id())?.ok_or(Error::Denied)?;
+        let disagreeing: Vec<&str> = previous["comparison"]["disagreements"].as_array().map(|rows| rows.iter().filter_map(|r| r["media_ref"].as_str()).collect()).unwrap_or_default();
+        if previous["mode"] != "first_read" || ids.iter().any(|id| !disagreeing.contains(&id.as_str())) {
             return Err(Error::Denied);
         }
         let (system, prompt, sha) = system_prompt(ctx, &["direct_media.compare"])?;
-        (system, prompt, sha, Some(previous))
+        (system, prompt, sha, Some((reference, previous)))
     } else {
         let (system, prompt, sha) = system_prompt(ctx, &["direct_media.first_read"])?;
         (system, prompt, sha, None)
     };
     let mut user = format!("原问题：{question_text}\n\n授权读取的媒体：\n{listing}");
-    if let Some(previous) = &comparison {
+    if let Some((_, previous)) = &comparison {
         user.push_str("\n需要重新核看的字段：\n");
         for row in previous["comparison"]["disagreements"].as_array().cloned().unwrap_or_default() {
-            let label = labels.iter().find(|(_, m)| row["media_ref"] == m.id.as_str()).map(|(l, _)| l.clone()).unwrap_or_default();
+            let Some(label) = labels.iter().find(|(_, m)| row["media_ref"] == m.id.as_str()).map(|(l, _)| l.clone()) else { continue };
             user.push_str(&format!("- {label} {}：你上次读到“{}”，本机识别文字中没有找到这个值\n", row["name"].as_str().unwrap_or(""), row["observed"].as_str().unwrap_or("")));
         }
     }
@@ -184,8 +186,9 @@ pub fn media_observe(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
     }).collect();
     let observation = json!({"media_refs": ids, "observations": texts, "limitations": wire["limitations"]});
     ctx.lock()?.runtime.validate_generation_output(invocation, &observation)?;
+    let supersedes = comparison.as_ref().map(|(reference, _)| reference.clone());
     let comparison = compare(ctx, &media, &fields)?;
-    let payload = json!({"observation": observation, "observed": observations, "fields": fields, "comparison": comparison, "mode": mode,
+    let payload = json!({"observation": observation, "observed": observations, "fields": fields, "comparison": comparison, "mode": mode, "supersedes": supersedes,
         "media": labels.iter().map(|(l, m)| json!({"label": l, "media_ref": m.id, "kind": m.kind, "detail": m.detail})).collect::<Vec<_>>(),
         "directly_observed": true, "request_id": request_id, "prompt": format!("{}@{}", call.prompt, call.prompt_sha),
         "usage": {"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens}, "created_at": now_rfc3339()});
@@ -225,6 +228,58 @@ pub(crate) fn media_bundle(ctx: &Ctx, invocation: &Invocation, versions: &[Strin
     let take = items.len().min(10);
     let payload = json!({"question_ref": null, "candidate_set_id": null, "model": "core media projection (no ranking)", "pairs": 0, "initial_take": take, "items": items});
     Ok(Some(vault.put_result(invocation.skill(), invocation.id(), "EvidenceBundleRef", &payload)?))
+}
+
+/// Delete the model copies (JPEG/WAV) prepared for one grant: rows, blobs and
+/// object records. They exist only to be sent in that one task.
+pub(crate) fn release_native(vault: &crate::store::Vault, grant: &str) -> Result<usize> {
+    let rows: Vec<(String, String)> = {
+        let mut statement = vault.db().prepare("SELECT id,blob FROM native_media WHERE grant_id=?")?;
+        statement.query_map([grant], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
+    };
+    for (id, blob) in &rows {
+        vault.delete_blob(blob)?;
+        vault.db().execute("DELETE FROM native_media WHERE id=?", [id])?;
+        vault.db().execute("UPDATE objects SET active=0 WHERE id=?", [id])?;
+    }
+    Ok(rows.len())
+}
+
+/// A task of `root` ended for good (not interrupted): its copies go.
+pub(crate) fn release_root_native(vault: &crate::store::Vault, root: &str) -> Result<usize> {
+    let resumable: bool = vault.db().query_row("SELECT EXISTS(SELECT 1 FROM flow_runs WHERE root=? AND status IN ('interrupted','running','resuming'))", [root], |r| r.get(0))?;
+    if resumable {
+        return Ok(0);
+    }
+    let grants: Vec<String> = {
+        let mut statement = vault.db().prepare("SELECT id FROM egress_grants WHERE root=?")?;
+        statement.query_map([root], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    let mut released = 0;
+    for grant in grants {
+        released += release_native(vault, &grant)?;
+    }
+    Ok(released)
+}
+
+/// After unlocking: previews left unapproved by the last session can no
+/// longer be confirmed, and copies of tasks that cannot be continued are
+/// removed (an interrupted run keeps them until it is continued or discarded).
+pub(crate) fn sweep_native(vault: &crate::store::Vault) -> Result<usize> {
+    vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE approved_at IS NULL AND revoked_at IS NULL", [now_rfc3339()])?;
+    let grants: Vec<String> = {
+        let mut statement = vault.db().prepare(
+            "SELECT DISTINCT n.grant_id FROM native_media n LEFT JOIN egress_grants g ON g.id=n.grant_id
+             WHERE g.id IS NULL OR g.revoked_at IS NOT NULL OR g.root IS NULL
+                OR NOT EXISTS (SELECT 1 FROM flow_runs f WHERE f.root=g.root AND f.status IN ('interrupted','running','resuming'))",
+        )?;
+        statement.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    let mut released = 0;
+    for grant in grants {
+        released += release_native(vault, &grant)?;
+    }
+    Ok(released)
 }
 
 /// Remember the approved native media of a grant (prepared at preview).

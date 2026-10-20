@@ -44,6 +44,10 @@ impl Ledger {
         if cipher.is_empty() {
             return Err(Error::Integrity);
         }
+        // Ordinary SQL may not write shadow tables (FTS5 data), the schema or
+        // raw pages (SQLite security guidance). This also mitigates the FTS5
+        // flaws CVE-2026-11822/11824 until the bundled SQLCipher is 4.17+.
+        db.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
         db.busy_timeout(std::time::Duration::from_secs(10))?;
         #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic: schema");
         let schema = "PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON; PRAGMA cipher_memory_security=ON;

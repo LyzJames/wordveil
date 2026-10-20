@@ -14,10 +14,44 @@ pub mod transport;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{RecvTimeoutError, channel},
+    },
+    time::Duration,
+};
+use zeroize::Zeroizing;
 
 /// Bumped whenever request building or response parsing changes; capability
 /// results recorded with an older adapter version must be re-tested.
 pub const ADAPTER_VERSION: &str = "1.0";
+
+/// One request the caller can stop waiting for at once (cancel, lock, exit).
+/// The blocking HTTP exchange runs on its own thread; when the caller gives
+/// up, that thread ends on its own (reply or connection timeout) and its
+/// result is discarded. The outcome is then unknown and never retried here.
+pub fn call_cancellable(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool) -> crate::Result<GenResponse> {
+    let (sender, receiver) = channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let (profile, key, request, inner) = (profile.clone(), key.cloned(), request.clone(), stop.clone());
+    std::thread::Builder::new().name("lvjin-generation".into()).spawn(move || {
+        let mut ignore = |_: &str| {};
+        let _ = sender.send(adapters::call(&profile, key.as_ref(), &request, &inner, &mut ignore));
+    })?;
+    loop {
+        if cancel.load(Ordering::Acquire) {
+            stop.store(true, Ordering::Release);
+            return Err(crate::Error::Cancelled);
+        }
+        match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(outcome) => return outcome,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Err(crate::Error::Integrity),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

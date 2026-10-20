@@ -10,7 +10,10 @@ unsafe extern "C" {
     fn lvjin_profile_delete(name:*const u16)->u32;
     fn lvjin_grant_path(path:*const u16,sid:*mut c_void,writable:i32)->u32;
     fn lvjin_revoke_path(path:*const u16,sid:*mut c_void)->u32;
-    fn lvjin_spawn_container(executable:*const u16,command:*mut u16,working:*const u16,environment:*mut u16,sid:*mut c_void,input:HANDLE,output:HANDLE,error:HANDLE,memory_limit:usize,process:*mut HANDLE,job:*mut HANDLE,pid:*mut u32)->u32;
+    fn lvjin_capability_sid(name:*const u16,sid:*mut *mut c_void)->u32;
+    fn lvjin_grant_runtime(path:*const u16,capability:*mut c_void)->u32;
+    fn lvjin_cleanup_profiles(prefix:*const u16,removed:*mut u32)->u32;
+    fn lvjin_spawn_container(executable:*const u16,command:*mut u16,working:*const u16,environment:*mut u16,sid:*mut c_void,runtime:*mut c_void,input:HANDLE,output:HANDLE,error:HANDLE,memory_limit:usize,process:*mut HANDLE,job:*mut HANDLE,pid:*mut u32)->u32;
 }
 
 fn wide(value:impl AsRef<std::ffi::OsStr>)->Vec<u16> { value.as_ref().encode_wide().chain(Some(0)).collect() }
@@ -39,6 +42,57 @@ fn quote(value:&str)->String {
 /// child; unserialized, the later writer drops the other's entry and that
 /// child cannot start or read its files.
 static ACL_CHANGES:std::sync::Mutex<()>=std::sync::Mutex::new(());
+
+/// The application's read-only runtime capability (custom capability SID,
+/// derived from its name). Directories of the worker bundle, model artefacts
+/// and FFmpeg grant it once, inheritably, instead of one AppContainer SID per
+/// process start; private and sensitive paths keep per-process grants.
+const RUNTIME_CAPABILITY:&str="lvjinWorkerRuntime";
+struct Sid(*mut c_void);
+unsafe impl Send for Sid {}
+unsafe impl Sync for Sid {}
+static CAPABILITY:std::sync::OnceLock<std::result::Result<Sid,i32>>=std::sync::OnceLock::new();
+static RUNTIME_GRANTED:std::sync::Mutex<Vec<PathBuf>>=std::sync::Mutex::new(Vec::new());
+
+fn runtime_capability()->Result<*mut c_void> {
+    let found=CAPABILITY.get_or_init(|| {
+        let mut sid=std::ptr::null_mut();
+        match unsafe { lvjin_capability_sid(wide(RUNTIME_CAPABILITY).as_ptr(),&mut sid) } { 0=>Ok(Sid(sid)), code=>Err(code as i32) }
+    });
+    match found { Ok(sid)=>Ok(sid.0), Err(code)=>Err(std::io::Error::from_raw_os_error(*code).into()) }
+}
+
+/// Grant the runtime capability on a shared read-only directory, once per
+/// process (and only rewritten on disk when the ACE is missing).
+fn grant_runtime(path:&Path)->Result<()> {
+    let path=path.canonicalize()?;
+    let capability=runtime_capability()?;
+    let mut granted=RUNTIME_GRANTED.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+    if granted.contains(&path) { return Ok(()); }
+    let _serialized=ACL_CHANGES.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+    check(unsafe { lvjin_grant_runtime(wide(&path).as_ptr(),capability) })?;
+    granted.push(path);
+    Ok(())
+}
+
+/// Remove worker profiles a crash or a killed process left behind (startup).
+/// Skipped while another instance of the application runs: its workers' live
+/// profiles have the same prefix.
+pub fn cleanup_stale_profiles()->u32 {
+    use windows_sys::Win32::{Foundation::{ERROR_ALREADY_EXISTS,GetLastError},System::Threading::CreateMutexW};
+    static INSTANCE:std::sync::OnceLock<usize>=std::sync::OnceLock::new();
+    let mut first=false;
+    INSTANCE.get_or_init(|| {
+        let handle=unsafe { CreateMutexW(std::ptr::null(),0,wide("Local\\Lvjin.CoreInstance").as_ptr()) };
+        first=!handle.is_null() && unsafe { GetLastError() }!=ERROR_ALREADY_EXISTS;
+        handle as usize
+    });
+    if !first { return 0; }
+    let mut removed=0u32;
+    let _serialized=ACL_CHANGES.lock().unwrap_or_else(|poisoned|poisoned.into_inner());
+    unsafe { lvjin_cleanup_profiles(wide("lvjin.worker.").as_ptr(),&mut removed); }
+    removed
+}
 
 struct Profile { name:Vec<u16>,sid:*mut c_void,granted:Vec<PathBuf> }
 unsafe impl Send for Profile {}
@@ -81,7 +135,13 @@ fn pipe(parent_reads:bool)->Result<(File,File)> {
 /// Constructed only by the trusted installation/worker coordinator. Business JSON
 /// does not deserialize this policy or choose an executable, path, argument or limit.
 pub struct SpawnPolicy {
-    pub executable:PathBuf,pub arguments:Vec<String>,pub read_only:Vec<PathBuf>,
+    pub executable:PathBuf,pub arguments:Vec<String>,
+    /// Shared read-only runtime (worker bundle, model artefacts, tools):
+    /// granted once to the runtime capability every worker holds.
+    pub runtime:Vec<PathBuf>,
+    /// Private read-only inputs (for example a decrypted media file): granted
+    /// to this process's AppContainer only and revoked when it ends.
+    pub read_only:Vec<PathBuf>,
     pub scratch:PathBuf,pub memory_limit:usize,
 }
 
@@ -109,6 +169,8 @@ impl IsolatedProcess {
         let profile_name=String::from_utf16(&profile.name[..profile.name.len()-1]).map_err(|_|Error::Integrity)?;
         std::fs::create_dir_all(scratch.join("Packages").join(profile_name).join("AC/Temp"))?;
         #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: profile created");
+        for path in &policy.runtime { grant_runtime(path)?; }
+        let capability=if policy.runtime.is_empty() { std::ptr::null_mut() } else { runtime_capability()? };
         for path in &policy.read_only { profile.grant(path,false)?; }
         #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: resources granted");
         profile.grant(&scratch,true)?;
@@ -130,7 +192,7 @@ impl IsolatedProcess {
         for (key,value) in [("SystemRoot",root_text.clone()),("WINDIR",root_text.clone()),("PATH",format!("{};{}\\System32",executable.parent().ok_or(Error::Contract)?.display(),root_text)),("PYTHONNOUSERSITE","1".into()),("PYTHONUTF8","1".into()),("PYTHONDONTWRITEBYTECODE","1".into()),("HF_HUB_OFFLINE","1".into()),("TRANSFORMERS_OFFLINE","1".into()),("HF_HUB_DISABLE_TELEMETRY","1".into()),("DO_NOT_TRACK","1".into()),("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK","True".into()),("CUDA_VISIBLE_DEVICES","".into()),("TOKENIZERS_PARALLELISM","false".into()),("OMP_NUM_THREADS","4".into()),("MKL_NUM_THREADS","4".into())] { environment.insert(key.into(),value); }
         let mut block:Vec<u16>=environment.iter().flat_map(|(key,value)|wide(format!("{key}={value}"))).collect(); block.push(0);
         let mut process=std::ptr::null_mut(); let mut job=std::ptr::null_mut(); let mut pid=0;
-        check(unsafe { lvjin_spawn_container(wide(&executable).as_ptr(),command.as_mut_ptr(),wide(&scratch).as_ptr(),block.as_mut_ptr(),profile.sid,child_input.as_raw_handle() as HANDLE,child_output.as_raw_handle() as HANDLE,child_error.as_raw_handle() as HANDLE,policy.memory_limit,&mut process,&mut job,&mut pid) })?;
+        check(unsafe { lvjin_spawn_container(wide(&executable).as_ptr(),command.as_mut_ptr(),wide(&scratch).as_ptr(),block.as_mut_ptr(),profile.sid,capability,child_input.as_raw_handle() as HANDLE,child_output.as_raw_handle() as HANDLE,child_error.as_raw_handle() as HANDLE,policy.memory_limit,&mut process,&mut job,&mut pid) })?;
         #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: process launched");
         drop(child_input); drop(child_output); drop(child_error);
         // A hostile child can stop reading stdin. The coordinator must keep

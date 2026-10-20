@@ -1,6 +1,6 @@
 // Workbench (design 9.2): what needs you, what is running, recent matters.
 import React, { useState } from 'react';
-import { api, applyChange, MATTER_TYPES, relative, skillName, stageName, statusLabel, type Matter } from './api';
+import { api, applyChange, MATTER_TYPES, relative, skillName, stageName, statusLabel, type Matter, type TaskState } from './api';
 import { Icon } from './icons';
 import { useSession } from './session';
 import { Callout, Empty, Field, Modal, Skeleton, useAction, useLoad } from './ui';
@@ -8,16 +8,17 @@ import { Callout, Empty, Field, Modal, Skeleton, useAction, useLoad } from './ui
 type Interrupted = { selection_id: string; matter_id: string; display_name: string; updated_at: string };
 
 export function Workbench() {
-  const { info, go, tasks, revision, refresh, matters, mattersLoaded, connection, newMatter } = useSession();
+  const { info, go, tasks, revision, refresh, matters, mattersLoaded, due, connection, newMatter } = useSession();
   const interrupted = useLoad(() => api.view<Interrupted[]>('interrupted'), [revision]);
   const { run } = useAction();
   const [, tick] = useState(0);
   const active = tasks.filter((t) => t.status === 'running');
-  const failed = tasks.filter((t) => t.status === 'failed' && t.envelope).slice(-2);
+  // Tasks are listed newest first: the two most recent failures.
+  const failed = tasks.filter((t) => t.status === 'failed' && t.envelope).slice(0, 2);
   const pending = matters.filter((m) => (m.candidate_facts ?? 0) > 0);
   const recent = [...matters].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 6);
   const loaded = interrupted.data !== undefined && mattersLoaded;
-  const nothing = pending.length === 0 && (interrupted.data?.length ?? 0) === 0 && failed.length === 0;
+  const nothing = pending.length === 0 && (interrupted.data?.length ?? 0) === 0 && failed.length === 0 && due.length === 0;
 
   return (
     <div className="page fade-in">
@@ -90,8 +91,27 @@ export function Workbench() {
                   原件已加密保存，可以从中断处继续，不会重复导入（{relative(item.updated_at)}）。
                 </Callout>
               ))}
+              {due.length > 0 && (
+                <ul className="due-list" aria-label="即将到期的待办">
+                  {due.map((t) => {
+                    const days = daysUntil(t.due_on);
+                    return (
+                      <li key={t.id}>
+                        <span className="ellipsis" title={`${t.title} · ${t.matter_title}`}>
+                          <Icon name="calendar" /> <strong>{t.title}</strong>
+                          <span className="t-caption text-secondary"> · {t.matter_title}</span>
+                        </span>
+                        <span className={`t-caption ${days < 0 ? 'overdue' : 'text-secondary'}`}>
+                          {days < 0 ? `已逾期 ${-days} 天` : days === 0 ? '今天到期' : `${days} 天后到期`}（{t.due_on}）
+                        </span>
+                        <button className="btn btn-sm" onClick={() => go({ name: 'matter', id: t.matter_id, tab: 'timeline' })}>查看</button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
               {failed.map((t) => (
-                <Callout key={t.task_id} tone="danger" title={`${skillName(t.skill)}失败`}>
+                <Callout key={t.task_id} tone="danger" title={`${skillName(t.skill)}失败`} action={<RetryButton task={t} />}>
                   {t.envelope!.warnings.map((w) => w.message).join('；') || statusLabel(t.status)}
                 </Callout>
               ))}
@@ -145,6 +165,34 @@ export function Workbench() {
         </>
       )}
     </div>
+  );
+}
+
+/** Whole days from today (local time) to an ISO date; negative when overdue. */
+function daysUntil(iso: string): number {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  const today = new Date();
+  return Math.round((new Date(y, m - 1, d).getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / 86400000);
+}
+
+/** Start a failed or stopped local task again with its original input (the
+ *  core keeps the input of tasks started from the interface; imports are
+ *  idempotent per file selection). */
+export function RetryButton({ task }: { task: TaskState }) {
+  const { busy, run } = useAction();
+  const [started, setStarted] = useState(false);
+  if (!task.retryable || started) return null;
+  return (
+    <button
+      className="btn btn-xs"
+      disabled={busy}
+      onClick={async () => {
+        if ((await run(() => api.retryTask(task.task_id), '已重新开始')) !== undefined) setStarted(true);
+      }}
+    >
+      <Icon name="refresh" />
+      重试
+    </button>
   );
 }
 

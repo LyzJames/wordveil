@@ -103,6 +103,13 @@ fn read(ctx: &Ctx, invocation: &Invocation, matter: &str) -> Result<EnvelopePart
     if is_root {
         let list = rows(ctx, "SELECT m.id,m.title,m.matter_type,m.status,m.updated_at,(SELECT COUNT(*) FROM documents d WHERE d.matter_id=m.id),(SELECT COUNT(*) FROM facts f WHERE f.matter_id=m.id AND f.status='candidate') FROM matters m JOIN objects o ON o.id=m.id WHERE m.is_root=0 AND o.active=1 ORDER BY m.updated_at DESC", &[], 7)?;
         payload["matters"] = json!(list.iter().map(|r| json!({"id": r[0], "title": r[1], "matter_type": r[2], "status": r[3], "updated_at": r[4], "documents": r[5], "candidate_facts": r[6]})).collect::<Vec<_>>());
+        // Open todos that are overdue or due within two weeks, for the workbench.
+        let horizon = (chrono::Local::now().date_naive() + chrono::Duration::days(14)).format("%Y-%m-%d").to_string();
+        let due = rows(ctx,
+            "SELECT t.id,t.title,t.due_on,t.matter_id,m.title FROM todos t JOIN objects o ON o.id=t.id JOIN matters m ON m.id=t.matter_id JOIN objects mo ON mo.id=m.id \
+             WHERE o.active=1 AND mo.active=1 AND m.is_root=0 AND t.status='open' AND t.due_on IS NOT NULL AND t.due_on<=? ORDER BY t.due_on LIMIT 20",
+            &[horizon.as_str()], 5)?;
+        payload["due_todos"] = json!(due.iter().map(|r| json!({"id": r[0], "title": r[1], "due_on": r[2], "matter_id": r[3], "matter_title": r[4]})).collect::<Vec<_>>());
     }
     let versions = rows(ctx,
         "SELECT d.id,d.display_name,v.id,v.version_no,v.media_kind,v.status,v.page_count,v.bytes,v.created_at,v.error_code,(SELECT m.id FROM media m WHERE m.version_id=v.id) FROM documents d JOIN document_versions v ON v.document_id=d.id JOIN objects o ON o.id=v.id WHERE d.matter_id=? AND o.active=1 ORDER BY d.created_at,v.version_no",
@@ -284,7 +291,7 @@ fn validate(tx: &Transaction, matter: &str, change: &Value) -> Result<Value> {
                 return Err(Error::Contract);
             }
             for key in values.keys() {
-                if !matches!(key.as_str(), "rounding" | "day_count" | "currency_precision" | "period_start" | "period_end" | "exclude_kinds" | "refund_policy" | "loan_mode" | "initial_balance" | "scenario" | "anomaly_threshold") {
+                if !matches!(key.as_str(), "rounding" | "day_count" | "currency_precision" | "period_start" | "period_end" | "exclude_kinds" | "refund_policy" | "loan_mode" | "loan_perspective" | "initial_balance" | "scenario" | "anomaly_threshold") {
                     return Err(Error::Contract);
                 }
             }
@@ -736,22 +743,88 @@ pub fn delete_version(tx: &Transaction, version: &str, removed: &mut Vec<String>
         tx.execute("DELETE FROM relations WHERE id=?", [id])?;
         objects.push(id.clone());
     }
+    // M2 artefacts of this version: the model copies of its pages or audio
+    // (native media), the context packets that carried its passages with the
+    // goals written for them, and the passage excerpts kept in egress previews.
+    let mut gone: std::collections::HashSet<String> = objects.iter().cloned().collect();
+    let native: Vec<String> = {
+        let mut statement = tx.prepare("SELECT id,source FROM native_media")?;
+        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?.into_iter().filter(|(_, source)| gone.contains(source)).map(|(id, _)| id).collect()
+    };
+    for id in &native {
+        tx.execute("DELETE FROM native_media WHERE id=?", [id])?;
+        gone.insert(id.clone());
+        objects.push(id.clone());
+    }
+    let packets: Vec<(String, String)> = {
+        let mut statement = tx.prepare("SELECT id,payload FROM context_packets")?;
+        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    for (id, payload) in packets {
+        if !mentions(&payload, &gone) {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
+        for field in ["goal_ref", "acceptance_ref", "stop_ref"] {
+            if let Some(goal) = value["goal"][field].as_str() {
+                tx.execute("DELETE FROM goals WHERE id=?", [goal])?;
+                gone.insert(goal.to_owned());
+                objects.push(goal.to_owned());
+            }
+        }
+        tx.execute("DELETE FROM context_packets WHERE id=?", [&id])?;
+        gone.insert(id.clone());
+        objects.push(id);
+    }
+    let grants: Vec<(String, String)> = {
+        let mut statement = tx.prepare("SELECT id,preview FROM egress_grants")?;
+        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    };
+    for (id, preview) in grants {
+        if !mentions(&preview, &gone) {
+            continue;
+        }
+        let mut value: Value = serde_json::from_str(&preview).unwrap_or(Value::Null);
+        if let Some(excerpts) = value["excerpts"].as_array_mut() {
+            for item in excerpts.iter_mut() {
+                if item["evidence_id"].as_str().is_some_and(|e| gone.contains(e)) {
+                    *item = json!({"evidence_id": item["evidence_id"], "removed": true});
+                }
+            }
+        }
+        if let Some(media) = value["native_media"].as_array_mut() {
+            media.retain(|m| !["page_id", "media_ref"].iter().any(|f| m[*f].as_str().is_some_and(|r| gone.contains(r))));
+        }
+        tx.execute("UPDATE egress_grants SET preview=? WHERE id=?", params![value.to_string(), id])?;
+    }
     // Snapshots (results) that quote this version or its evidence are removed.
     let results: Vec<(String, String)> = {
         let mut statement = tx.prepare("SELECT id,payload FROM results")?;
         let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         rows.collect::<std::result::Result<_, _>>()?
     };
-    let needles: Vec<&String> = objects.iter().collect();
     let mut stale_results = vec![];
     for (id, payload) in &results {
-        if needles.iter().any(|needle| payload.contains(needle.as_str())) {
+        if mentions(payload, &gone) {
             stale_results.push(id.clone());
         }
     }
     for id in &stale_results {
         tx.execute("DELETE FROM results WHERE id=?", [id])?;
         objects.push(id.clone());
+        // The user's notes on a removed result go with it.
+        let notes: Vec<String> = {
+            let mut statement = tx.prepare("SELECT id FROM feedback WHERE result_ref=?")?;
+            let rows = statement.query_map([id], |r| r.get(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        for note in notes {
+            tx.execute("DELETE FROM feedback WHERE id=?", [&note])?;
+            objects.push(note);
+        }
     }
     let exports: Vec<(String, String, String)> = {
         let mut statement = tx.prepare("SELECT id,result_refs,content_blob FROM exports")?;
@@ -837,4 +910,20 @@ pub fn calculate(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
         warn(&mut parts, &format!("irr_{status}"), "年化利率无法唯一确定（多重解、无解或不收敛），未输出单一年化数字。");
     }
     Ok(parts)
+}
+
+/// Whether stored JSON text refers to one of the removed objects. Core
+/// references are `ref_` and 32 hex digits, so each text is scanned once.
+fn mentions(text: &str, removed: &std::collections::HashSet<String>) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while let Some(offset) = text[index..].find("ref_") {
+        let start = index + offset;
+        let end = start + 36;
+        if end <= bytes.len() && bytes[start + 4..end].iter().all(u8::is_ascii_hexdigit) && removed.contains(&text[start..end]) {
+            return true;
+        }
+        index = start + 4;
+    }
+    false
 }

@@ -1,7 +1,7 @@
 // Session context shared by the shell and the pages: current view, the
 // inspector, live tasks, recent matters and the default generation connection.
 import { createContext, useContext } from 'react';
-import type { Connection, EvidenceItem, Locator, Matter, TaskState, UnlockInfo } from './api';
+import type { Connection, DueTodo, EvidenceItem, Locator, Matter, TaskState, UnlockInfo } from './api';
 import type { QaTurn } from './qa';
 
 export type View =
@@ -36,6 +36,8 @@ export type Session = {
   matters: Matter[];
   /** False until the matter list has been read once. */
   mattersLoaded: boolean;
+  /** Open todos of all matters, overdue or due within two weeks. */
+  due: DueTodo[];
   connections: Connection[];
   /** The default active connection, if any. */
   connection: Connection | null;

@@ -15,7 +15,11 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Mutex, mpsc},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -153,7 +157,28 @@ pub fn run(ctx: &Ctx, owner: &Invocation, owner_input: &Value, flow: &str, input
     };
     let question = inputs["question_id"].as_str().ok_or(Error::Contract)?.to_owned();
     let run = Run { ctx, id: id.clone(), root: root.clone(), question, base: owner.clone(), owners: Mutex::new(HashMap::from([(owner.id().to_owned(), owner.clone())])), agents: Mutex::new(HashMap::new()), warnings: Mutex::new(vec![]) };
-    let outcome = run.execute(flow, &inputs, resume, attempt);
+    // Every flow ends in sentence verification. Where the residency policy
+    // allows it (16 GiB tier) the grounding model loads in the background
+    // now, overlapping planning and retrieval, and stays leased until the
+    // flow ends so the idle TTL cannot evict it before verification.
+    let finished = AtomicBool::new(false);
+    let outcome = std::thread::scope(|scope| {
+        if ctx.services.residency.preloads("grounding") {
+            scope.spawn(|| {
+                if ctx.services.preload("grounding", &finished).unwrap_or(false) && !finished.load(Ordering::Acquire) {
+                    if let Ok(lease) = ctx.services.lease("grounding", &finished) {
+                        while !finished.load(Ordering::Acquire) {
+                            std::thread::sleep(Duration::from_millis(50));
+                        }
+                        drop(lease);
+                    }
+                }
+            });
+        }
+        let outcome = run.execute(flow, &inputs, resume, attempt);
+        finished.store(true, Ordering::Release);
+        outcome
+    });
     let (state, reason, output) = match &outcome {
         Ok(output) => ("completed", None, Some(output.to_string())),
         Err(Error::Cancelled) => {
@@ -770,8 +795,17 @@ pub(crate) fn view_of(ctx: &Ctx, envelope: &Value) -> Result<Value> {
         "ChallengeReportRef" => json!({"kind": kind,
             "challenges": payload["report"]["challenges"].as_array().cloned().unwrap_or_default().iter().map(|c| json!({"claim_id": c["claim_id"], "issue_type": c["issue_type"]})).collect::<Vec<_>>()}),
         "ContextBriefRef" => json!({"kind": kind, "lossy": true}),
-        "MediaObservationRef" => json!({"kind": kind, "observations": count(&payload["observation"]["observations"]), "disagreements": count(&payload["comparison"]["disagreements"]),
-            "unreadable": count(&payload["comparison"]["unreadable"])}),
+        "MediaObservationRef" => {
+            // Which media had a field that disagreed (references only), for a targeted re-look.
+            let mut disagreeing: Vec<Value> = vec![];
+            for row in payload["comparison"]["disagreements"].as_array().cloned().unwrap_or_default() {
+                if row["media_ref"].is_string() && !disagreeing.contains(&row["media_ref"]) {
+                    disagreeing.push(row["media_ref"].clone());
+                }
+            }
+            json!({"kind": kind, "mode": payload["mode"], "observations": count(&payload["observation"]["observations"]), "disagreements": count(&payload["comparison"]["disagreements"]),
+                "disagreement_media": disagreeing, "unreadable": count(&payload["comparison"]["unreadable"])})
+        }
         "RetrievalResultRef" => json!({"kind": kind, "answer": !payload["answer"].is_null(), "evidence_bundle": payload["evidence_bundle"]}),
         _ => json!({"kind": kind}),
     })

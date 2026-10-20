@@ -46,8 +46,19 @@ const TOKEN_TTL: Duration = Duration::from_secs(30 * 60);
 /// Native media prepared for an approved request: JPEG, longest side 2048 px.
 const MEDIA_MAX_SIDE: u32 = 2048;
 const MEDIA_QUALITY: u32 = 85;
+/// Page thumbnails: longest side (the local encoder's minimum) and quality.
+const THUMB_SIDE: u32 = 256;
+const THUMB_QUALITY: u32 = 70;
 /// Longest audio a grant may approve for a direct listening request.
 pub const AUDIO_MAX_SECONDS: f64 = 300.0;
+/// Auto-lock waits for a task only while it keeps reporting progress, and
+/// never longer than the cap after the idle time ran out.
+const LOCK_STALL: Duration = Duration::from_secs(5 * 60);
+const LOCK_MAX_DEFER: Duration = Duration::from_secs(30 * 60);
+/// How long locking waits for task threads before they finish on their own.
+const LOCK_JOIN: Duration = Duration::from_secs(10);
+/// Finished tasks kept for the task centre during one session.
+const KEEP_FINISHED: usize = 200;
 
 /// Where the excerpts shown in a preview come from.
 enum Excerpts {
@@ -76,12 +87,19 @@ pub struct TaskState {
     pub progress: Option<Progress>,
     pub envelope: Option<Value>,
     pub started_at: String,
+    /// A failed or stopped interface task that can be started again as it was.
+    pub retryable: bool,
 }
 
 struct Task {
     state: TaskState,
     cancel: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// Start or last progress report: auto-lock waits only for moving tasks.
+    moved: Instant,
+    /// Input of a local task the user started from the interface (no grant,
+    /// no confirmation): `retry_task` starts it again with the same input.
+    retry: Option<Value>,
 }
 
 struct Session {
@@ -110,6 +128,8 @@ pub struct CoreService {
     tokens: Mutex<HashMap<String, (String, String, Instant)>>,
     sink: Arc<Sink>,
     activity: Mutex<Instant>,
+    /// When auto-lock first waited for running tasks (cleared by activity).
+    deferred: Mutex<Option<Instant>>,
     failures: Mutex<(u32, Option<Instant>)>,
 }
 
@@ -138,18 +158,23 @@ impl CoreService {
             tokens: Mutex::new(HashMap::new()),
             sink: Arc::new(sink),
             activity: Mutex::new(Instant::now()),
+            deferred: Mutex::new(None),
             failures: Mutex::new((0, None)),
         }))
     }
 
+    /// User activity (input in the window). Only this keeps the vault from
+    /// auto-locking; background reads and task progress do not.
     pub fn touch(&self) {
         if let Ok(mut last) = self.activity.lock() {
             *last = Instant::now();
         }
+        if let Ok(mut deferred) = self.deferred.lock() {
+            *deferred = None;
+        }
     }
 
     fn vault(&self) -> Result<VaultHandle> {
-        self.touch();
         self.session.lock().map_err(|_| Error::Integrity)?.as_ref().map(|s| s.vault.clone()).ok_or(Error::Locked)
     }
 
@@ -241,7 +266,14 @@ impl CoreService {
         // a request that left without a recorded reply has an unknown outcome.
         opened.db().execute("UPDATE flow_runs SET status='interrupted',reason='app_exit',updated_at=? WHERE status IN ('running','resuming')", [now_rfc3339()])?;
         opened.db().execute("UPDATE generation_requests SET status='unknown',finished_at=? WHERE status='sent'", [now_rfc3339()])?;
+        handlers::observe::sweep_native(&opened)?;
         self.install_session(handle.into(), opened)?;
+        // API keys sealed with the earlier public entropy move to the secret one.
+        if let Ok(migrated) = self.credential_store().and_then(|store| store.migrate_legacy()) {
+            if migrated > 0 {
+                self.services.log.event("credential.migrated", &[("count", crate::logging::Field::Count(migrated as i64))]);
+            }
+        }
         self.protected_audit("unlock")?;
         self.services.log.event("vault.unlocked", &[("kdf_ms", crate::logging::Field::Millis(started.elapsed().as_millis() as u64)), ("recovery", crate::logging::Field::Flag(matches!(secret, Secret::Recovery(_))))]);
         Ok(info)
@@ -261,7 +293,8 @@ impl CoreService {
         Ok(())
     }
 
-    /// Lock: stop tasks, drop keys and sensitive workers, forget view tokens.
+    /// Lock: stop tasks, forget the session and view tokens at once, then give
+    /// task threads a bounded time to end and stop the sensitive workers.
     pub fn lock(&self) -> Result<()> {
         let ids: Vec<String> = self.tasks.lock().map_err(|_| Error::Integrity)?.keys().cloned().collect();
         for id in &ids {
@@ -273,35 +306,78 @@ impl CoreService {
                 let _ = self.cancel_task(id);
             }
         }
+        if self.is_unlocked() {
+            let _ = self.protected_audit("lock");
+        }
+        // From here no command reaches the vault, whatever a task thread is
+        // still finishing; the keys go when the last handle is dropped.
+        let session = self.session.lock().map_err(|_| Error::Integrity)?.take();
+        self.tokens.lock().map_err(|_| Error::Integrity)?.clear();
+        // Stopping the workers also ends any task thread waiting for them.
+        self.services.stop_sensitive();
         let threads: Vec<std::thread::JoinHandle<()>> = {
             let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
             tasks.values_mut().filter_map(|t| t.thread.take()).collect()
         };
+        let deadline = Instant::now() + LOCK_JOIN;
+        let mut detached = 0i64;
         for thread in threads {
-            let _ = thread.join();
+            while !thread.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                detached += 1;
+            }
         }
-        if self.is_unlocked() {
-            let _ = self.protected_audit("lock");
-        }
-        self.session.lock().map_err(|_| Error::Integrity)?.take();
-        self.tokens.lock().map_err(|_| Error::Integrity)?.clear();
+        drop(session);
         self.tasks.lock().map_err(|_| Error::Integrity)?.clear();
+        if let Ok(mut deferred) = self.deferred.lock() {
+            *deferred = None;
+        }
         self.services.stop_sensitive();
-        self.services.log.event("vault.locked", &[]);
+        self.services.log.event("vault.locked", &[("detached", crate::logging::Field::Count(detached))]);
         Ok(())
     }
 
+    /// Whether a Windows session lock or sleep locks the vault (user setting,
+    /// on by default). Never waits for a busy vault: then it says yes.
+    pub fn lock_on_system_lock(&self) -> bool {
+        let Ok(session) = self.session.lock() else { return false };
+        let Some(handle) = session.as_ref().map(|s| s.vault.clone()) else { return false };
+        drop(session);
+        let Ok(vault) = handle.try_lock() else { return true };
+        vault.setting("lock_on_system_lock").ok().flatten().map(|value| value != "0").unwrap_or(true)
+    }
+
+    /// The lock settings shown on the settings page (reading is not activity).
+    pub fn lock_policy(&self) -> Result<Value> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let minutes: u64 = vault.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1);
+        let system = vault.setting("lock_on_system_lock")?.map(|value| value != "0").unwrap_or(true);
+        Ok(json!({"auto_lock_minutes": minutes, "lock_on_system_lock": system}))
+    }
+
     /// Called periodically by the shell; locks after the configured idle time.
+    /// Tasks that keep reporting progress may delay the lock, at most by
+    /// `LOCK_MAX_DEFER`; a task without progress for `LOCK_STALL` does not.
     pub fn auto_lock_tick(&self) -> Result<bool> {
-        let Ok(handle) = self.vault() else { return Ok(false) };
-        let minutes: u64 = handle.lock().map_err(|_| Error::Integrity)?.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15);
-        let busy = self.tasks.lock().map_err(|_| Error::Integrity)?.values().any(|t| t.state.status == "running");
+        // Reading the policy is not user activity (it must not touch).
+        let Some(handle) = self.session.lock().map_err(|_| Error::Integrity)?.as_ref().map(|s| s.vault.clone()) else { return Ok(false) };
+        let minutes: u64 = handle.lock().map_err(|_| Error::Integrity)?.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1);
         let idle = self.activity.lock().map_err(|_| Error::Integrity)?.elapsed();
-        if !busy && idle >= Duration::from_secs(minutes * 60) {
-            self.lock()?;
-            return Ok(true);
+        if idle < Duration::from_secs(minutes * 60) {
+            return Ok(false);
         }
-        Ok(false)
+        let moving = self.tasks.lock().map_err(|_| Error::Integrity)?.values().any(|t| t.state.status == "running" && t.moved.elapsed() < LOCK_STALL);
+        let waited = self.deferred.lock().map_err(|_| Error::Integrity)?.get_or_insert_with(Instant::now).elapsed();
+        if moving && waited < LOCK_MAX_DEFER {
+            return Ok(false);
+        }
+        self.lock()?;
+        Ok(true)
     }
 
     pub fn change_passphrase(&self, current: Zeroizing<String>, new: Zeroizing<String>) -> Result<()> {
@@ -522,14 +598,51 @@ impl CoreService {
     /// Start a skill on a worker thread; progress/finish events go to the sink.
     pub fn start_skill(self: &Arc<Self>, skill: &str, input: Value, action: &str) -> Result<String> {
         let (handle, invocation) = self.begin(skill, &input, action)?;
-        self.spawn(skill, input, handle, invocation)
+        let retry = (action == "ui").then(|| input.clone());
+        self.spawn_with(skill, input, handle, invocation, retry)
+    }
+
+    /// Start a failed or stopped interface task again with its original input
+    /// (a new root; imports are idempotent per file selection).
+    pub fn retry_task(self: &Arc<Self>, id: &str) -> Result<String> {
+        let (skill, input) = {
+            let tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
+            let task = tasks.get(id).ok_or(Error::Denied)?;
+            if !task.state.retryable {
+                return Err(Error::Denied);
+            }
+            (task.state.skill.clone(), task.retry.clone().ok_or(Error::Denied)?)
+        };
+        let started = self.start_skill(&skill, input, "ui")?;
+        if let Some(task) = self.tasks.lock().map_err(|_| Error::Integrity)?.get_mut(id) {
+            task.state.retryable = false;
+        }
+        Ok(started)
     }
 
     fn spawn(self: &Arc<Self>, skill: &str, input: Value, handle: VaultHandle, invocation: crate::runtime::Invocation) -> Result<String> {
+        self.spawn_with(skill, input, handle, invocation, None)
+    }
+
+    fn spawn_with(self: &Arc<Self>, skill: &str, input: Value, handle: VaultHandle, invocation: crate::runtime::Invocation, retry: Option<Value>) -> Result<String> {
         let task_id = format!("task_{}", uuid::Uuid::new_v4().simple());
         let cancel = Arc::new(AtomicBool::new(false));
-        let state = TaskState { task_id: task_id.clone(), skill: skill.into(), root: invocation.root_id().into(), status: "running".into(), progress: None, envelope: None, started_at: now_rfc3339() };
-        self.tasks.lock().map_err(|_| Error::Integrity)?.insert(task_id.clone(), Task { state, cancel: cancel.clone(), thread: None });
+        let state = TaskState {
+            task_id: task_id.clone(), skill: skill.into(), root: invocation.root_id().into(), status: "running".into(), progress: None, envelope: None, started_at: now_rfc3339(), retryable: false,
+        };
+        {
+            let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
+            // Keep the most recent finished tasks only; running ones always stay.
+            let mut finished: Vec<(String, String)> = tasks.iter().filter(|(_, t)| t.state.status != "running").map(|(id, t)| (t.state.started_at.clone(), id.clone())).collect();
+            if finished.len() >= KEEP_FINISHED {
+                finished.sort();
+                let excess = finished.len() + 1 - KEEP_FINISHED;
+                for (_, id) in finished.into_iter().take(excess) {
+                    tasks.remove(&id);
+                }
+            }
+            tasks.insert(task_id.clone(), Task { state, cancel: cancel.clone(), thread: None, moved: Instant::now(), retry });
+        }
         let service = self.clone();
         let id = task_id.clone();
         let thread = std::thread::spawn(move || {
@@ -540,16 +653,23 @@ impl CoreService {
                 if let Ok(mut tasks) = tasks.lock() {
                     if let Some(task) = tasks.get_mut(&progress_id) {
                         task.state.progress = Some(progress.clone());
+                        task.moved = Instant::now();
                     }
                 }
                 sink(TaskEvent { task_id: progress_id.clone(), kind: "progress", progress: Some(progress), envelope: None });
             };
             let ctx = Ctx { vault: &handle, services: &service.services, cancel: &cancel, progress: &on_progress };
-            // A cancelled root can no longer seal an envelope; report it as cancelled.
-            let mut envelope = handlers::execute(&ctx, &invocation, &input).unwrap_or_else(|error| match error {
-                Error::Cancelled => json!({"status": "cancelled", "warnings": [{"code": "cancelled", "message": "任务已停止、撤销或空间已锁定。"}]}),
-                other => json!({"status": "failed", "warnings": [{"code": other.code(), "message": "执行失败"}]}),
-            });
+            // A cancelled root can no longer seal an envelope; report it as
+            // cancelled. A panic ends the task as failed instead of leaving it
+            // "running" (which would also hold off the auto-lock).
+            let executed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handlers::execute(&ctx, &invocation, &input)));
+            let mut envelope = match executed {
+                Ok(result) => result.unwrap_or_else(|error| match error {
+                    Error::Cancelled => json!({"status": "cancelled", "warnings": [{"code": "cancelled", "message": "任务已停止、撤销或空间已锁定。"}]}),
+                    other => json!({"status": "failed", "warnings": [{"code": other.code(), "message": "执行失败"}]}),
+                }),
+                Err(_) => json!({"status": "failed", "warnings": [{"code": "internal_error", "message": "执行异常结束；请锁定后重新解锁再试。"}]}),
+            };
             // A flow stopped by lock, exit or a vanished orchestrator keeps its
             // root; it can be continued after a new confirmation.
             if envelope["status"] == "cancelled" || envelope["status"] == "failed" {
@@ -557,10 +677,18 @@ impl CoreService {
                     envelope = json!({"status": "interrupted", "flow_run": run, "warnings": [{"code": "flow_interrupted", "message": "任务已中断；可在确认后从中断处继续。"}]});
                 }
             }
+            // Model copies of approved media live only as long as the task can
+            // still send them; an interrupted run keeps them for its continuation.
+            if envelope["status"] != "interrupted" {
+                if let Ok(vault) = handle.lock() {
+                    let _ = handlers::observe::release_root_native(&vault, invocation.root_id());
+                }
+            }
             if let Ok(mut tasks) = service.tasks.lock() {
                 if let Some(task) = tasks.get_mut(&id) {
                     task.state.status = envelope["status"].as_str().unwrap_or("failed").into();
                     task.state.envelope = Some(envelope.clone());
+                    task.state.retryable = task.retry.is_some() && matches!(task.state.status.as_str(), "failed" | "cancelled");
                 }
             }
             (service.sink)(TaskEvent { task_id: id.clone(), kind: "finished", progress: None, envelope: Some(envelope) });
@@ -694,6 +822,7 @@ impl CoreService {
         let root: String = vault.db().query_row("SELECT root FROM flow_runs WHERE id=? AND status IN ('interrupted','stale')", [run], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
         vault.db().execute("UPDATE flow_runs SET status='cancelled',reason='discarded',updated_at=? WHERE id=?", params![now_rfc3339(), run])?;
         vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE root=? AND revoked_at IS NULL", params![now_rfc3339(), root])?;
+        handlers::observe::release_root_native(&vault, &root)?;
         vault.runtime.cancel_root(&root)
     }
 
@@ -718,6 +847,45 @@ impl CoreService {
         let vault = handle.lock().map_err(|_| Error::Integrity)?;
         let (skill, kind, payload) = vault.get_result(id)?;
         Ok(json!({"id": id, "skill": skill, "kind": kind, "payload": payload}))
+    }
+
+    /// "依据有误？": the user's own note on a result (which sentence, what is
+    /// wrong). It stays in the vault, is never sent, and is shown with the
+    /// result and in its copies.
+    pub fn create_feedback(&self, result: &str, claim: Option<&str>, issue: &str, note: &str) -> Result<String> {
+        let note = note.trim();
+        if !matches!(issue, "unsupported" | "wrong_source" | "contradiction" | "other") || note.chars().count() > 500 || claim.is_some_and(|c| c.is_empty() || c.len() > 80) {
+            return Err(Error::Contract);
+        }
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        vault.get_result(result)?;
+        let id = vault.register("FeedbackRef", "m2", Some(result))?;
+        vault.db().execute(
+            "INSERT INTO feedback(id,result_ref,claim_id,issue,note,created_at) VALUES(?,?,?,?,?,?)",
+            params![id, result, claim, issue, (!note.is_empty()).then_some(note), now_rfc3339()],
+        )?;
+        self.services.log.event("feedback.recorded", &[("issue", crate::logging::Field::Status(issue.to_owned()))]);
+        Ok(id)
+    }
+
+    pub fn feedback(&self, result: &str) -> Result<Value> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let mut statement = vault.db().prepare("SELECT f.id,f.claim_id,f.issue,f.note,f.created_at FROM feedback f JOIN objects o ON o.id=f.id WHERE f.result_ref=? AND o.active=1 ORDER BY f.created_at")?;
+        let rows = statement.query_map([result], |r| {
+            Ok(json!({"id": r.get::<_, String>(0)?, "claim_id": r.get::<_, Option<String>>(1)?, "issue": r.get::<_, String>(2)?, "note": r.get::<_, Option<String>>(3)?, "created_at": r.get::<_, String>(4)?}))
+        })?;
+        Ok(json!(rows.collect::<std::result::Result<Vec<_>, _>>()?))
+    }
+
+    pub fn remove_feedback(&self, id: &str) -> Result<()> {
+        let handle = self.vault()?;
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        vault.expect_kind(id, &["FeedbackRef"])?;
+        vault.db().execute("DELETE FROM feedback WHERE id=?", [id])?;
+        vault.db().execute("UPDATE objects SET active=0 WHERE id=?", [id])?;
+        Ok(())
     }
 
     fn issue_token(&self, blob: &str, mime: &str) -> Result<String> {
@@ -760,6 +928,41 @@ impl CoreService {
         };
         Ok(json!({"page_id": page, "version_id": row.0, "page_no": row.1, "source": row.2, "width": row.3, "height": row.4, "image_token": token,
             "rotation_turns": row.6, "unwarped": row.7 != 0, "blocks": blocks, "chunks": chunks}))
+    }
+
+    /// A small JPEG of one page for the inspector's page strip (design 9.4),
+    /// made locally from the page's display image (native PDF pages are
+    /// rendered first, as when the page is opened) and kept as an encrypted
+    /// blob owned by the page, so it is deleted with the version.
+    pub fn page_thumb(&self, page: &str) -> Result<Value> {
+        let handle = self.vault()?;
+        let cached = |vault: &Vault| -> Result<Option<String>> {
+            Ok(vault.db().query_row("SELECT id FROM blobs WHERE owner=? AND purpose='page_thumb'", [page], |r| r.get::<_, String>(0)).optional()?)
+        };
+        let existing = {
+            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            vault.expect_kind(page, &["PageRef"])?;
+            cached(&vault)?
+        };
+        let blob = match existing {
+            Some(blob) => blob,
+            None => {
+                let cancel = AtomicBool::new(false);
+                let sink = |_: Progress| {};
+                let ctx = Ctx { vault: &handle, services: &self.services, cancel: &cancel, progress: &sink };
+                let display = handlers::documents::ensure_display_image(&ctx, page)?;
+                let image = handle.lock().map_err(|_| Error::Integrity)?.get_blob(&display)?;
+                let encoded = self.services.local.call(&json!({"op": "encode_for_model", "png_base64": base64::engine::general_purpose::STANDARD.encode(&*image), "max_side": THUMB_SIDE, "quality": THUMB_QUALITY}), &cancel, Duration::from_secs(60))?;
+                let jpeg = base64::engine::general_purpose::STANDARD.decode(encoded["jpeg_base64"].as_str().ok_or(Error::Contract)?).map_err(|_| Error::Contract)?;
+                let vault = handle.lock().map_err(|_| Error::Integrity)?;
+                // Two strips may have asked for the same page at once.
+                match cached(&vault)? {
+                    Some(blob) => blob,
+                    None => vault.put_blob(page, "page_thumb", &jpeg)?,
+                }
+            }
+        };
+        Ok(json!({"page_id": page, "token": self.issue_token(&blob, "image/jpeg")?}))
     }
 
     /// Pages of a document version (ids and status only).
@@ -883,8 +1086,8 @@ impl CoreService {
 
     fn credential_store(&self) -> Result<crate::generation::credentials::CredentialStore> {
         let handle = self.vault()?;
-        let vault_id = handle.lock().map_err(|_| Error::Integrity)?.id.clone();
-        crate::generation::credentials::CredentialStore::for_vault(&self.services.layout.data_root, &vault_id)
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        crate::generation::credentials::CredentialStore::for_vault(&self.services.layout.data_root, &vault.id, &vault.keys.credential)
     }
 
     /// Secure input channel: the key is sealed with DPAPI immediately and only
@@ -1261,7 +1464,11 @@ impl CoreService {
     pub fn answer_cancel_preview(&self, grant: &str) -> Result<()> {
         let handle = self.vault()?;
         let vault = handle.lock().map_err(|_| Error::Integrity)?;
-        vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE id=? AND approved_at IS NULL", params![now_rfc3339(), grant])?;
+        let revoked = vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE id=? AND approved_at IS NULL", params![now_rfc3339(), grant])?;
+        if revoked == 1 {
+            // The images prepared for the preview were never sent; they go now.
+            handlers::observe::release_native(&vault, grant)?;
+        }
         Ok(())
     }
 
@@ -1381,6 +1588,35 @@ impl CoreService {
         let handle = self.vault()?;
         let vault = handle.lock().map_err(|_| Error::Integrity)?;
         vault.blob_files()
+    }
+
+    /// Lock-policy tests: how long the user has been idle, when a stand-in
+    /// running task last reported progress (it is added when `stalled` is
+    /// given) and since when the auto-lock has been deferred.
+    pub fn harness_lock_clock(&self, idle: Duration, stalled: Option<Duration>, deferred: Option<Duration>) -> Result<()> {
+        let now = Instant::now();
+        let back = |ago: Duration| now.checked_sub(ago).ok_or(Error::Contract);
+        *self.activity.lock().map_err(|_| Error::Integrity)? = back(idle)?;
+        if let Some(stalled) = stalled {
+            let moved = back(stalled)?;
+            let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
+            let task = tasks.entry("task_harness_running".into()).or_insert_with(|| Task {
+                state: TaskState {
+                    task_id: "task_harness_running".into(), skill: "document-import".into(), root: String::new(), status: "running".into(), progress: None, envelope: None,
+                    started_at: now_rfc3339(), retryable: false,
+                },
+                cancel: Arc::new(AtomicBool::new(false)),
+                thread: None,
+                moved,
+                retry: None,
+            });
+            task.moved = moved;
+        }
+        *self.deferred.lock().map_err(|_| Error::Integrity)? = match deferred {
+            Some(ago) => Some(back(ago)?),
+            None => None,
+        };
+        Ok(())
     }
 
     pub fn harness_vault_dir(&self) -> Result<PathBuf> {

@@ -31,18 +31,20 @@ pub enum Launcher {
 const SOURCE_BOOT:&str="import sys;sys.path[:0]=[sys.argv.pop(1),sys.argv.pop(1)];from agent_core.worker import main;raise SystemExit(main())";
 
 impl Launcher {
-    pub fn policy(&self,arguments:Vec<String>,mut read_only:Vec<PathBuf>,scratch:PathBuf,memory_limit:usize)->Result<SpawnPolicy> {
+    /// `runtime`: shared read-only resources of this worker (model artefacts,
+    /// tokenizer), granted once through the runtime capability like the bundle.
+    pub fn policy(&self,arguments:Vec<String>,mut runtime:Vec<PathBuf>,scratch:PathBuf,memory_limit:usize)->Result<SpawnPolicy> {
         match self {
             Launcher::Frozen{directory}=>{
-                read_only.insert(0,directory.clone());
-                Ok(SpawnPolicy{executable:directory.join("lvjin-worker.exe"),arguments,read_only,scratch,memory_limit})
+                runtime.insert(0,directory.clone());
+                Ok(SpawnPolicy{executable:directory.join("lvjin-worker.exe"),arguments,runtime,read_only:vec![],scratch,memory_limit})
             }
             #[cfg(feature="dev-worker")]
             Launcher::Source{python,base,site,app}=>{
-                read_only.extend([base.clone(),site.clone(),app.clone()]);
+                runtime.extend([base.clone(),site.clone(),app.clone()]);
                 let mut all=vec!["-I".into(),"-B".into(),"-u".into(),"-c".into(),SOURCE_BOOT.into(),strip(site)?,strip(app)?];
                 all.extend(arguments);
-                Ok(SpawnPolicy{executable:python.clone(),arguments:all,read_only,scratch,memory_limit})
+                Ok(SpawnPolicy{executable:python.clone(),arguments:all,runtime,read_only:vec![],scratch,memory_limit})
             }
         }
     }

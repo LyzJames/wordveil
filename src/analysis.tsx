@@ -8,6 +8,7 @@ import { api, money, type AnswerPreview, type EvidenceItem, type Snapshot } from
 import { EgressDialog } from './egress';
 import { EvidenceList } from './evidence';
 import { Icon } from './icons';
+import { loanFigures } from './money';
 import { sourceOf, useSession } from './session';
 import { newTurnId, type TurnKind } from './turns';
 import { Busy, Callout, ErrorLine, Field, Modal, useAction, useDismiss } from './ui';
@@ -189,12 +190,12 @@ function AnalysisModal({ workflow, matter, snapshot, onClose }: { workflow: Work
   );
 }
 
-const LABELS: Record<string, string> = {
-  total_lent: '借出合计', total_repaid: '已还合计', outstanding: '尚欠', total_received: '收到', total_paid: '付出', finance_cost: '资金成本',
-};
+const LABELS: Record<string, string> = { total_received: '收到', total_paid: '付出', finance_cost: '资金成本' };
 
 export function CalculationSummary({ result }: { result: Record<string, unknown> }) {
-  const figures = Object.entries(LABELS).filter(([key]) => typeof result[key] === 'string');
+  const figures: [string, string][] = result.mode === 'reconcile'
+    ? loanFigures(result)
+    : Object.entries(LABELS).filter(([key]) => typeof result[key] === 'string').map(([key, label]) => [label, result[key] as string]);
   if (!figures.length) {
     return (
       <details>
@@ -203,14 +204,18 @@ export function CalculationSummary({ result }: { result: Record<string, unknown>
       </details>
     );
   }
+  const unit = typeof result.currency === 'string' && result.currency !== 'CNY' ? result.currency : '元';
   return (
-    <dl className="figures">
-      {figures.map(([key, label]) => (
-        <div key={key} className="figure">
-          <dt>{label}</dt>
-          <dd>{money(result[key] as string)}<small>元</small></dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      <dl className="figures">
+        {figures.map(([label, value]) => (
+          <div key={label} className="figure">
+            <dt>{label}</dt>
+            <dd>{money(value)}<small>{unit}</small></dd>
+          </div>
+        ))}
+      </dl>
+      {typeof result.note === 'string' && <p className="t-caption text-tertiary">{result.note}</p>}
+    </>
   );
 }

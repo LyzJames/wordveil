@@ -251,3 +251,19 @@ ol.plain.numbered { list-style: decimal; padding-left: 20px; }
 .interrupted { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 6px; }
 .interrupted li { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .interrupted li .ellipsis { flex: 1; min-width: 0; }
+
+/* Citation preview (design 8.14), "依据有误？" notes and follow-ups (design 9.5). */
+.cite-card { position: fixed; z-index: 35; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow: hidden; }
+.cite-card .quote { margin: 2px 0; max-height: 9.5rem; overflow: hidden; overflow-wrap: anywhere; }
+.cite-card > .btn { align-self: flex-start; }
+.feedback-form { margin: 0 16px 12px; padding: 12px; border: 1px solid var(--stroke-subtle); border-radius: var(--radius-card); background: var(--surface-sunken); display: flex; flex-direction: column; gap: 10px; }
+.followups { align-items: center; max-width: var(--reading-w); }
+.due-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.due-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--stroke-subtle); border-radius: var(--radius-card); background: var(--surface); }
+.due-list .overdue { color: var(--danger-text); }
+
+/* Page thumbnails in the inspector (design 9.4). */
+.thumbs { display: flex; gap: 6px; overflow-x: auto; padding: 4px 2px 8px; }
+.thumbs button { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--stroke-subtle); border-radius: 6px; background: var(--surface); cursor: pointer; color: var(--text-secondary); font-size: 0.6875rem; }
+.thumbs button[aria-current="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent-text); }
+.thumbs img, .thumbs .thumb-blank { width: 56px; height: 72px; object-fit: contain; background: var(--surface-sunken); border-radius: 3px; }

@@ -295,7 +295,12 @@ pub fn read_sse(reader: Box<dyn Read + Send>, cancel: &AtomicBool, mut on_event:
             return Err(Error::Cancelled);
         }
         line.clear();
-        let read = lines.read_line(&mut line).map_err(|e| io_error(&e))?;
+        // A single line is bounded as well: a stream that never sends a
+        // newline cannot grow memory without limit.
+        let read = (&mut lines).take(EVENT_LIMIT as u64 + 2).read_line(&mut line).map_err(|e| io_error(&e))?;
+        if read > EVENT_LIMIT && !line.ends_with('\n') {
+            return Err(Error::Remote("stream_event_too_large".into()));
+        }
         if read == 0 {
             if !data.is_empty() {
                 on_event(SseEvent { event: event.take(), data: std::mem::take(&mut data) })?;

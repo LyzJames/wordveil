@@ -300,10 +300,11 @@ export function CalcTab({ matter, snapshot: s }: { matter: string; snapshot: Sna
   const [excludeTransfer, setExcludeTransfer] = useState(true);
   const [refund, setRefund] = useState('separate');
   const [loanMode, setLoanMode] = useState('reconcile');
+  const [perspective, setPerspective] = useState('auto');
   const [result, setResult] = useState<CalcOutcome | null>(null);
   const { busy, run } = useAction();
   const candidates = s.cashflows.filter((c) => c.status === 'candidate').length;
-  const key = JSON.stringify([type, [...chosen].sort(), period, excludeTransfer, refund, loanMode]);
+  const key = JSON.stringify([type, [...chosen].sort(), period, excludeTransfer, refund, loanMode, perspective]);
 
   async function calculate() {
     const values: Record<string, unknown> = {};
@@ -312,6 +313,7 @@ export function CalcTab({ matter, snapshot: s }: { matter: string; snapshot: Sna
     if (!excludeTransfer) values.exclude_kinds = [];
     if (refund !== 'separate') values.refund_policy = refund;
     if (type === 'loan' && loanMode !== 'reconcile') values.loan_mode = loanMode;
+    if (type === 'loan' && loanMode === 'reconcile' && perspective !== 'auto') values.loan_perspective = perspective;
     const outcome = await run(async () => {
       let assumptions: string[] = [];
       if (Object.keys(values).length) {
@@ -351,17 +353,29 @@ export function CalcTab({ matter, snapshot: s }: { matter: string; snapshot: Sna
         {(type === 'sum' || type === 'budget') && (
           <>
             <label className="check"><input type="checkbox" checked={excludeTransfer} onChange={(e) => setExcludeTransfer(e.target.checked)} /> 不计入“本人转账”</label>
-            {type === 'sum' && (
-              <Field label="退款口径">
-                <select value={refund} onChange={(e) => setRefund(e.target.value)}><option value="separate">单独列示退款</option><option value="net">退款计入收入</option></select>
-              </Field>
-            )}
+            <Field label="退款口径">
+              <select value={refund} onChange={(e) => setRefund(e.target.value)}>
+                <option value="separate">单独列示退款</option>
+                <option value="net">{type === 'sum' ? '退款计入收支' : '退款冲减同类支出'}</option>
+              </select>
+            </Field>
           </>
         )}
         {type === 'loan' && (
-          <Field label="对账方式">
-            <select value={loanMode} onChange={(e) => setLoanMode(e.target.value)}><option value="reconcile">出借人视角：借出与还款余额</option><option value="compare">借款成本：收到与付出及年化</option></select>
-          </Field>
+          <>
+            <Field label="对账方式">
+              <select value={loanMode} onChange={(e) => setLoanMode(e.target.value)}><option value="reconcile">本金对账：本金、还款与利息费用分列</option><option value="compare">借款成本：收到与付出及年化</option></select>
+            </Field>
+            {loanMode === 'reconcile' && (
+              <Field label="你在这笔借款中是" hint="自动判断依据记录类型：有“借出”是出借人，有“收到本金”是借款人；两种都有时请选择。">
+                <select value={perspective} onChange={(e) => setPerspective(e.target.value)}>
+                  <option value="auto">自动判断</option>
+                  <option value="lender">出借人（钱借给别人）</option>
+                  <option value="borrower">借款人（向别人借钱）</option>
+                </select>
+              </Field>
+            )}
+          </>
         )}
         <details>
           <summary>参与计算的记录（{chosen.size}/{confirmed.length}）</summary>
@@ -450,10 +464,27 @@ function CalcView({ result, name, stale, onRecalculate, busy }: { result: CalcOu
         <>
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>月份</th><th className="num">收入（{unit}）</th><th className="num">支出（{unit}）</th><th className="num">支出环比</th></tr></thead>
-              <tbody>{(c.months as any[]).map((m) => <tr key={m.month}><td className="num">{m.month}</td><td className="num"><Amount value={m.income} /></td><td className="num"><Amount value={m.expense} /></td><td className="num">{m.expense_change_ratio ? `${(Number(m.expense_change_ratio) * 100).toFixed(1)}%` : '—'}</td></tr>)}</tbody>
+              <thead>
+                <tr>
+                  <th>月份</th><th className="num">收入（{unit}）</th><th className="num">支出（{unit}）</th>
+                  {r.trace?.refund_policy !== 'net' && <th className="num">退款（{unit}）</th>}
+                  <th className="num">支出环比</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(c.months as any[]).map((m) => (
+                  <tr key={m.month}>
+                    <td className="num">{m.month}</td><td className="num"><Amount value={m.income} /></td><td className="num"><Amount value={m.expense} /></td>
+                    {r.trace?.refund_policy !== 'net' && <td className="num"><Amount value={m.refund ?? '0'} /></td>}
+                    <td className="num">{m.expense_change_ratio ? `${(Number(m.expense_change_ratio) * 100).toFixed(1)}%` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
+          <p className="t-caption text-tertiary" style={{ marginTop: 6 }}>
+            {r.trace?.refund_policy === 'net' ? '退款已冲减同类别的支出。' : '退款单独列示，不计入支出与环比；收到退款为正、退还别人为负。'}
+          </p>
           <div className="two-col" style={{ marginTop: 16 }}>
             <div>
               <h3 className="t-subtitle">支出异常（环比变化 ≥ {(Number(r.trace?.anomaly_threshold ?? 0.3) * 100).toFixed(0)}%）</h3>
@@ -469,18 +500,28 @@ function CalcView({ result, name, stale, onRecalculate, busy }: { result: CalcOu
       {result.payload.calculation_type === 'loan' &&
         (r.mode === 'reconcile' ? (
           <>
+            <p className="t-caption text-secondary" style={{ marginBottom: 8 }}>
+              {r.perspective === 'borrower' ? '你是借款人（向别人借钱）' : '你是出借人（钱借给别人）'}
+              {result.payload.assumptions_used.loan_perspective && result.payload.assumptions_used.loan_perspective !== 'auto' ? '，按你的选择' : '，按记录类型自动判断'}
+            </p>
             <dl className="figures">
-              <Figure label="借出合计" value={money(r.total_lent)} />
-              <Figure label="已还合计" value={money(r.total_repaid)} />
-              <Figure label="尚欠" value={money(r.outstanding)} />
-              <Figure label="状态" value={({ outstanding: '未结清', settled: '已结清', overpaid: '多还' } as Record<string, string>)[r.status]} unit="" />
+              {loanFigures(r).map(([label, value]) => <Figure key={label} label={label} value={money(value)} unit={unit} />)}
+              <Figure label="本金状态" value={({ outstanding: '未结清', settled: '已结清', overpaid: '多还' } as Record<string, string>)[r.status]} unit="" />
             </dl>
             <div className="table-wrap" style={{ marginTop: 16 }}>
               <table className="table">
-                <thead><tr><th>日期</th><th>类型</th><th className="num">金额（元）</th><th className="num">余额（元）</th></tr></thead>
-                <tbody>{(r.rows as any[]).map((x) => <tr key={x.id}><td className="num">{x.date}</td><td>{KINDS[x.kind] ?? x.kind}</td><td className="num"><Amount value={x.amount} direction={x.direction} /></td><td className="num"><Amount value={x.balance_after} /></td></tr>)}</tbody>
+                <thead><tr><th>日期</th><th>类型</th><th>计入</th><th className="num">金额（{unit}）</th><th className="num">本金余额（{unit}）</th></tr></thead>
+                <tbody>
+                  {(r.rows as any[]).map((x) => (
+                    <tr key={x.id}>
+                      <td className="num">{x.date}</td><td>{KINDS[x.kind] ?? x.kind}</td><td>{LOAN_PART[x.part] ?? x.part}</td>
+                      <td className="num"><Amount value={x.amount} direction={x.direction} /></td><td className="num"><Amount value={x.principal_balance_after} /></td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
             </div>
+            {r.note && <p className="t-caption text-tertiary" style={{ marginTop: 8 }}>{r.note}</p>}
           </>
         ) : (
           <dl className="figures">
@@ -498,6 +539,21 @@ function CalcView({ result, name, stale, onRecalculate, busy }: { result: CalcOu
       )}
     </section>
   );
+}
+
+const LOAN_PART: Record<string, string> = { principal: '本金', repayment: '还本', interest: '利息', fee: '费用' };
+
+/** Principal, repayments, interest and fees named from the user's side. */
+export function loanFigures(r: Record<string, any>): [string, string][] {
+  const lender = r.perspective !== 'borrower';
+  const rows: [string, string | undefined][] = [
+    [lender ? '借出本金' : '借入本金', r.principal],
+    [lender ? '已收回本金' : '已还本金', r.principal_repaid],
+    [lender ? '对方尚欠本金' : '你尚欠本金', r.outstanding],
+    [lender ? '收到利息' : '已付利息', r.interest],
+    ['费用', r.fees],
+  ];
+  return rows.filter((row): row is [string, string] => typeof row[1] === 'string');
 }
 
 function Irr({ irr }: { irr: { status: string; annual_rate?: string; roots?: string[] } }) {

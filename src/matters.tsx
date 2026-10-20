@@ -692,7 +692,7 @@ function TimelineTab({ matter, snapshot: s }: { matter: string; snapshot: Snapsh
           <Field label="截止日期（可选）"><input type="date" value={due} onChange={(e) => setDue(e.target.value)} /></Field>
           <div><button className="btn" disabled={busy || !title.trim()}>添加待办</button></div>
         </form>
-        <p className="t-caption text-tertiary" style={{ marginTop: 8 }}>本版本记录待办与日期；到期提醒需要应用保持运行的本机提醒功能，将在后续版本提供。</p>
+        <p className="t-caption text-tertiary" style={{ marginTop: 8 }}>两周内到期和已逾期的未完成待办会显示在工作台的“需要你处理”；系统通知式的到期提醒将在后续版本提供。</p>
       </div>
     </section>
   );

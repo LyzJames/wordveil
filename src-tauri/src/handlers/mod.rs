@@ -65,18 +65,15 @@ pub fn completed(data_ref: Option<String>) -> EnvelopeParts {
     EnvelopeParts { status: "completed".into(), data_ref, ..Default::default() }
 }
 
-/// Skills whose execution is not part of this version report the precise
-/// reason instead of fabricating a result.
-fn unavailable(skill: &str) -> EnvelopeParts {
-    let (status, code, message) = match skill {
-        "media-observe" => (
-            "requires_generation",
-            "native_media_not_in_this_version",
-            "直接读取图片、音频或视频的原生复核将在后续版本接入；当前按本机识别与转写的文字处理。",
-        ),
-        _ => ("needs_authorization", "network_capability_not_in_this_version", "联网检索、公共知识更新与外部工具在后续版本提供，当前不发起这类网络请求。"),
-    };
-    EnvelopeParts { status: status.into(), warnings: vec![(code.into(), message.into())], ..Default::default() }
+/// Skills whose execution is not part of this version (web research,
+/// knowledge updates, external tools) report the precise reason instead of
+/// fabricating a result.
+fn unavailable() -> EnvelopeParts {
+    EnvelopeParts {
+        status: "needs_authorization".into(),
+        warnings: vec![("network_capability_not_in_this_version".into(), "联网检索、公共知识更新与外部工具在后续版本提供，当前不发起这类网络请求。".into())],
+        ..Default::default()
+    }
 }
 
 pub fn run(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
@@ -107,7 +104,7 @@ pub fn run(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
         "connection-settings" => connections::settings(ctx, invocation, input),
         "lvjin-retrieval" => workflows::retrieval(ctx, invocation, input),
         "contract-review" | "loan-analysis" | "budget-analysis" => workflows::analysis(ctx, invocation, input),
-        other => Ok(unavailable(other)),
+        _ => Ok(unavailable()),
     }
 }
 
@@ -119,6 +116,8 @@ pub fn failure(error: &Error) -> EnvelopeParts {
         Error::NeedsInput("api_key") => ("needs_input", "该连接没有可用的 API Key，请在“生成接口”中重新填写。"),
         Error::NeedsInput(_) => ("needs_input", "需要补充信息后才能继续。"),
         Error::Worker(code) if code == "password_required" || code == "password_incorrect" => ("needs_input", "该文件已加密，需要正确的打开密码。"),
+        Error::Worker(code) if code == "finance_loan_perspective_ambiguous" => ("needs_input", "金额记录里既有借出也有收到借款，无法判断你是出借人还是借款人；请在计算页选择视角后再算。"),
+        Error::Worker(code) if code == "finance_loan_perspective_unknown" => ("needs_input", "金额记录里没有“借出”或“收到借款”，无法判断你是出借人还是借款人；请在计算页选择视角后再算。"),
         Error::Integrity => ("failed", "完整性校验失败：资源、数据或索引与记录不一致。"),
         Error::Denied => ("failed", "无权访问该对象，或对象不在当前范围内。"),
         Error::Contract => ("failed", "请求不符合正式合同。"),

@@ -244,7 +244,7 @@ pub(crate) fn deliver_answer(ctx: &Ctx, invocation: &Invocation, draft: &str, re
         warn(parts, "insufficient_evidence", "依据不足：已说明缺少哪些信息。");
     }
     Ok(json!({"draft_ref": draft, "validation_report_ref": report, "version": draft_payload["version"], "revisions": revisions,
-        "insufficient_evidence": draft_payload["insufficient_evidence"], "sections": Value::Object(sections),
+        "insufficient_evidence": draft_payload["insufficient_evidence"], "sections": Value::Object(sections), "follow_ups": draft_payload["follow_ups"],
         "labels": labels.iter().map(|(l, r)| json!({"label": l, "evidence_id": r})).collect::<Vec<_>>(),
         "coverage": report_payload["coverage"], "verification_note": report_payload["note"]}))
 }

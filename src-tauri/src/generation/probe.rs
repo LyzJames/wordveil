@@ -6,7 +6,7 @@
 //! rate-limit, timeout and network failures are `unavailable` (temporary), not
 //! a permanent "unsupported". Native audio, video and joint media are not
 //! exercised in this version and stay `unknown`.
-use super::{GenRequest, GenResponse, Message, OutputMode, Part, Profile, Protocol, ToolSpec, adapters};
+use super::{GenRequest, GenResponse, Message, OutputMode, Part, Profile, Protocol, ToolSpec};
 use crate::Error;
 use serde_json::{Value, json};
 use std::sync::atomic::AtomicBool;
@@ -101,9 +101,8 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
         record(&result);
         results.push(result);
     };
-    let mut ignore = |_: &str| {};
     // 1. Plain text: the baseline; if it is unavailable the rest is not tried.
-    let text = adapters::call(profile, key, &text_request("17 加 25 等于多少？只回复阿拉伯数字。", OutputMode::Text, false), cancel, &mut ignore);
+    let text = super::call_cancellable(profile, key, &text_request("17 加 25 等于多少？只回复阿拉伯数字。", OutputMode::Text, false), cancel);
     let baseline = match &text {
         Ok(response) if has_42(&response.text) => {
             push(ok("text", response, "合成算术题返回了正确的纯文本".into(), json!({"max_output_tokens_requested": 256})), &mut results);
@@ -124,7 +123,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
         }
     } else {
         // 2. Streaming.
-        match adapters::call(profile, key, &text_request("17 加 25 等于多少？只回复阿拉伯数字。", OutputMode::Text, true), cancel, &mut ignore) {
+        match super::call_cancellable(profile, key, &text_request("17 加 25 等于多少？只回复阿拉伯数字。", OutputMode::Text, true), cancel) {
             Ok(response) if response.stream_deltas > 0 && has_42(&response.text) => {
                 let evidence = format!("收到 {} 段增量，内容完整{}", response.stream_deltas, if response.usage.output_tokens > 0 { "，含用量" } else { "，未返回用量" });
                 push(ok("streaming", &response, evidence, json!({"usage_in_stream": response.usage.output_tokens > 0})), &mut results)
@@ -136,7 +135,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
         let tool = ToolSpec { name: "record_sum".into(), description: "记录两个整数的加法。".into(), parameters: json!({"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"], "additionalProperties": false}) };
         let mut request = text_request("请调用 record_sum 工具，参数 a 为 17，b 为 25。", OutputMode::Text, false);
         request.tools = vec![tool];
-        match adapters::call(profile, key, &request, cancel, &mut ignore) {
+        match super::call_cancellable(profile, key, &request, cancel) {
             Ok(response) => match response.tool_calls.iter().find(|c| c.name == "record_sum").and_then(|c| serde_json::from_str::<Value>(&c.arguments).ok()) {
                 Some(arguments) if arguments["a"] == json!(17) && arguments["b"] == json!(25) => push(ok("tool_calling", &response, "返回了参数正确的工具调用".into(), Value::Null), &mut results),
                 Some(_) => push(wrong("tool_calling", &response, "返回了工具调用，但参数不符".into()), &mut results),
@@ -148,7 +147,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
         if profile.protocol == Protocol::AnthropicMessages {
             push(ProbeResult { capability: "json_object", status: "unsupported", evidence: "该协议没有 JSON 对象模式；结构化输出改用强制工具输入".into(), limits: Value::Null, input_tokens: 0, output_tokens: 0, sent: false }, &mut results);
         } else {
-            match adapters::call(profile, key, &text_request("以 JSON 对象返回 17 加 25 的结果，格式为 {\"sum\": 数字}。只输出 JSON。", OutputMode::JsonObject, false), cancel, &mut ignore) {
+            match super::call_cancellable(profile, key, &text_request("以 JSON 对象返回 17 加 25 的结果，格式为 {\"sum\": 数字}。只输出 JSON。", OutputMode::JsonObject, false), cancel) {
                 Ok(response) => match parse_json(&response.text) {
                     Some(value) if value["sum"] == json!(42) => push(ok("json_object", &response, "返回了可解析的 JSON 对象".into(), Value::Null), &mut results),
                     _ => push(wrong("json_object", &response, "返回内容不是预期的 JSON".into()), &mut results),
@@ -159,7 +158,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
         // 5. Strict schema.
         let schema = json!({"type": "object", "properties": {"sum": {"type": "integer"}, "unit": {"type": "string", "enum": ["个"]}}, "required": ["sum", "unit"], "additionalProperties": false});
         let request = text_request("计算 17 加 25，unit 填“个”。", OutputMode::JsonSchema { name: "sum_result".into(), schema: schema.clone() }, false);
-        match adapters::call(profile, key, &request, cancel, &mut ignore) {
+        match super::call_cancellable(profile, key, &request, cancel) {
             Ok(response) => match parse_json(&response.text) {
                 Some(value) if value["sum"] == json!(42) && value["unit"] == json!("个") && value.as_object().is_some_and(|o| o.len() == 2) => {
                     push(ok("strict_schema", &response, "按给定 JSON Schema 返回了严格结构".into(), Value::Null), &mut results)
@@ -177,7 +176,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
             tools: vec![],
             stream: false,
         };
-        match adapters::call(profile, key, &request, cancel, &mut ignore) {
+        match super::call_cancellable(profile, key, &request, cancel) {
             Ok(response) if response.text.contains('3') || response.text.contains('三') => push(ok("vision", &response, "正确识别了合成图片中的红色方块数量".into(), json!({"tested_image": "PNG 192x96"})), &mut results),
             Ok(response) => push(wrong("vision", &response, "接受了图片，但回答与图片内容不符".into()), &mut results),
             Err(error) => push(failure("vision", &error), &mut results),
@@ -194,7 +193,7 @@ pub fn run(profile: &Profile, key: Option<&Zeroizing<String>>, cancel: &AtomicBo
                 tools: vec![],
                 stream: false,
             };
-            match adapters::call(profile, key, &request, cancel, &mut ignore) {
+            match super::call_cancellable(profile, key, &request, cancel) {
                 Ok(response) if response.text.contains('3') || response.text.contains('三') => push(ok("audio_input", &response, "正确数出了合成音频中的提示音".into(), json!({"tested_audio": "WAV 16 kHz 单声道 约 1.6 秒"})), &mut results),
                 Ok(response) => push(wrong("audio_input", &response, "接受了音频，但回答与音频内容不符".into()), &mut results),
                 Err(error) => push(failure("audio_input", &error), &mut results),

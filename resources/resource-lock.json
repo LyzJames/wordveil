@@ -119,8 +119,8 @@
     },
     {
       "path": "contracts/generation/draft_answer.wire.schema.json",
-      "bytes": 2878,
-      "sha256": "e14947340130e9a351ba76ca8a38f076ffd81e2ab339aedef87e24ab47b4be2f"
+      "bytes": 3094,
+      "sha256": "815458eedfcfceca3f9d60ddb4a204388edddd542072cfb4dfafaac8a84a196e"
     },
     {
       "path": "contracts/generation/role_analysis.input.schema.json",
@@ -200,7 +200,7 @@
     {
       "path": "prompts/catalog.json",
       "bytes": 1985,
-      "sha256": "eddad3dc81d6d14c7dffacfcd451853735e08cb850233ab56198438791f65ab5"
+      "sha256": "343c05b1f5a6b4f5e169d77cdf53282ba04d396dc78394a23e1654499b12dbc3"
     },
     {
       "path": "prompts/context_brief.md",
@@ -219,8 +219,8 @@
     },
     {
       "path": "prompts/draft_answer.md",
-      "bytes": 1233,
-      "sha256": "87d921f46cf0845ccfd009418ca8e8d890fd4df2eb76acd8a396556c7c8fdc42"
+      "bytes": 1433,
+      "sha256": "500fc8d7fb8ac70f69e2a225d385d713e1ecfc95fe480bc1598c31554c7ca84c"
     },
     {
       "path": "prompts/goals.json",

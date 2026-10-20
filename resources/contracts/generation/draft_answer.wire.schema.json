@@ -9,6 +9,7 @@
     "missing_information",
     "conflicts",
     "next_steps",
+    "follow_up_questions",
     "insufficient_evidence"
   ],
   "properties": {
@@ -127,6 +128,15 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 400
+      }
+    },
+    "follow_up_questions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
       }
     },
     "insufficient_evidence": {
