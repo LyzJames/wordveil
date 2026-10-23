@@ -13,7 +13,7 @@ from datetime import date
 from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 import re
 
-ENGINE_VERSION = 'lvjin-finance/1'
+ENGINE_VERSION = 'lvjin-finance/2'
 _ROUNDING = {'half_up': ROUND_HALF_UP, 'half_even': ROUND_HALF_EVEN}
 _BASIS = {'act/365': 365, 'act/365.25': 365.25, 'act/360': 360}
 _DEFAULT_PRECISION = {'CNY': 2, 'USD': 2, 'EUR': 2, 'HKD': 2, 'JPY': 0}
@@ -236,6 +236,8 @@ def xirr(dated: list[tuple[date, Decimal]], basis: float) -> dict:
     for day, amount in dated:
         merged[day] += amount
     ordered = [(day, amount) for day, amount in sorted(merged.items()) if amount != 0]
+    if not ordered:
+        return {'status': 'indeterminate', 'reason': 'all_cashflows_cancel', 'roots': []}
     if not any(a > 0 for _, a in ordered) or not any(a < 0 for _, a in ordered):
         return {'status': 'no_solution', 'reason': 'needs_inflow_and_outflow', 'roots': []}
     signs = [1 if a > 0 else -1 for _, a in ordered]
@@ -246,7 +248,12 @@ def xirr(dated: list[tuple[date, Decimal]], basis: float) -> dict:
             0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0, 100.0]
     roots = []
     for low, high in zip(grid, grid[1:]):
-        root = _solve(low, high, flows)
+        try:
+            root = _solve(low, high, flows)
+        except (OverflowError, ZeroDivisionError):
+            # The search is bounded and may be numerically unusable for very
+            # long date ranges. Failure to bracket is not proof of no root.
+            continue
         if root is not None and not any(abs(root - r) < 1e-9 for r in roots):
             roots.append(root)
     verified = []
@@ -258,12 +265,19 @@ def xirr(dated: list[tuple[date, Decimal]], basis: float) -> dict:
             residual = sum((amount / (base ** (Decimal((day - origin).days) / Decimal(repr(basis)))) for day, amount in ordered), Decimal(0))
             if abs(residual) <= scale * Decimal('1e-8'):
                 verified.append(root)
-    payload = {'sign_changes': sign_changes, 'roots': [format(Decimal(repr(r)).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP), 'f') for r in verified]}
+    payload = {'sign_changes': sign_changes, 'roots': [format(Decimal(repr(r)).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP), 'f') for r in verified],
+               'search_range': {'minimum': str(grid[0]), 'maximum': str(grid[-1])}, 'roots_complete': False}
     if not verified:
-        return {**payload, 'status': 'no_solution', 'reason': 'no_root_found_in_searched_range'}
+        return {**payload, 'status': 'indeterminate', 'reason': 'no_root_found_in_searched_range'}
     if len(verified) > 1:
         return {**payload, 'status': 'multiple_roots', 'reason': 'irregular_flows_have_several_rates'}
-    return {**payload, 'status': 'unique', 'annual_rate': payload['roots'][0]}
+    # With x=(1+r)^(-1/basis), dated NPV is a polynomial in x whose
+    # exponents are integer day offsets. Descartes' rule bounds its positive
+    # roots by cash-flow sign changes. One change and one verified root prove
+    # uniqueness; a grid (and a small residual) cannot prove it otherwise.
+    if sign_changes != 1:
+        return {**payload, 'status': 'indeterminate', 'reason': 'uniqueness_not_proven'}
+    return {**payload, 'roots_complete': True, 'status': 'unique', 'annual_rate': payload['roots'][0]}
 
 
 def _signed(record: dict, perspective: str = 'self') -> Decimal:

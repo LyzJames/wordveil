@@ -11,15 +11,29 @@ use serde_json::{Value, json};
 
 /// Core-created retrieval scope (matters and optional versions).
 pub fn create_scope(ctx: &Ctx, matters: &[String], versions: &[String]) -> Result<String> {
+    create_scope_with(ctx,matters,versions,&crate::retrieval_scope::Policy::default())
+}
+pub fn create_scope_with(ctx: &Ctx, matters: &[String], versions: &[String],policy:&crate::retrieval_scope::Policy) -> Result<String> {
+    policy.validate()?;
+    let mut policy=policy.clone();policy.as_of=Some(policy.date()?);
     let vault = ctx.lock()?;
-    for matter in matters {
-        vault.expect_kind(matter, &["MatterRef"])?;
+    let infer_matters=matters.is_empty();
+    let mut matters=matters.to_vec();
+    for matter in &matters {
+        vault.expect_kind(matter, &["MatterRef", "PublicKnowledgeCollectionRef"])?;
     }
     for version in versions {
         vault.expect_kind(version, &["DocumentVersionRef"])?;
+        let owner:String=vault.db().query_row("SELECT d.matter_id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?",[version],|r|r.get(0))?;
+        if infer_matters {if !matters.contains(&owner){matters.push(owner);}}else if !matters.contains(&owner){return Err(Error::Denied);}
+    }
+    if versions.is_empty() {
+        let mut statement=vault.db().prepare("SELECT collection_id FROM knowledge_packages WHERE state='active' ORDER BY package_id")?;
+        let public=statement.query_map([],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
+        for collection in public {if !matters.contains(&collection){matters.push(collection);}}
     }
     let id = vault.register("ScopeRef", "m1", None)?;
-    vault.db().execute("INSERT INTO scopes(id,matters,versions,created_at) VALUES(?,?,?,?)", params![id, serde_json::to_string(matters)?, serde_json::to_string(versions)?, now_rfc3339()])?;
+    vault.db().execute("INSERT INTO scopes(id,matters,versions,policy,created_at) VALUES(?,?,?,?,?)", params![id, serde_json::to_string(&matters)?, serde_json::to_string(versions)?,serde_json::to_string(&policy)?, now_rfc3339()])?;
     Ok(id)
 }
 
@@ -45,12 +59,14 @@ struct Found {
 
 pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
     ctx.authorize(invocation, "vault.read")?;
+    super::indexing::ensure_dense(ctx)?;
     let question = text_of(input, "question_id")?;
     let scope = text_of(input, "scope_id")?;
     let constraints = refs_of(input, "known_constraint_ids")?;
     let requested = text_of(input, "requested_output")?;
     let text: String = ctx.lock()?.db().query_row("SELECT text FROM questions WHERE id=?", [&question], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
     let (matters, versions) = scope_contents(ctx, &scope)?;
+    let policy:Value=serde_json::from_str(&ctx.lock()?.db().query_row("SELECT policy FROM scopes WHERE id=?",[&scope],|r|r.get::<_,String>(0))?)?;
     let wants_answer = requested == "answer";
     // Generation runs only with an approved, destination-bound grant for this
     // root (design 9.1); the LangGraph answer flow then owns the steps. Without
@@ -59,17 +75,23 @@ pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
     let mut parts = completed(None);
     let snapshot = |ctx: &Ctx| -> Result<String> {
         let generation = super::indexing::current_generation(ctx)?;
-        ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalSnapshotRef", &json!({"generation": generation, "matters": matters, "versions": versions, "scope_id": scope}))
+        ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalSnapshotRef", &json!({"generation": generation, "matters": matters, "versions": versions, "scope_id": scope,"policy":policy}))
     };
     let found = if can_generate {
         answer_flow(ctx, invocation, input, &question, &text, &scope, &constraints, &snapshot, &mut parts)?
     } else {
         local_evidence(ctx, invocation, &question, &text, &snapshot(ctx)?, &mut parts)?
     };
-    let read_payload = match &found.read {
+    let mut read_payload = match &found.read {
         Some(id) => ctx.lock()?.get_result(id)?.2,
         None => json!({"items": []}),
     };
+    let candidate_payload=match &found.candidate_set {Some(id)=>ctx.lock()?.get_result(id)?.2,None=>Value::Null};
+    if let Some(items)=read_payload["items"].as_array_mut() {
+        for item in items {
+            if let Some(candidate)=candidate_payload["candidates"].as_array().and_then(|rows|rows.iter().find(|c|c["evidence_id"]==item["evidence_id"])) {if candidate["graph_paths"].is_array(){item["graph_paths"]=candidate["graph_paths"].clone();}}
+        }
+    }
     let usage = generation_usage(ctx, invocation.root_id())?;
     let connection = if can_generate { connection_summary(ctx, invocation.root_id())? } else { Value::Null };
     let notes = if can_generate { "已按授权使用生成接口；回答逐句核查" } else if wants_answer { "未连接或未授权生成接口；只交付本地检索到的原文依据" } else { "只检索原文" };
@@ -77,7 +99,7 @@ pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
         "candidate_set": found.candidate_set, "evidence_bundle": found.bundle, "evidence_read": found.read, "items": read_payload["items"], "requested_output": requested,
         "query_rewrites": found.queries.iter().skip(1).map(|q| q["query"].clone()).collect::<Vec<_>>(), "plan": found.plan, "answer": found.answer, "process": found.process,
         "usage": usage, "connection": connection, "notes": notes, "flow_run": found.run, "roles": found.extra["roles"], "task_plan": found.extra["task_plan"],
-        "challenge": found.extra["challenge"], "created_at": now_rfc3339()});
+        "challenge": found.extra["challenge"],"graph":candidate_payload["graph"], "created_at": now_rfc3339()});
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalResultRef", &payload)?;
     parts.data_ref = Some(result);
     parts.evidence_refs = found.evidence;
@@ -97,6 +119,7 @@ fn local_evidence(ctx: &Ctx, invocation: &Invocation, question: &str, text: &str
     let queries = vec![json!({"query_id": "q0", "query": text})];
     let mut process = vec![];
     let started = std::time::Instant::now();
+    ctx.report(invocation,"search",0,1);
     let (_, search) = child(ctx, invocation, "knowledge-search", json!({"queries": queries, "filter_ids": [], "snapshot_id": snapshot}))?;
     if status_of(&search) != "completed" {
         parts.warnings.extend(child_warnings(&search));
@@ -104,15 +127,26 @@ fn local_evidence(ctx: &Ctx, invocation: &Invocation, question: &str, text: &str
             parts.status = "partial".into();
         }
     }
-    let candidate_set = data_of(&search);
+    let mut candidate_set = data_of(&search);
     let candidates = match &candidate_set {
         Some(id) => ctx.lock()?.get_result(id)?.2["candidates"].as_array().map(|c| c.len()).unwrap_or(0),
         None => 0,
     };
     process.push(json!({"step": "search", "status": status_of(&search), "ms": started.elapsed().as_millis() as u64, "queries": 1, "candidates": candidates}));
+    if let Some(set)=candidate_set.clone() {
+        let enabled=ctx.lock()?.get_result(&set)?.2["graph_enabled"]==json!(true);
+        if enabled {
+            let started=std::time::Instant::now();
+            let (_,expanded)=child(ctx,invocation,"graph-relations",json!({"seed_ids":[],"relation_types":[],"max_hops":2,"candidate_set_id":set,"snapshot_id":snapshot}))?;
+            if let Some(result)=data_of(&expanded) {let payload=ctx.lock()?.get_result(&result)?.2;if let Some(set)=payload["candidate_set"].as_str(){candidate_set=Some(set.into());}}
+            parts.warnings.extend(child_warnings(&expanded));
+            process.push(json!({"step":"graph","status":status_of(&expanded),"ms":started.elapsed().as_millis() as u64}));
+        }
+    }
     let (mut bundle, mut read, mut evidence) = (None, None, vec![]);
     if let Some(set) = &candidate_set {
         let started = std::time::Instant::now();
+        ctx.report(invocation,"rerank",0,1);
         let (_, reranked) = child(ctx, invocation, "evidence-rerank", json!({"query_ref": question, "candidate_set_id": set, "facet_ids": []}))?;
         bundle = data_of(&reranked);
         evidence = reranked["evidence_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();

@@ -4,6 +4,8 @@ import React from 'react';
 import { seconds, type EvidenceItem, type Locator } from './api';
 import { Icon } from './icons';
 import { Chip } from './ui';
+import { useSession } from './session';
+import { REGIONS } from './regions';
 
 export function locatorLabel(locators: Locator[]): string {
   const pages = [...new Set(locators.map((l) => l.page_no).filter((p): p is number => typeof p === 'number' && p < 100000))];
@@ -19,6 +21,8 @@ export function locatorLabel(locators: Locator[]): string {
 }
 
 export function EvidenceList({ items, onOpen, labels, current }: { items: EvidenceItem[]; onOpen: (item: EvidenceItem) => void; labels?: Record<string, string>; current?: string | null }) {
+  const { open }=useSession();
+  const relations:Record<string,string>={cites:'引用',amends:'修订',supersedes:'取代',evidence_for:'提供依据',confirmed_fact:'已确认事实',derived_from:'来源关系'};
   return (
     <ol className="evidence">
       {items.map((item, index) => {
@@ -31,6 +35,8 @@ export function EvidenceList({ items, onOpen, labels, current }: { items: Eviden
               <span className="t-caption text-tertiary nowrap">{where ? `${where} · ` : ''}第 {item.document.version_no} 版</span>
             </div>
             <div className="quote">{item.exact_text}</div>
+            {item.legal_source&&<details className="t-caption evidence-provenance"><summary>版本与地域标注</summary><dl className="kv"><dt>公布机关</dt><dd>{item.legal_source.issuer}</dd><dt>地域</dt><dd>{REGIONS.find(([id])=>id===item.legal_source?.region)?.[1]??item.legal_source.region}</dd><dt>施行日期</dt><dd>{item.legal_source.effective_on}{item.legal_source.expires_on?`；${item.legal_source.expires_on} 起失效`:''}</dd><dt>核验截至</dt><dd>{item.legal_source.verified_on}（仍需核对个案适用性）</dd></dl></details>}
+            {!!item.graph_paths?.length&&<details className="t-caption evidence-provenance"><summary>找到这段原文的关系路径</summary><p>关系只用于寻找原文，不替代适用性判断和逐句核查。</p>{item.graph_paths.map((path,index)=><ol key={index}>{path.steps.map((step,i)=><li key={i}><span>{relations[step.relation_type]??'资料关系'}{step.traversal==='reverse'?'（反向查找）':''} · {step.origin==='explicit_source_reference'?'原文明示引用':'已确认的资料关系'}</span><div>{step.proof.document?.display_name}{step.proof.document?` · 第 ${step.proof.document.version_no} 版`:''}</div>{step.proof.version_id&&<button className="btn btn-xs" onClick={()=>open({version:step.proof.version_id!,title:step.proof.document?.display_name??'关系来源',page:step.proof.locators?.find((l)=>l.page_id)?.page_id,highlight:step.proof.locators})}>查看关系的原文来源</button>}</li>)}</ol>)}</details>}
             <div className="actions">
               <button className="btn btn-xs" onClick={() => onOpen(item)}>
                 <Icon name="highlight" />

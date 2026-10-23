@@ -1,6 +1,6 @@
 {
   "schema_version": "lvjin.catalog/1",
-  "version": "0.4.0-m2",
+  "version": "0.4.0-m3",
   "skills": [
     {
       "id": "document-import",
@@ -49,7 +49,7 @@
           "rule": "显式新增副本或新版本"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -93,7 +93,7 @@
           "rule": "不扩大原有材料用途"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -133,7 +133,7 @@
           "rule": "remove 需已确认删除事件或明确用户动作"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -177,7 +177,7 @@
           "rule": "固定资料/索引 generation"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -220,7 +220,7 @@
           "rule": "只能引用已登记问题维度"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -256,7 +256,7 @@
           "rule": "扩展仍在同版本与读取预算内"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -297,9 +297,21 @@
           "type": "integer[0..2]",
           "required": true,
           "rule": "受根任务候选预算二次约束"
+        },
+        {
+          "name": "candidate_set_id",
+          "type": "CandidateSetRef|null",
+          "required": false,
+          "rule": "与 snapshot_id 同时提供；属于同一根的本轮候选，种子与剩余额度由核心确定"
+        },
+        {
+          "name": "snapshot_id",
+          "type": "RetrievalSnapshotRef|null",
+          "required": false,
+          "rule": "本轮原始范围、版本和策略；不能扩大范围"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -344,7 +356,7 @@
           "rule": "不得编造地区/日期/身份"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "generation",
       "input_schema": "input.schema.json",
@@ -401,7 +413,7 @@
           "rule": "首答为空；修订必须指向与draft_ref同版本的验证报告"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "generation",
       "input_schema": "input.schema.json",
@@ -450,7 +462,7 @@
           "rule": "数字对照依据"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "generation",
       "input_schema": "input.schema.json",
@@ -493,9 +505,9 @@
           "rule": "本次用途，不新增权限"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
-      "implementation_status": "network-pending",
+      "implementation_status": "authorized-external",
       "input_schema": "input.schema.json",
       "output_schema": "output.schema.json"
     },
@@ -533,9 +545,9 @@
           "rule": "应用更新需明确用户动作或仍有效更新授权"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
-      "implementation_status": "network-pending",
+      "implementation_status": "authorized-external",
       "input_schema": "input.schema.json",
       "output_schema": "output.schema.json"
     },
@@ -575,7 +587,7 @@
           "rule": "不可缺省编造计息口径"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -621,7 +633,7 @@
           "rule": "含来源/版本和待变更项"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -677,7 +689,7 @@
           "rule": "commit 时必填；核心签发目标/覆盖确认凭证"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -713,9 +725,9 @@
           "rule": "按该 binding 专用 JSON Schema 校验"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
-      "implementation_status": "network-pending",
+      "implementation_status": "authorized-external",
       "input_schema": "input.schema.json",
       "output_schema": "output.schema.json"
     },
@@ -750,7 +762,7 @@
           "rule": "核心签发目标/来源选择，不含口令"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -787,7 +799,7 @@
           "rule": "核心安全 UI 中的配置引用，不包含原始 Key"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "protected-connection",
       "input_schema": "input.schema.json",
@@ -821,7 +833,7 @@
           "rule": "不可由生成模型自行构造"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -857,7 +869,7 @@
           "rule": "不含正文、凭证或原始路径"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -915,7 +927,7 @@
           "rule": "无生成连接时仍可证据检索"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-generation",
       "input_schema": "input.schema.json",
@@ -970,7 +982,7 @@
           "rule": "默认空；获准合同录音/视频及时间范围由核心解析"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-analysis",
       "input_schema": "input.schema.json",
@@ -1026,7 +1038,7 @@
           "rule": "默认空；获准录音/视频版本及时间范围由核心解析，不能传任意路径"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-analysis",
       "input_schema": "input.schema.json",
@@ -1080,7 +1092,7 @@
           "rule": "预算分析目标"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-analysis",
       "input_schema": "input.schema.json",
@@ -1125,7 +1137,7 @@
           "rule": "frames/audio/metadata的受限枚举"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -1169,7 +1181,7 @@
           "rule": "仅用户确认的领域词，不含期待答案"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -1218,7 +1230,7 @@
           "rule": "targeted_compare时需有效来源/版本"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "generation",
       "input_schema": "input.schema.json",
@@ -1266,7 +1278,7 @@
           "rule": "仅提取不自动请求生成；analyze按能力/授权执行复核"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-media",
       "input_schema": "input.schema.json",
@@ -1328,7 +1340,7 @@
           "rule": "仅转写不外发；独立analyze执行相应原生首读与最终文字分析，视频子任务固定text_only"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-media",
       "input_schema": "input.schema.json",
@@ -1385,7 +1397,7 @@
           "rule": "text_only不请求原生媒体，analyze按实际能力复核"
         }
       ],
-      "version": "0.4.0-m2",
+      "version": "0.4.0-m3",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local-media",
       "input_schema": "input.schema.json",

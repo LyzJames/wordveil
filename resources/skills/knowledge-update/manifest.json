@@ -32,9 +32,9 @@
       "rule": "应用更新需明确用户动作或仍有效更新授权"
     }
   ],
-  "version": "0.4.0-m2",
+  "version": "0.4.0-m3",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "network-pending",
+  "implementation_status": "authorized-external",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

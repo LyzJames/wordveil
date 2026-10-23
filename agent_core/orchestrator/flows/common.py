@@ -42,6 +42,17 @@ def retrieve(core: Core, state: dict[str, Any], prefix: str = '') -> dict[str, A
             out['partial'] = True
     out['candidate_set'] = data(search)
     out['process'].append(step.done(status(search), queries=len(state['queries']), candidates=int(view.get('candidates', 0))))
+    if out['candidate_set'] and view.get('graph_enabled') is True:
+        step = core.step('graph')
+        expanded = core.skill(f'{prefix}graph', owner, 'graph-relations', {
+            'seed_ids': [], 'relation_types': [], 'max_hops': 2,
+            'candidate_set_id': out['candidate_set'], 'snapshot_id': state['snapshot_id'],
+        })
+        graph_envelope, graph_view = expanded['envelope'], expanded.get('view') or {}
+        if isinstance(graph_view.get('candidate_set'), str):
+            out['candidate_set'] = graph_view['candidate_set']
+        out['warnings'] += warnings(graph_envelope)
+        out['process'].append(step.done(status(graph_envelope), candidates=int(graph_view.get('added', 0))))
     if out['candidate_set']:
         step = core.step('rerank')
         reranked = core.skill(f'{prefix}rerank', owner, 'evidence-rerank', {'query_ref': question, 'candidate_set_id': out['candidate_set'], 'facet_ids': []})['envelope']

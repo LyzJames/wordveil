@@ -33,9 +33,21 @@
       "type": "integer[0..2]",
       "required": true,
       "rule": "受根任务候选预算二次约束"
+    },
+    {
+      "name": "candidate_set_id",
+      "type": "CandidateSetRef|null",
+      "required": false,
+      "rule": "与 snapshot_id 同时提供；属于同一根的本轮候选，种子与剩余额度由核心确定"
+    },
+    {
+      "name": "snapshot_id",
+      "type": "RetrievalSnapshotRef|null",
+      "required": false,
+      "rule": "本轮原始范围、版本和策略；不能扩大范围"
     }
   ],
-  "version": "0.4.0-m2",
+  "version": "0.4.0-m3",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

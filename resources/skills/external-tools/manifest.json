@@ -28,9 +28,9 @@
       "rule": "按该 binding 专用 JSON Schema 校验"
     }
   ],
-  "version": "0.4.0-m2",
+  "version": "0.4.0-m3",
   "schema_version": "lvjin.skill/1",
-  "implementation_status": "network-pending",
+  "implementation_status": "authorized-external",
   "input_schema": "input.schema.json",
   "output_schema": "output.schema.json"
 }

@@ -11,9 +11,11 @@ import {
   type RetrievalResult, type RoleSummary, type TaskPlanSummary, type TaskState,
 } from './api';
 import { CalculationSummary } from './analysis';
+import { QaHistory } from './qa-history';
 import { EgressDialog } from './egress';
 import { EvidenceList, locatorLabel } from './evidence';
 import { ExportButton } from './export';
+import { REGIONS } from './regions';
 import { Icon } from './icons';
 import { sourceOf, useSession, type EvidencePanel } from './session';
 import { generates, KIND_LABEL, kindOfRun, newTurnId, ROLE_TITLE, type QaTurn, type TurnKind } from './turns';
@@ -55,6 +57,11 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
   const [text, setText] = useState(initialQuestion ?? '');
   const [preview, setPreview] = useState<{ turn: string; data: AnswerPreview } | null>(null);
   const [picking, setPicking] = useState(false);
+  const [history, setHistory] = useState(false);
+  const [graphEnabled,setGraphEnabled]=useState(false);
+  const [asOf,setAsOf]=useState('');
+  const [region,setRegion]=useState('CN-mainland');
+  const policy={graph_enabled:graphEnabled,as_of:asOf||null,region:region||null};
   const thread = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
   const notice = useNotice();
@@ -122,13 +129,13 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
     try {
       if (asMode === 'evidence') {
         const questionId = await api.object('question', { text: question });
-        const scopeId = await api.object('scope', { matters: within, versions: [] });
+        const scopeId = await api.object('scope', { matters: within, versions: [],policy });
         const task = await api.start('lvjin-retrieval', { question_id: questionId, scope_id: scopeId, known_constraint_ids: [], requested_output: 'evidence_only' });
         patch(turn.id, { state: 'running', task });
       } else {
         // Local retrieval only; nothing leaves the computer before approval.
         pending.current = { turn: turn.id, grant: null };
-        const data = await api.answerPreview(question, within, connection?.id ?? null, asMode === 'deep');
+        const data = await api.answerPreview(question, within, connection?.id ?? null, asMode === 'deep',policy);
         if (!mounted.current) {
           api.answerDiscard(data.grant_id).catch(() => {});
           return;
@@ -200,6 +207,14 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
 
   return (
     <div className="qa">
+      {history && <QaHistory initialMatter={scope.length === 1 ? scope[0] : undefined} onClose={() => setHistory(false)} onOpen={(item) => {
+        qa.update((turns) => [...turns.filter((turn) => turn.resultRef !== item.id), turns.find((turn) => turn.resultRef === item.id) ?? {
+          id: `history-${item.id}`, question: item.question, matters: item.matters, kind: item.kind, state: 'done',
+          started: Date.parse(item.created_at), resultRef: item.id, source: `历史记录 · ${new Date(item.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+        }]);
+        setHistory(false);
+        requestAnimationFrame(() => document.querySelector('.qa-thread .turn:last-of-type')?.scrollIntoView({ block: 'start' }));
+      }} />}
       <div className="qa-scope">
         <span className="text-secondary">范围</span>
         {scope.length === 0 ? (
@@ -222,6 +237,7 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
           {picking && <ScopePicker value={scope} onChange={setScope} onClose={() => setPicking(false)} />}
         </div>
         <span style={{ flex: 1 }} />
+        <button className="btn btn-sm" onClick={() => setHistory(true)}><Icon name="history" />历史记录</button>
         {!connection && (
           <button className="btn btn-link t-caption" onClick={() => go({ name: 'connections' })}>
             连接生成接口后可生成回答
@@ -237,6 +253,11 @@ export function QaPage({ initialMatters, initialQuestion }: { initialMatters?: s
           items={[['answer', '生成回答', !connection], ['deep', '深入分析', !connection], ['evidence', '只找原文']]}
         />
       </div>
+      <details className="qa-retrieval-options"><summary>检索条件{graphEnabled?' · 已开启关系扩展':''}{asOf?` · 截至 ${asOf}`:''}</summary><div className="inline-form">
+        <Field label="适用日期（留空按今天）"><input type="date" value={asOf} disabled={!!running} onChange={(e)=>setAsOf(e.target.value)} /></Field>
+        <Field label="公共资料地域"><select value={region} disabled={!!running} onChange={(e)=>setRegion(e.target.value)}><option value="">不限定地域，逐项核对</option>{REGIONS.map(([id,name])=><option value={id} key={id}>{name}</option>)}</select></Field>
+        <label className="check"><input type="checkbox" checked={graphEnabled} disabled={!!running} onChange={(e)=>setGraphEnabled(e.target.checked)} />沿有来源的关系补充原文（最多两跳）</label>
+      </div><p className="t-caption text-secondary">关系扩展默认关闭。启用后仍共用每轮候选与核查额度；日期和地域只筛选已标注的资料，不自动认定个案适用性。缺少历史版本时会保留信息缺口。</p></details>
       <div className="qa-thread" ref={thread}>
         <InterruptedRuns turns={qa.turns} onResume={resume} onDiscard={abandon} />
         {qa.turns.length === 0 && <Intro hasConnection={!!connection} />}

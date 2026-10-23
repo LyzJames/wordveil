@@ -36,7 +36,7 @@
       "rule": "不扩大原有材料用途"
     }
   ],
-  "version": "0.4.0-m2",
+  "version": "0.4.0-m3",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

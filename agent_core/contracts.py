@@ -43,6 +43,22 @@ class SearchInput(StrictModel):
         return self
 
 
+class GraphRelationsInput(StrictModel):
+    seed_ids: Annotated[list[Ref], Field(max_length=32)]
+    relation_types: list[Literal['cites', 'amends', 'supersedes', 'evidence_for', 'confirmed_fact', 'derived_from']]
+    max_hops: Annotated[int, Field(ge=0, le=2)]
+    candidate_set_id: Ref | None = None
+    snapshot_id: Ref | None = None
+
+    @model_validator(mode='after')
+    def round_binding(self):
+        if (self.candidate_set_id is None) != (self.snapshot_id is None):
+            raise ValueError('Retrieval expansion needs both its candidate set and snapshot')
+        if self.candidate_set_id is not None and self.seed_ids:
+            raise ValueError('Expansion seeds are selected by the core from the bound candidate set')
+        return self
+
+
 class SearchPlanInput(StrictModel):
     question_id: Ref
     scope_id: Ref
@@ -283,7 +299,7 @@ def field_type(design_type: str):
 
 
 def compile_inputs(skills: list[dict]) -> dict[str, type[StrictModel]]:
-    fixed = {'knowledge-search': SearchInput, 'query-plan': SearchPlanInput, 'answer-compose': DraftAnswerInput, 'media-observe': MediaObserveInput, 'contract-review': ContractReviewInput}
+    fixed = {'knowledge-search': SearchInput, 'graph-relations': GraphRelationsInput, 'query-plan': SearchPlanInput, 'answer-compose': DraftAnswerInput, 'media-observe': MediaObserveInput, 'contract-review': ContractReviewInput}
     result = {}
     for skill in skills:
         if skill['id'] in fixed:

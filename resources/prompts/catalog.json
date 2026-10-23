@@ -1,6 +1,6 @@
 {
   "schema_version": "lvjin.prompts/1",
-  "version": "0.4.0-m2",
+  "version": "0.4.0-m3",
   "prompts": [
     {
       "id": "context_brief",
@@ -20,7 +20,7 @@
     {
       "id": "draft_answer",
       "file": "draft_answer.md",
-      "sha256": "500fc8d7fb8ac70f69e2a225d385d713e1ecfc95fe480bc1598c31554c7ca84c"
+      "sha256": "f9f68fd457964700e5faa92fc710ae90d112a5899614e6bcf211b45121b90afd"
     },
     {
       "id": "role_analysis",
@@ -50,7 +50,7 @@
     {
       "id": "search_plan",
       "file": "search_plan.md",
-      "sha256": "f067f520ddd57d51c572e4115e0b6d5d92870294ace1bc31b14145a269a73e96"
+      "sha256": "f853d78e8b8a797941b8013027e3c9f77d0d33070c3e03a80916f9964c759b92"
     },
     {
       "id": "task_plan",

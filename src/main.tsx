@@ -5,6 +5,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client';
 import { api, onLocked, onTask, relative, skillName, snapshot, stageName, statusLabel, type AppStatus, type Connection, type DueTodo, type Matter, type TaskState, type UnlockInfo } from './api';
 import { ConnectionsPage } from './connections';
+import { ComparisonPage } from './comparison';
+import { KnowledgePage, ToolsPage } from './external';
 import { Icon, type IconName } from './icons';
 import { LockScreen } from './lock';
 import { MatterList, MatterPage } from './matters';
@@ -21,10 +23,11 @@ import './app.css';
 function App() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [info, setInfo] = useState<UnlockInfo | null>(null);
-  const load = useCallback(() => api.status().then(setStatus).catch((e) => setStatus({ milestone: 'M2', version: '', installation_ok: false, error: String(e) })), []);
+  const load = useCallback(() => api.status().then(setStatus).catch((e) => setStatus({ milestone: 'M3', version: '', installation_ok: false, error: String(e) })), []);
   useEffect(() => {
     load();
   }, [load]);
+  useEffect(()=>{if(status?.e2e_session)setInfo(status.e2e_session);},[status?.e2e_session]);
   useEffect(() => {
     const off = onLocked(() => {
       setInfo(null);
@@ -129,6 +132,8 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
   }, []);
 
   const lock = useCallback(async () => {
+    // Hide already rendered private content before waiting for native cleanup.
+    onLock();
     try {
       await api.lock();
     } finally {
@@ -218,8 +223,9 @@ function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
               {view.name === 'matter' && <MatterPage key={view.id} id={view.id} initialTab={view.tab} />}
               {view.name === 'qa' && <QaPage key={`${(view.matters ?? []).join(',')}|${view.question ?? ''}`} initialMatters={view.matters} initialQuestion={view.question} />}
               {view.name === 'connections' && <ConnectionsPage />}
-              {view.name === 'knowledge' && <Later page="knowledge" />}
-              {view.name === 'tools' && <Later page="tools" />}
+              {view.name === 'comparison' && <ComparisonPage key={view.id ?? 'list'} initialId={view.id} />}
+              {view.name === 'knowledge' && <KnowledgePage />}
+              {view.name === 'tools' && <ToolsPage />}
               {view.name === 'settings' && <SettingsPage key={view.tab ?? ''} initialTab={view.tab} />}
             </main>
             {inspector && <Inspector target={inspector} onClose={() => setInspector(null)} overlay={width < 1280} />}
@@ -278,7 +284,7 @@ function AppBar({ collapsed, onToggle, onPalette }: { collapsed: boolean; onTogg
         </button>
         <button className="status-pill" title="联网检索与外部工具默认关闭" onClick={() => setPanel(panel === 'status' ? null : 'status')}>
           <Icon name="globe" />
-          联网：关闭
+          联网：逐次授权
         </button>
       </div>
       <button className="btn btn-subtle btn-icon task-button" aria-label={`任务中心：${running.length} 个进行中`} title="任务中心" onClick={() => setPanel(panel === 'tasks' ? null : 'tasks')} aria-expanded={panel === 'tasks'}>
@@ -327,8 +333,8 @@ function StatusPanel({ onClose }: { onClose: () => void }) {
       <div className="status-line">
         <Icon name="globe" className="cap-unknown" />
         <div>
-          <div className="t-strong">联网：关闭</div>
-          <div className="text-secondary t-caption">联网检索与外部工具尚未开放；开放后也默认关闭，每次使用前预览并授权。</div>
+          <div className="t-strong">联网：逐次授权</div>
+          <div className="text-secondary t-caption">公共搜索、知识更新、生成和 MCP 分别授权；在“工具与连接”中配置，发送前展示内容并确认。</div>
         </div>
       </div>
       <button className="btn btn-sm" onClick={() => jump({ name: 'settings', tab: 'security' })}>
@@ -421,10 +427,11 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
         </div>
       )}
       {item('qa', 'chat', '问答与检索', view.name === 'qa')}
-      {item('knowledge', 'library', '知识中心', view.name === 'knowledge', '后续')}
+      {item('comparison', 'list', '资料对照表', view.name === 'comparison')}
+      {item('knowledge', 'library', '知识中心', view.name === 'knowledge')}
       <div className="nav-sep" />
       {item('connections', 'robot', '生成接口', view.name === 'connections')}
-      {item('tools', 'connect', '工具与连接', view.name === 'tools', '后续')}
+      {item('tools', 'connect', '工具与连接', view.name === 'tools')}
       <div className="sidebar-foot">{item('settings', 'settings', '设置', view.name === 'settings')}</div>
     </nav>
   );
@@ -452,6 +459,7 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
   }
   const pages: [View, IconName, string][] = [
     [{ name: 'home' }, 'home', '工作台'], [{ name: 'matters' }, 'folder', '我的事务'], [{ name: 'qa' }, 'chat', '问答与检索'], [{ name: 'connections' }, 'robot', '生成接口'],
+    [{ name: 'comparison' }, 'list', '资料对照表'],
     [{ name: 'settings', tab: 'security' }, 'settings', '设置：安全'], [{ name: 'settings', tab: 'appearance' }, 'settings', '设置：界面'], [{ name: 'settings', tab: 'backup' }, 'settings', '设置：备份与恢复'],
   ];
   for (const [target, icon, label] of pages.filter(([, , label]) => !needle || label.toLowerCase().includes(needle))) {
@@ -507,32 +515,6 @@ function CommandPalette({ onClose }: { onClose: () => void }) {
           })}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------- later (M2-B)
-
-function Later({ page }: { page: 'knowledge' | 'tools' }) {
-  const { go } = useSession();
-  const knowledge = page === 'knowledge';
-  return (
-    <div className="page fade-in">
-      <header className="page-head">
-        <div className="titles">
-          <h1 className="t-page">{knowledge ? '知识中心' : '工具与连接'}</h1>
-          <p className="text-secondary" style={{ maxWidth: 'var(--reading-w)' }}>
-            {knowledge ? '公共知识包（法规、术语与计算口径）的来源、版本与更新预览。' : '联网检索与外部工具（MCP）的服务、授权范围与撤销记录。'}
-          </p>
-        </div>
-      </header>
-      <Empty
-        icon={knowledge ? 'library' : 'connect'}
-        title="将在后续版本提供"
-        action={<button className="btn" onClick={() => go({ name: 'qa' })}>去问答与检索</button>}
-      >
-        {knowledge ? '目前回答只依据你导入的资料；知识包需要联网更新，开放时会先预览差异并请你授权。' : '联网与外部工具目前全部关闭，本应用不会发起这类请求；开放后也默认关闭，每次使用前预览并授权。'}
-      </Empty>
     </div>
   );
 }

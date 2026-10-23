@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { bytes, type AnswerPreview, type Purpose } from './api';
 import { locatorLabel } from './evidence';
 import { Icon } from './icons';
+import { REGIONS } from './regions';
 import { Callout, Chip, Modal } from './ui';
 
 const PURPOSE: Record<Purpose, string> = {
@@ -73,6 +74,7 @@ export function EgressDialog({ preview, onCancel, onConfirm }: { preview: Answer
         <dd>{preview.connection.name}（{preview.connection.host}）· 模型 {preview.connection.model_id}</dd>
         <dt>用途</dt>
         <dd>{PURPOSE[preview.purpose] ?? PURPOSE.answer}</dd>
+        {preview.retrieval_policy&&<><dt>检索条件</dt><dd>截至 {preview.retrieval_policy.as_of||'今天'}；{REGIONS.find(([id])=>id===preview.retrieval_policy?.region)?.[1]??'未限定地域'}；关系扩展{preview.retrieval_policy.graph_enabled?'开启':'关闭'}</dd></>}
         {preview.roles && preview.roles.length > 0 && (
           <>
             <dt>参与角色</dt>

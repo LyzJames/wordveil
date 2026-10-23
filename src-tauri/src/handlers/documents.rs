@@ -54,10 +54,21 @@ struct Selection {
     bytes: i64,
     sha256: String,
     consumed: bool,
+    artifact: Option<zeroize::Zeroizing<Vec<u8>>>,
 }
 
-fn load_selection(ctx: &Ctx, id: &str, purpose: &str) -> Result<Selection> {
+fn load_selection(ctx: &Ctx, id: &str, purpose: &str, root: &str, target: &str) -> Result<Selection> {
     let vault = ctx.lock()?;
+    if matches!(vault.object_kind(id)?.as_str(), "OfflinePackageArtifactRef" | "DownloadedArtifactRef") {
+        vault.expect_kind(target, &["PublicKnowledgeCollectionRef"])?;
+        let (display, blob, bytes, hash, consumed):(String,String,i64,String,i64)=vault.db().query_row(
+            "SELECT display_name,blob,bytes,sha256,consumed FROM trusted_artifacts WHERE id=? AND root=? AND target=?",
+            params![id,root,target],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?.ok_or(Error::Denied)?;
+        let data=vault.get_blob(&blob)?;
+        if data.len() as i64!=bytes || sha256_hex(&data)!=hash {return Err(Error::Integrity);}
+        return Ok(Selection{path:std::path::PathBuf::new(),display,bytes,sha256:hash,consumed:consumed!=0,artifact:Some(data)});
+    }
+    vault.expect_kind(target, &["MatterRef"])?;
     let row: Option<(String, String, Option<i64>, Option<String>, String, i64)> = vault
         .db()
         .query_row("SELECT path,display_name,bytes,sha256,purpose,consumed FROM selections WHERE id=? AND kind='SelectionRef'", [id], |r| {
@@ -68,7 +79,7 @@ fn load_selection(ctx: &Ctx, id: &str, purpose: &str) -> Result<Selection> {
     if recorded_purpose != purpose {
         return Err(Error::Denied);
     }
-    Ok(Selection { path: path.into(), display, bytes: bytes.unwrap_or(-1), sha256: sha256.unwrap_or_default(), consumed: consumed != 0 })
+    Ok(Selection { path: path.into(), display, bytes: bytes.unwrap_or(-1), sha256: sha256.unwrap_or_default(), consumed: consumed != 0, artifact: None })
 }
 
 fn hash_file(path: &std::path::Path) -> Result<String> {
@@ -98,7 +109,7 @@ pub fn import(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
     ctx.authorize(invocation, "vault.write")?;
     {
         let vault = ctx.lock()?;
-        vault.expect_kind(&target, &["MatterRef"])?;
+        vault.expect_kind(&target, &["MatterRef", "PublicKnowledgeCollectionRef"])?;
         let is_root: i64 = vault.db().query_row("SELECT is_root FROM matters WHERE id=?", [&target], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
         if is_root != 0 {
             return Err(Error::NeedsInput("matter"));
@@ -111,7 +122,7 @@ pub fn import(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
             return Ok(parts);
         }
     }
-    let selection = load_selection(ctx, &selection_id, "import")?;
+    let selection = load_selection(ctx, &selection_id, "import", invocation.root_id(), &target)?;
     // Resume an interrupted import of this very selection instead of duplicating it.
     let interrupted: Option<String> = {
         let vault = ctx.lock()?;
@@ -133,6 +144,7 @@ pub fn import(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
             let payload = json!({"version_id": existing, "duplicate_of": existing, "status": "duplicate"});
             let result = vault.put_result(invocation.skill(), invocation.id(), "ImportResultRef", &payload)?;
             vault.db().execute("UPDATE selections SET consumed=1 WHERE id=?", [&selection_id])?;
+            vault.db().execute("UPDATE trusted_artifacts SET consumed=1 WHERE id=?", [&selection_id])?;
             vault.commit_once(&format!("import:{selection_id}"), invocation.root_id(), "import", Some(existing), &json!({"result_ref": result}))?;
             result
         };
@@ -147,6 +159,7 @@ pub fn import(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
             let result = vault.put_result(invocation.skill(), invocation.id(), "ImportResultRef", &payload)?;
             vault.db().execute("UPDATE jobs SET status='done',updated_at=? WHERE id=?", params![now_rfc3339(), version_id])?;
             vault.db().execute("UPDATE selections SET consumed=1 WHERE id=?", [&selection_id])?;
+            vault.db().execute("UPDATE trusted_artifacts SET consumed=1 WHERE id=?", [&selection_id])?;
             vault.commit_once(&format!("import:{selection_id}"), invocation.root_id(), "import", Some(&version_id), &json!({"result_ref": result}))?;
             parts.data_ref = Some(result);
             parts.evidence_refs.insert(0, version_id);
@@ -189,17 +202,21 @@ fn discard_version(ctx: &Ctx, version: &str) -> Result<()> {
 /// Verify the selected file again (TOCTOU), deduplicate inside the matter and
 /// store the encrypted original. Returns the new version id or `duplicate:<id>`.
 fn store_original(ctx: &Ctx, invocation: &Invocation, selection_id: &str, selection: &Selection, matter: &str, mode: &str) -> Result<String> {
-    let metadata = std::fs::metadata(&selection.path).map_err(|_| Error::Worker("selection_unavailable".into()))?;
-    if !metadata.is_file() || metadata.len() as i64 != selection.bytes {
+    let bytes = if let Some(data)=&selection.artifact { data.len() as u64 } else {
+        let metadata = std::fs::metadata(&selection.path).map_err(|_| Error::Worker("selection_unavailable".into()))?;
+        if !metadata.is_file() { return Err(Error::Worker("selection_changed".into())); }
+        metadata.len()
+    };
+    if bytes as i64 != selection.bytes {
         return Err(Error::Worker("selection_changed".into()));
     }
-    let head = read_head(&selection.path)?;
+    let head = match &selection.artifact {Some(data)=>data.iter().take(64).copied().collect(),None=>read_head(&selection.path)?};
     let media = media_kind_by_magic(&head);
     let limit = if media.is_some() { MAX_MEDIA_BYTES } else { MAX_DOCUMENT_BYTES };
-    if metadata.len() > limit {
+    if bytes > limit {
         return Err(Error::Worker("file_too_large".into()));
     }
-    let digest = hash_file(&selection.path)?;
+    let digest = match &selection.artifact {Some(data)=>sha256_hex(data),None=>hash_file(&selection.path)?};
     if digest != selection.sha256 {
         return Err(Error::Worker("selection_changed".into()));
     }
@@ -230,8 +247,10 @@ fn store_original(ctx: &Ctx, invocation: &Invocation, selection_id: &str, select
         None
     };
     let version_id = vault.register("DocumentVersionRef", "m1", Some(matter))?;
-    let file = std::io::BufReader::new(std::fs::File::open(&selection.path)?);
-    let blob = vault.put_blob_reader(&version_id, "original", file, metadata.len())?;
+    let blob = if let Some(data)=&selection.artifact { vault.put_blob(&version_id,"original",data)? } else {
+        let file = std::io::BufReader::new(std::fs::File::open(&selection.path)?);
+        vault.put_blob_reader(&version_id, "original", file, bytes)?
+    };
     if vault.blob_sha256(&blob)? != digest {
         vault.delete_blob(&blob)?;
         return Err(Error::Worker("selection_changed".into()));
@@ -248,7 +267,7 @@ fn store_original(ctx: &Ctx, invocation: &Invocation, selection_id: &str, select
     let kind = media.unwrap_or("document");
     vault.db().execute(
         "INSERT INTO document_versions(id,document_id,version_no,content_sha256,bytes,media_kind,original_blob,status,created_at) VALUES(?,?,?,?,?,?,?,'stored',?)",
-        params![version_id, document_id, version_no, digest, metadata.len() as i64, kind, blob, now],
+        params![version_id, document_id, version_no, digest, bytes as i64, kind, blob, now],
     )?;
     vault.db().execute(
         "INSERT INTO jobs(id,root,kind,state,status,updated_at) VALUES(?,?,'import',?,'running',?)",
@@ -328,6 +347,23 @@ fn process_version(ctx: &Ctx, invocation: &Invocation, version: &str) -> Result<
         )?
     };
     let mut parts = completed(None);
+    let checkpoint:Option<String>=ctx.lock()?.db().query_row("SELECT json_extract(state,'$.parse_summary') FROM jobs WHERE id=? AND json_extract(state,'$.phase')='indexing'",[version],|r|r.get(0)).optional()?.flatten();
+    if let Some(summary)=checkpoint {
+        let summary:Value=serde_json::from_str(&summary)?;
+        let (_,index)=child(ctx,invocation,"knowledge-index",json!({"document_versions":[version],"operation":"build"}))?;
+        ctx.check()?;
+        let indexed=status_of(&index)=="completed";
+        if !indexed {parts.warnings.extend(child_warnings(&index));parts.status="partial".into();}
+        let ocr_ok=summary["ocr_ok"]==json!(true);
+        let status=if indexed&&ocr_ok{"ready"}else{"partial"};
+        if status=="partial"{parts.status="partial".into();}
+        let vault=ctx.lock()?;
+        vault.db().execute("UPDATE document_versions SET status=?,error_code=NULL WHERE id=?",params![status,version])?;
+        let chunks:i64=vault.db().query_row("SELECT COUNT(*) FROM chunks WHERE version_id=?",[version],|r|r.get(0))?;
+        let blocks:i64=vault.db().query_row("SELECT COUNT(*) FROM blocks WHERE version_id=?",[version],|r|r.get(0))?;
+        let payload=json!({"version_id":version,"version_no":version_no,"display_name":display,"media_kind":kind,"format":summary["format"],"bytes":bytes,"content_sha256":digest,"status":status,"pages":summary["pages"],"ocr_pages":summary["ocr_pages"],"native_blocks":summary["native_blocks"],"blocks":blocks,"chunks":chunks,"candidate_facts":summary["candidate_facts"],"resumed_from":"index_checkpoint"});
+        return Ok((payload,parts));
+    }
     if kind == "audio" || kind == "video" {
         let media = {
             let vault = ctx.lock()?;
@@ -496,6 +532,8 @@ fn process_version(ctx: &Ctx, invocation: &Invocation, version: &str) -> Result<
         }
     }
     let candidates = extract_candidates(ctx, version, &matter)?;
+    let summary=json!({"format":format,"pages":page_count,"ocr_pages":ocr_pages.len(),"native_blocks":written,"candidate_facts":candidates,"ocr_ok":ocr_ok});
+    ctx.lock()?.db().execute("UPDATE jobs SET state=json_set(state,'$.phase','indexing','$.parse_summary',json(?)),updated_at=? WHERE id=?",params![summary.to_string(),now_rfc3339(),version])?;
     ctx.lock()?.db().execute("UPDATE document_versions SET status='indexing' WHERE id=?", [version])?;
     let (_, index) = child(ctx, invocation, "knowledge-index", json!({"document_versions": [version], "operation": "build"}))?;
     // A stop during the last child must not be committed as a partial import.
@@ -986,7 +1024,8 @@ pub fn evidence_read(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
             }
         }
         let highlight: Vec<Value> = span_rows.iter().filter_map(|s| s["block"].as_i64()).filter_map(|b| block_ids.iter().position(|x| *x == b)).map(|p| json!(p)).collect();
-        items.push(json!({"evidence_id": id, "version_id": version, "matter_id": matter, "document": {"display_name": display, "version_no": version_no, "media_kind": media_kind},
+        let legal:Option<String>=ctx.lock()?.db().query_row("SELECT metadata FROM legal_sources WHERE version_id=?",[&version],|r|r.get(0)).optional()?;
+        items.push(json!({"evidence_id": id, "version_id": version, "matter_id": matter, "document": {"display_name": display, "version_no": version_no, "media_kind": media_kind},"legal_source":legal.map(|s|serde_json::from_str::<Value>(&s)).transpose()?,
             "unit_title": unit_title, "exact_text": body, "text": texts.join("\n"), "locators": locators, "highlight_indexes": highlight, "pages": pages}));
     }
     let payload = json!({"mode": mode, "items": items, "pages": page_set, "content_hash": sha256_hex(serde_json::to_string(&items)?.as_bytes())});

@@ -131,6 +131,30 @@ struct Run<'r, 'a> {
 /// run only; a continued run keeps the inputs and checkpoints it stored.
 pub fn run(ctx: &Ctx, owner: &Invocation, owner_input: &Value, flow: &str, inputs: impl FnOnce() -> Result<Value>) -> Result<Outcome> {
     let root = owner.root_id().to_owned();
+    // A process may exit after the orchestrator committed its complete
+    // output but before the owning handler committed the user-facing result.
+    // Reuse that exact receipt; rebuilding the local result must not create
+    // another flow and resend finished generation steps. Callers still
+    // validate all referenced active results before delivery.
+    let completed:Option<(String,String,String)>={let vault=ctx.lock()?;
+        vault.db().query_row("SELECT id,owner_input,output FROM flow_runs WHERE root=? AND owner=? AND flow=? AND status='completed' AND output IS NOT NULL ORDER BY updated_at DESC LIMIT 1",params![root,owner.id(),flow],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?};
+    if let Some((run,input,output))=completed {
+        ctx.check()?;
+        if serde_json::from_str::<Value>(&input)?!=*owner_input{return Err(Error::Denied);}
+        let output:Value=serde_json::from_str(&output)?;
+        // A successful orchestrator exit can still contain a failed compose
+        // step (for example a denied batch budget or a remote 503). Only an
+        // actual draft plus its verification receipt is finalizable. A user
+        // explicitly retrying an unfinished answer must be allowed to run
+        // again under the original root and its remaining counters.
+        let finalizable=match flow {
+            "answer"|"deep_answer"=>output["draft"].is_string()&&output["report"].is_string(),
+            _=>output["partial"]!=json!(true),
+        };
+        if finalizable {
+            return Ok(Outcome{run,output,warnings:vec![("recovered_completed_flow".into(),"已从完成记录恢复本地结果，未重复发送生成请求。".into())]});
+        }
+    }
     let resuming: Option<(String, String, i64)> = ctx
         .lock()?
         .db()
@@ -759,6 +783,7 @@ fn stage_of(node: &str) -> Option<&'static str> {
     Some(match node {
         "plan" => "plan",
         "search" => "search",
+        "graph" => "graph",
         "rerank" => "rerank",
         "draft" => "draft",
         "revise" => "revise",
@@ -782,7 +807,8 @@ pub(crate) fn view_of(ctx: &Ctx, envelope: &Value) -> Result<Value> {
     let status_count = |status: &str| payload["claims"].as_array().map(|c| c.iter().filter(|r| r["status"] == status).count()).unwrap_or(0);
     Ok(match kind.as_str() {
         "SearchPlanRef" => json!({"kind": kind, "rewritten_queries": payload["plan"]["rewritten_queries"]}),
-        "CandidateSetRef" => json!({"kind": kind, "candidates": count(&payload["candidates"])}),
+        "CandidateSetRef" => json!({"kind": kind, "candidates": count(&payload["candidates"]),"graph_enabled":payload["graph_enabled"]}),
+        "GraphResultRef"=>json!({"kind":kind,"candidate_set":payload["candidate_set"],"added":count(&payload["new_candidates"])}),
         "EvidenceBundleRef" => json!({"kind": kind, "evidence_ids": envelope["evidence_refs"], "initial_take": payload["initial_take"]}),
         "EvidenceReadRef" => json!({"kind": kind, "items": count(&payload["items"])}),
         "DraftRef" => json!({"kind": kind, "version": payload["version"], "claims": count(&payload["draft"]["claims"]), "insufficient_evidence": payload["insufficient_evidence"]}),

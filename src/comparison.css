@@ -1,0 +1,27 @@
+.comparison-page { min-width: 0; }
+.matrix-toolbar { display: flex; gap: 16px; justify-content: space-between; flex-wrap: wrap; align-items: center; margin: 24px 0 12px; }
+.matrix-toolbar h2 { margin: 0 0 6px; }
+.matrix-toolbar .actions { flex-wrap: wrap; }
+.matrix-scroll { max-width: 100%; max-height: 68vh; overflow: auto; border: 1px solid var(--stroke-subtle); border-radius: 8px; background: var(--surface); }
+.matrix { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; table-layout: fixed; }
+.matrix caption { text-align: left; padding: 12px 16px; font-size: 12px; color: var(--text-secondary); }
+.matrix th, .matrix td { min-width: 280px; width: 300px; max-width: 400px; padding: 16px; vertical-align: top; text-align: left; border-right: 1px solid var(--stroke-subtle); border-bottom: 1px solid var(--stroke-subtle); overflow-wrap: anywhere; }
+.matrix thead th { position: sticky; top: 0; z-index: 2; background: var(--surface, Canvas); }
+.matrix tbody th, .matrix thead th:first-child { position: sticky; left: 0; min-width: 210px; width: 220px; max-width: 250px; background: var(--surface, Canvas); z-index: 1; }
+.matrix thead th:first-child { z-index: 3; }
+.matrix tbody th .btn { margin-top: 10px; }
+.matrix-cell { display: flex; flex-direction: column; align-items: stretch; gap: 12px; min-height: 120px; }
+.matrix-cell p { margin: 0; white-space: pre-wrap; line-height: 1.65; }
+.matrix-cell-state { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.matrix-cell .actions { margin-top: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.matrix-note { margin: 12px 0 0; max-width: 80ch; }
+.matrix-picker { border: 1px solid var(--stroke-subtle); border-radius: 6px; max-height: 220px; overflow: auto; margin: 8px 0 12px; padding: 8px; }
+.matrix-pick { display: flex; gap: 10px; align-items: start; padding: 8px; cursor: pointer; overflow-wrap: anywhere; }
+.matrix-pick input { flex-shrink: 0; margin-top: 3px; }
+.matrix-selected { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.matrix-questions { display: grid; gap: 12px; margin: 20px 0; }
+.matrix-questions textarea { width: 100%; }
+.batch-preview-cells section { padding: 12px 0; border-bottom: 1px solid var(--stroke-subtle); }
+.batch-preview-cells blockquote { border-left: 2px solid var(--stroke-subtle); padding-left: 12px; margin: 12px; }
+.matrix-detail-answer { line-height: 1.8; overflow-wrap: anywhere; }
+@media (max-width: 800px) { .matrix th, .matrix td { min-width: 240px; width: 260px; padding: 12px; } .matrix tbody th, .matrix thead th:first-child { min-width: 170px; width: 180px; } }

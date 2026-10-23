@@ -362,15 +362,15 @@ pub fn diagnostics(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<
     let mut report = json!({
         "target": target,
         "app_version": env!("CARGO_PKG_VERSION"),
-        "milestone": "M1",
+        "milestone": crate::MILESTONE,
         "installation": {"production_layout": layout.production, "models": layout.artifacts.len(), "embedding_space_id": layout.space.id},
         "residency": {"max_large": ctx.services.residency.max_large, "coresident": ctx.services.residency.coresident},
         "local_worker_running": ctx.services.local.running(),
         "storage": {"matters": count("SELECT COUNT(*) FROM matters WHERE is_root=0"), "document_versions": count("SELECT COUNT(*) FROM document_versions"),
             "chunks": count("SELECT COUNT(*) FROM chunks"), "vectors": count("SELECT COUNT(*) FROM chunk_vectors"), "blobs": count("SELECT COUNT(*) FROM blobs"),
             "facts": count("SELECT COUNT(*) FROM facts"), "cashflows": count("SELECT COUNT(*) FROM cashflows"), "temp_store_memory": vault.temp_store_is_memory().unwrap_or(false)},
-        "index": {"generation": count("SELECT COALESCE(MAX(generation),0) FROM index_state"), "loaded": vault.dense.is_some()},
-        "network": "M1 makes no network requests; workers run in no-network AppContainers",
+        "index": {"generation": count("SELECT COALESCE(MAX(generation),0) FROM index_state"), "loaded": vault.dense.is_some(),"cache":crate::partitioned_index::summary(&vault),"unfinished_index_jobs":count("SELECT COUNT(*) FROM index_jobs WHERE status<>'completed'")},
+        "network": "External generation, search, fetch and MCP require their scoped native approvals; model and orchestration workers have no network capability",
         "content": "no document text, names, paths, keys or passphrases are included",
     });
     if detail == "redacted_report" {

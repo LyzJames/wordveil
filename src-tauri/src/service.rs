@@ -18,13 +18,20 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
 use base64::Engine as _;
+
+#[path = "external_service.rs"]
+mod external;
+#[path = "comparison_service.rs"]
+pub(crate) mod comparison;
+#[path = "history_service.rs"]
+pub mod history;
 
 /// Capabilities any user action may receive (local only). Generation and
 /// probing are conditional and granted only to confirmed/protected roots.
@@ -38,7 +45,7 @@ const PROTECTED_CAPABILITIES: &[&str] = &["vault.maintenance", "settings.privacy
 /// read and preview but never commit, export, back up, store a key, probe an
 /// endpoint or send anything to a generation service. Generation additionally
 /// needs an approved, destination-bound egress grant bound to the root.
-const CONFIRMED_CAPABILITIES: &[&str] = &["vault.write", "graph.write", "file.export", "file.backup", "credential.write", "network.probe", "generation.request"];
+const CONFIRMED_CAPABILITIES: &[&str] = &["vault.write", "graph.write", "file.export", "file.backup", "credential.write", "network.probe", "generation.request", "network.search", "network.fetch", "network.update", "connector.read", "public_knowledge.write"];
 /// Bounds of one approved answer task (design 7.5; root limit 7 requests).
 const EGRESS_MAX_ITEMS: i64 = 10;
 const EGRESS_MAX_REQUESTS: i64 = 7;
@@ -68,6 +75,8 @@ enum Excerpts {
     Pages(Vec<String>),
     /// Produced locally during the run (transcripts, frame OCR).
     Later,
+    /// A trusted local comparison preparation task already read these items.
+    Ready(Vec<Value>),
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -105,6 +114,7 @@ struct Task {
 struct Session {
     handle_name: String,
     vault: VaultHandle,
+    cancel: Arc<AtomicBool>,
 }
 
 pub struct Config {
@@ -131,6 +141,12 @@ pub struct CoreService {
     /// When auto-lock first waited for running tasks (cleared by activity).
     deferred: Mutex<Option<Instant>>,
     failures: Mutex<(u32, Option<Instant>)>,
+    closing: Arc<AtomicBool>,
+    auto_lock_minutes: AtomicU64,
+    system_lock: AtomicBool,
+    /// Serialize explicit index continuation registration, including the
+    /// interval before its worker updates the durable job's last root.
+    index_resume_gate: Mutex<()>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -160,6 +176,10 @@ impl CoreService {
             activity: Mutex::new(Instant::now()),
             deferred: Mutex::new(None),
             failures: Mutex::new((0, None)),
+            closing: Arc::new(AtomicBool::new(false)),
+            auto_lock_minutes: AtomicU64::new(15),
+            system_lock: AtomicBool::new(true),
+            index_resume_gate: Mutex::new(()),
         }))
     }
 
@@ -178,6 +198,29 @@ impl CoreService {
         self.session.lock().map_err(|_| Error::Integrity)?.as_ref().map(|s| s.vault.clone()).ok_or(Error::Locked)
     }
 
+    fn session_cancel(&self, handle: &VaultHandle) -> Result<Arc<AtomicBool>> {
+        let session = self.session.lock().map_err(|_| Error::Integrity)?;
+        let session = session.as_ref().filter(|s| Arc::ptr_eq(&s.vault, handle)).ok_or(Error::Locked)?;
+        Ok(session.cancel.clone())
+    }
+
+    /// A reader that waited behind an index write must recheck the session
+    /// after acquiring the mutex: locking may have revoked it in the meantime.
+    fn lock_vault<'a>(&self, handle: &'a VaultHandle) -> Result<MutexGuard<'a, Vault>> {
+        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        self.session_cancel(handle)?;
+        Ok(vault)
+    }
+
+    fn wait_for_cleanup(&self) -> Result<()> {
+        let deadline = Instant::now() + LOCK_JOIN;
+        while self.closing.load(Ordering::Acquire) {
+            if Instant::now() >= deadline { return Err(Error::NeedsInput("lock_cleanup")); }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        Ok(())
+    }
+
     pub fn is_unlocked(&self) -> bool {
         self.session.lock().map(|s| s.is_some()).unwrap_or(false)
     }
@@ -187,7 +230,7 @@ impl CoreService {
     }
 
     fn registry(&self) -> Result<Registry> {
-        Registry::load(&self.services.layout.resources, false)
+        Registry::load(&self.services.layout.resources, self.services.layout.production)
     }
 
     fn throttle(&self) -> Result<()> {
@@ -208,6 +251,7 @@ impl CoreService {
 
     /// Protected UI flow: create a vault. Returns the recovery code exactly once.
     pub fn create_vault(&self, passphrase: Zeroizing<String>, name: &str) -> Result<(UnlockInfo, Zeroizing<String>)> {
+        self.wait_for_cleanup()?;
         if self.is_unlocked() {
             return Err(Error::Conflict);
         }
@@ -235,6 +279,7 @@ impl CoreService {
 
     /// Protected UI flow: unlock with the passphrase or the recovery code.
     pub fn unlock(&self, handle: &str, secret: Secret) -> Result<UnlockInfo> {
+        self.wait_for_cleanup()?;
         if self.is_unlocked() {
             return Err(Error::Conflict);
         }
@@ -266,6 +311,19 @@ impl CoreService {
         // a request that left without a recorded reply has an unknown outcome.
         opened.db().execute("UPDATE flow_runs SET status='interrupted',reason='app_exit',updated_at=? WHERE status IN ('running','resuming')", [now_rfc3339()])?;
         opened.db().execute("UPDATE generation_requests SET status='unknown',finished_at=? WHERE status='sent'", [now_rfc3339()])?;
+        opened.db().execute("UPDATE network_requests SET status='unknown',finished_at=? WHERE status='sent'",[now_rfc3339()])?;
+        opened.db().execute("UPDATE network_actions SET state='unknown' WHERE state IN ('approved','running')",[])?;
+        comparison::recover(&opened)?;
+        let managed:Vec<(String,Option<String>)>={
+            let mut statement=opened.db().prepare("SELECT c.id,c.credential FROM external_connections c JOIN settings s ON s.key='managed-mcp:'||c.id WHERE c.enabled=1")?;
+            statement.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<std::result::Result<_,_>>()?
+        };
+        let credentials=crate::generation::credentials::CredentialStore::for_vault(&self.services.layout.data_root,&opened.id,&opened.keys.credential)?;
+        for (id,credential) in managed{
+            opened.db().execute("UPDATE external_connections SET enabled=0,credential=NULL WHERE id=?",[&id])?;
+            opened.db().execute("UPDATE external_bindings SET active=0 WHERE connection_id=?",[&id])?;
+            if let Some(id)=credential{credentials.remove(&id)?;}
+        }
         handlers::observe::sweep_native(&opened)?;
         self.install_session(handle.into(), opened)?;
         // API keys sealed with the earlier public entropy move to the secret one.
@@ -280,8 +338,10 @@ impl CoreService {
     }
 
     fn install_session(&self, handle_name: String, opened: Vault) -> Result<()> {
+        self.auto_lock_minutes.store(opened.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1), Ordering::Release);
+        self.system_lock.store(opened.setting("lock_on_system_lock")?.map(|v| v != "0").unwrap_or(true), Ordering::Release);
         let mut session = self.session.lock().map_err(|_| Error::Integrity)?;
-        *session = Some(Session { handle_name, vault: Arc::new(Mutex::new(opened)) });
+        *session = Some(Session { handle_name, vault: Arc::new(Mutex::new(opened)), cancel: Arc::new(AtomicBool::new(false)) });
         self.touch();
         Ok(())
     }
@@ -293,68 +353,70 @@ impl CoreService {
         Ok(())
     }
 
-    /// Lock: stop tasks, forget the session and view tokens at once, then give
-    /// task threads a bounded time to end and stop the sensitive workers.
+    /// Revoke session access before touching the busy database. Cleanup runs
+    /// separately, so an index rebuild cannot extend the public lock deadline.
     pub fn lock(&self) -> Result<()> {
-        let ids: Vec<String> = self.tasks.lock().map_err(|_| Error::Integrity)?.keys().cloned().collect();
-        for id in &ids {
-            // A running flow is interrupted, not cancelled: its root stays valid
-            // so the user may continue it after unlocking (with a new confirmation).
-            if self.task_flow_running(id).unwrap_or(false) {
-                let _ = self.interrupt_task(id);
-            } else {
-                let _ = self.cancel_task(id);
-            }
-        }
-        if self.is_unlocked() {
-            let _ = self.protected_audit("lock");
-        }
-        // From here no command reaches the vault, whatever a task thread is
-        // still finishing; the keys go when the last handle is dropped.
-        let session = self.session.lock().map_err(|_| Error::Integrity)?.take();
-        self.tokens.lock().map_err(|_| Error::Integrity)?.clear();
-        // Stopping the workers also ends any task thread waiting for them.
-        self.services.stop_sensitive();
-        let threads: Vec<std::thread::JoinHandle<()>> = {
+        let (session, tasks) = {
+            let mut current = self.session.lock().map_err(|_| Error::Integrity)?;
+            let Some(session) = current.take() else { return Ok(()) };
+            self.closing.store(true, Ordering::Release);
+            session.cancel.store(true, Ordering::Release);
+            self.tokens.lock().map_err(|_| Error::Integrity)?.clear();
             let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
-            tasks.values_mut().filter_map(|t| t.thread.take()).collect()
+            for task in tasks.values() { task.cancel.store(true, Ordering::Release); }
+            (session, std::mem::take(&mut *tasks))
         };
-        let deadline = Instant::now() + LOCK_JOIN;
-        let mut detached = 0i64;
-        for thread in threads {
-            while !thread.is_finished() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            if thread.is_finished() {
-                let _ = thread.join();
-            } else {
-                detached += 1;
-            }
-        }
-        drop(session);
-        self.tasks.lock().map_err(|_| Error::Integrity)?.clear();
         if let Ok(mut deferred) = self.deferred.lock() {
             *deferred = None;
         }
-        self.services.stop_sensitive();
-        self.services.log.event("vault.locked", &[("detached", crate::logging::Field::Count(detached))]);
+        let services = self.services.clone();
+        let closing = self.closing.clone();
+        let (sent, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            services.stop_sensitive();
+            if let Ok(mut vault) = session.vault.lock() {
+                // Flows keep their roots for confirmed continuation. Other
+                // tasks are cancelled once the database becomes available.
+                for task in tasks.values() {
+                    let flow: bool = vault.db().query_row("SELECT EXISTS(SELECT 1 FROM flow_runs WHERE root=? AND status IN ('running','resuming','interrupted'))", [&task.state.root], |r| r.get(0)).unwrap_or(false);
+                    let cell:bool=vault.db().query_row("SELECT EXISTS(SELECT 1 FROM comparison_roots r JOIN comparison_cells c ON c.id=r.cell_id WHERE r.root=? AND c.state NOT IN ('done','no_evidence','stale'))",[&task.state.root],|r|r.get(0)).unwrap_or(false);
+                    if !flow && !cell { let _ = vault.runtime.cancel_root(&task.state.root); }
+                }
+                let _ = vault.db().execute("UPDATE flow_runs SET status='interrupted',reason='locked',updated_at=? WHERE status IN ('running','resuming')", [now_rfc3339()]);
+                let _ = vault.db().execute("UPDATE generation_requests SET status='unknown',finished_at=? WHERE status='sent'", [now_rfc3339()]);
+                let _ = comparison::recover(&vault);
+                let scope = vault.id.clone();
+                if let Ok(root) = vault.runtime.begin_root(UserAction::trusted(&scope, &["settings.privacy"], "protected")) {
+                    let _ = vault.db().execute("INSERT INTO audit(root,code) VALUES(?, 'privacy.lock')", [root.id()]);
+                }
+            }
+            let deadline = Instant::now() + LOCK_JOIN;
+            for task in tasks.into_values() {
+                if let Some(thread) = task.thread {
+                    while !thread.is_finished() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(20)); }
+                    if thread.is_finished() { let _ = thread.join(); }
+                }
+            }
+            drop(session);
+            services.stop_sensitive();
+            closing.store(false, Ordering::Release);
+            let _ = sent.send(());
+        });
+        let _ = done.recv_timeout(LOCK_JOIN);
+        self.services.log.event("vault.locked", &[("cleanup_pending", crate::logging::Field::Flag(self.closing.load(Ordering::Acquire)))]);
         Ok(())
     }
 
     /// Whether a Windows session lock or sleep locks the vault (user setting,
     /// on by default). Never waits for a busy vault: then it says yes.
     pub fn lock_on_system_lock(&self) -> bool {
-        let Ok(session) = self.session.lock() else { return false };
-        let Some(handle) = session.as_ref().map(|s| s.vault.clone()) else { return false };
-        drop(session);
-        let Ok(vault) = handle.try_lock() else { return true };
-        vault.setting("lock_on_system_lock").ok().flatten().map(|value| value != "0").unwrap_or(true)
+        self.is_unlocked() && self.system_lock.load(Ordering::Acquire)
     }
 
     /// The lock settings shown on the settings page (reading is not activity).
     pub fn lock_policy(&self) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let minutes: u64 = vault.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1);
         let system = vault.setting("lock_on_system_lock")?.map(|value| value != "0").unwrap_or(true);
         Ok(json!({"auto_lock_minutes": minutes, "lock_on_system_lock": system}))
@@ -365,8 +427,8 @@ impl CoreService {
     /// `LOCK_MAX_DEFER`; a task without progress for `LOCK_STALL` does not.
     pub fn auto_lock_tick(&self) -> Result<bool> {
         // Reading the policy is not user activity (it must not touch).
-        let Some(handle) = self.session.lock().map_err(|_| Error::Integrity)?.as_ref().map(|s| s.vault.clone()) else { return Ok(false) };
-        let minutes: u64 = handle.lock().map_err(|_| Error::Integrity)?.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1);
+        if !self.is_unlocked() { return Ok(false); }
+        let minutes = self.auto_lock_minutes.load(Ordering::Acquire);
         let idle = self.activity.lock().map_err(|_| Error::Integrity)?.elapsed();
         if idle < Duration::from_secs(minutes * 60) {
             return Ok(false);
@@ -386,7 +448,7 @@ impl CoreService {
         }
         let handle = self.vault()?;
         {
-            let mut vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let mut vault = self.lock_vault(&handle)?;
             vault::unlock_with_passphrase(&vault.header, current.as_bytes()).map_err(|_| Error::Denied)?;
             let updated = vault::rewrap_passphrase(&vault.dir.clone(), &vault.header.clone(), &vault.keys, new.as_bytes(), self.config.kdf)?;
             vault.header = updated;
@@ -416,7 +478,7 @@ impl CoreService {
 
     fn ui_request(&self, operation: &str, payload: &Value) -> Result<String> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let id = vault.register("TrustedUiRequestRef", "m1", None)?;
         vault.db().execute("INSERT INTO ui_requests(id,operation,payload,created_at) VALUES(?,?,?,?)", params![id, operation, payload.to_string(), now_rfc3339()])?;
         Ok(id)
@@ -449,7 +511,7 @@ impl CoreService {
             (None, None)
         };
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let id = vault.register(kind, "m1", None)?;
         vault.db().execute(
             "INSERT INTO selections(id,kind,path,display_name,bytes,sha256,purpose,created_at) VALUES(?,?,?,?,?,?,?,?)",
@@ -464,18 +526,21 @@ impl CoreService {
             return Err(Error::NeedsInput("question"));
         }
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let id = vault.register("ImmutableQuestionRef", "m1", None)?;
         vault.db().execute("INSERT INTO questions(id,text,created_at) VALUES(?,?,?)", params![id, text, now_rfc3339()])?;
         Ok(id)
     }
 
     pub fn create_scope(&self, matters: &[String], versions: &[String]) -> Result<String> {
+        self.create_scope_with_policy(matters,versions,&crate::retrieval_scope::Policy::default())
+    }
+    pub fn create_scope_with_policy(&self,matters:&[String],versions:&[String],policy:&crate::retrieval_scope::Policy)->Result<String> {
         let handle = self.vault()?;
-        let ctx_cancel = AtomicBool::new(false);
+        let ctx_cancel = self.session_cancel(&handle)?;
         let sink = |_: Progress| {};
         let ctx = Ctx { vault: &handle, services: &self.services, cancel: &ctx_cancel, progress: &sink };
-        handlers::workflows::create_scope(&ctx, matters, versions)
+        handlers::workflows::create_scope_with(&ctx, matters, versions,policy)
     }
 
     pub fn create_range(&self, media: &str, start_s: f64, end_s: Option<f64>) -> Result<String> {
@@ -483,7 +548,7 @@ impl CoreService {
             return Err(Error::Contract);
         }
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(media, &["MediaVersionRef"])?;
         let id = vault.register("ApprovedTimeRangeRef", "m1", Some(media))?;
         vault.db().execute("INSERT INTO ranges(id,media_id,start_s,end_s,created_at) VALUES(?,?,?,?,?)", params![id, media, start_s, end_s, now_rfc3339()])?;
@@ -495,7 +560,7 @@ impl CoreService {
             return Err(Error::Contract);
         }
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         for id in ids {
             vault.expect_kind(id, if kind == "matter" { &["MatterRef"] } else { &["DocumentVersionRef"] })?;
         }
@@ -507,7 +572,7 @@ impl CoreService {
     /// Draft a matter change; matter-manage validates/prepares and commits it.
     pub fn draft_change(&self, matter: &str, change: &Value) -> Result<String> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(matter, &["MatterRef"])?;
         if change.to_string().len() > 2 * 1024 * 1024 || !change["type"].is_string() {
             return Err(Error::Contract);
@@ -522,7 +587,7 @@ impl CoreService {
             return Err(Error::Contract);
         }
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let key = format!("component:{name}");
         if let Some(id) = vault.setting(&key)? {
             return Ok(id);
@@ -551,7 +616,7 @@ impl CoreService {
             walk(registry, skill, true, &mut conditional);
             granted.extend(PROTECTED_CAPABILITIES.iter().copied().filter(|c| direct.contains(*c)));
             for capability in CONFIRMED_CAPABILITIES {
-                if conditional.contains(*capability) && !granted.contains(capability) {
+                if (conditional.contains(*capability) || direct.contains(*capability)) && !granted.contains(capability) {
                     granted.push(capability);
                 }
             }
@@ -571,7 +636,7 @@ impl CoreService {
         }
         let handle = self.vault()?;
         let invocation = {
-            let mut vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let mut vault = self.lock_vault(&handle)?;
             let scope = vault.id.clone();
             let capabilities = self.capabilities(skill, action, &vault.runtime.registry);
             let root = vault.runtime.begin_root(UserAction::trusted(&scope, &capabilities, action))?;
@@ -579,6 +644,11 @@ impl CoreService {
                 let bound = vault.db().execute("UPDATE egress_grants SET root=? WHERE id=? AND root IS NULL AND approved_at IS NOT NULL AND revoked_at IS NULL", params![root.id(), grant])?;
                 if bound != 1 {
                     return Err(Error::Denied);
+                }
+                let cell:Option<String>=vault.db().query_row("SELECT id FROM comparison_cells WHERE grant_id=?",[grant],|r|r.get(0)).optional()?;
+                if let Some(cell)=cell {
+                    vault.db().execute("UPDATE comparison_cells SET root=? WHERE id=?",params![root.id(),cell])?;
+                    vault.db().execute("INSERT INTO comparison_roots(cell_id,root,created_at) VALUES(?,?,?)",params![cell,root.id(),now_rfc3339()])?;
                 }
             }
             vault.runtime.invoke_ui(&root, skill, input)?
@@ -589,10 +659,16 @@ impl CoreService {
     /// Run a skill to completion on the calling thread (tests, validation tool).
     pub fn run_skill(&self, skill: &str, input: Value, action: &str) -> Result<Value> {
         let (handle, invocation) = self.begin(skill, &input, action)?;
-        let cancel = AtomicBool::new(false);
+        let cancel = self.session_cancel(&handle)?;
         let sink = |_: Progress| {};
         let ctx = Ctx { vault: &handle, services: &self.services, cancel: &cancel, progress: &sink };
-        handlers::execute(&ctx, &invocation, &input)
+        let result = handlers::execute(&ctx, &invocation, &input)?;
+        if skill == "privacy-settings" && input["operation"] == "change_policy" && result["status"] == "completed" {
+            let vault = self.lock_vault(&handle)?;
+            self.auto_lock_minutes.store(vault.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1), Ordering::Release);
+            self.system_lock.store(vault.setting("lock_on_system_lock")?.map(|v| v != "0").unwrap_or(true), Ordering::Release);
+        }
+        Ok(result)
     }
 
     /// Start a skill on a worker thread; progress/finish events go to the sink.
@@ -631,6 +707,10 @@ impl CoreService {
             task_id: task_id.clone(), skill: skill.into(), root: invocation.root_id().into(), status: "running".into(), progress: None, envelope: None, started_at: now_rfc3339(), retryable: false,
         };
         {
+            // Serialize task registration with session revocation. A task
+            // prepared before a lock must not start after its task map drained.
+            let session = self.session.lock().map_err(|_| Error::Integrity)?;
+            if !session.as_ref().is_some_and(|s| Arc::ptr_eq(&s.vault, &handle)) { return Err(Error::Locked); }
             let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
             // Keep the most recent finished tasks only; running ones always stay.
             let mut finished: Vec<(String, String)> = tasks.iter().filter(|(_, t)| t.state.status != "running").map(|(id, t)| (t.state.started_at.clone(), id.clone())).collect();
@@ -719,16 +799,9 @@ impl CoreService {
             task.state.root.clone()
         };
         if let Ok(handle) = self.vault() {
-            handle.lock().map_err(|_| Error::Integrity)?.runtime.cancel_root(&root)?;
+            self.lock_vault(&handle)?.runtime.cancel_root(&root)?;
         }
         Ok(())
-    }
-
-    fn task_flow_running(&self, id: &str) -> Result<bool> {
-        let root = self.tasks.lock().map_err(|_| Error::Integrity)?.get(id).map(|t| t.state.root.clone()).ok_or(Error::Denied)?;
-        let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
-        Ok(vault.db().query_row("SELECT EXISTS(SELECT 1 FROM flow_runs WHERE root=? AND status IN ('running','resuming'))", [&root], |r| r.get(0))?)
     }
 
     /// Stop a task's threads without cancelling its root (lock or app exit).
@@ -743,7 +816,7 @@ impl CoreService {
     /// Interrupted flow runs the user may continue or discard.
     pub fn interrupted_flows(&self) -> Result<Vec<Value>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let current: i64 = vault.db().query_row("SELECT COALESCE((SELECT generation FROM index_state WHERE id=1),0)", [], |r| r.get(0))?;
         let mut statement = vault.db().prepare(
             "SELECT f.id,f.root,f.skill,f.flow,f.owner_input,f.snapshot_generation,f.attempts,f.reason,f.created_at,f.updated_at,
@@ -772,7 +845,7 @@ impl CoreService {
     pub fn describe_continue(&self, run: &str) -> Result<Value> {
         let listed = self.interrupted_flows()?.into_iter().find(|r| r["run_id"] == run).ok_or(Error::Denied)?;
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let root = listed["root"].as_str().ok_or(Error::Integrity)?;
         let (connection, host, max_requests): (String, String, i64) = vault
             .db()
@@ -798,7 +871,7 @@ impl CoreService {
         }
         let handle = self.vault()?;
         let (invocation, input, skill) = {
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             if described["stale"] == json!(true) {
                 vault.db().execute("UPDATE flow_runs SET status='stale',updated_at=? WHERE id=? AND status='interrupted'", params![now_rfc3339(), run])?;
                 return Err(Error::NeedsInput("rerun"));
@@ -818,7 +891,7 @@ impl CoreService {
     /// Give up an interrupted run: its root is cancelled and its grant revoked.
     pub fn flow_discard(&self, run: &str) -> Result<()> {
         let handle = self.vault()?;
-        let mut vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let mut vault = self.lock_vault(&handle)?;
         let root: String = vault.db().query_row("SELECT root FROM flow_runs WHERE id=? AND status IN ('interrupted','stale')", [run], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
         vault.db().execute("UPDATE flow_runs SET status='cancelled',reason='discarded',updated_at=? WHERE id=?", params![now_rfc3339(), run])?;
         vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE root=? AND revoked_at IS NULL", params![now_rfc3339(), root])?;
@@ -844,7 +917,7 @@ impl CoreService {
 
     pub fn result(&self, id: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let (skill, kind, payload) = vault.get_result(id)?;
         Ok(json!({"id": id, "skill": skill, "kind": kind, "payload": payload}))
     }
@@ -858,7 +931,7 @@ impl CoreService {
             return Err(Error::Contract);
         }
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.get_result(result)?;
         let id = vault.register("FeedbackRef", "m2", Some(result))?;
         vault.db().execute(
@@ -871,7 +944,7 @@ impl CoreService {
 
     pub fn feedback(&self, result: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut statement = vault.db().prepare("SELECT f.id,f.claim_id,f.issue,f.note,f.created_at FROM feedback f JOIN objects o ON o.id=f.id WHERE f.result_ref=? AND o.active=1 ORDER BY f.created_at")?;
         let rows = statement.query_map([result], |r| {
             Ok(json!({"id": r.get::<_, String>(0)?, "claim_id": r.get::<_, Option<String>>(1)?, "issue": r.get::<_, String>(2)?, "note": r.get::<_, Option<String>>(3)?, "created_at": r.get::<_, String>(4)?}))
@@ -881,7 +954,7 @@ impl CoreService {
 
     pub fn remove_feedback(&self, id: &str) -> Result<()> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(id, &["FeedbackRef"])?;
         vault.db().execute("DELETE FROM feedback WHERE id=?", [id])?;
         vault.db().execute("UPDATE objects SET active=0 WHERE id=?", [id])?;
@@ -889,6 +962,8 @@ impl CoreService {
     }
 
     fn issue_token(&self, blob: &str, mime: &str) -> Result<String> {
+        let session = self.session.lock().map_err(|_| Error::Integrity)?;
+        if session.is_none() { return Err(Error::Locked); }
         let token = format!("{:x}{:x}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
         let mut tokens = self.tokens.lock().map_err(|_| Error::Integrity)?;
         tokens.retain(|_, (_, _, at)| at.elapsed() < TOKEN_TTL);
@@ -901,7 +976,7 @@ impl CoreService {
     pub fn page_view(&self, page: &str) -> Result<Value> {
         let handle = self.vault()?;
         let (image, row, blocks, chunks) = {
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             vault.expect_kind(page, &["PageRef"])?;
             let row: (String, i64, String, Option<f64>, Option<f64>, Option<String>, i64, i64) = vault.db().query_row(
                 "SELECT version_id,page_no,source,width,height,image_blob,rotation_turns,uvdoc FROM pages WHERE id=?",
@@ -940,21 +1015,21 @@ impl CoreService {
             Ok(vault.db().query_row("SELECT id FROM blobs WHERE owner=? AND purpose='page_thumb'", [page], |r| r.get::<_, String>(0)).optional()?)
         };
         let existing = {
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             vault.expect_kind(page, &["PageRef"])?;
             cached(&vault)?
         };
         let blob = match existing {
             Some(blob) => blob,
             None => {
-                let cancel = AtomicBool::new(false);
+                let cancel = self.session_cancel(&handle)?;
                 let sink = |_: Progress| {};
                 let ctx = Ctx { vault: &handle, services: &self.services, cancel: &cancel, progress: &sink };
                 let display = handlers::documents::ensure_display_image(&ctx, page)?;
-                let image = handle.lock().map_err(|_| Error::Integrity)?.get_blob(&display)?;
+                let image = self.lock_vault(&handle)?.get_blob(&display)?;
                 let encoded = self.services.local.call(&json!({"op": "encode_for_model", "png_base64": base64::engine::general_purpose::STANDARD.encode(&*image), "max_side": THUMB_SIDE, "quality": THUMB_QUALITY}), &cancel, Duration::from_secs(60))?;
                 let jpeg = base64::engine::general_purpose::STANDARD.decode(encoded["jpeg_base64"].as_str().ok_or(Error::Contract)?).map_err(|_| Error::Contract)?;
-                let vault = handle.lock().map_err(|_| Error::Integrity)?;
+                let vault = self.lock_vault(&handle)?;
                 // Two strips may have asked for the same page at once.
                 match cached(&vault)? {
                     Some(blob) => blob,
@@ -968,7 +1043,7 @@ impl CoreService {
     /// Pages of a document version (ids and status only).
     pub fn version_pages(&self, version: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(version, &["DocumentVersionRef"])?;
         let mut statement = vault.db().prepare("SELECT id,page_no,source,ocr_status FROM pages WHERE version_id=? ORDER BY page_no")?;
         let pages: Vec<Value> = statement
@@ -980,12 +1055,17 @@ impl CoreService {
             .collect::<std::result::Result<_, _>>()?;
         Ok(json!({"version_id": version, "pages": pages, "blocks": free}))
     }
+    pub fn relation_sources(&self,version:&str)->Result<Vec<Value>> {
+        let handle=self.vault()?;let vault=self.lock_vault(&handle)?;vault.expect_kind(version,&["DocumentVersionRef"])?;
+        let mut s=vault.db().prepare("SELECT c.id,c.unit_title,c.body FROM chunks c JOIN objects o ON o.id=c.id WHERE c.version_id=? AND o.active=1 ORDER BY c.ordinal LIMIT 200")?;
+        Ok(s.query_map([version],|r|Ok(json!({"evidence_id":r.get::<_,String>(0)?,"unit_title":r.get::<_,String>(1)?,"excerpt":r.get::<_,String>(2)?.chars().take(240).collect::<String>()})))?.collect::<std::result::Result<_,_>>()?)
+    }
 
     /// Playable WAV for one decoded ASR segment (format conversion only).
     pub fn segment_audio(&self, segment: &str) -> Result<Value> {
         let handle = self.vault()?;
         let blob = {
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             vault.expect_kind(segment, &["AudioSegmentRef"])?;
             vault.db().query_row("SELECT pcm_blob FROM audio_segments WHERE id=?", [segment], |r| r.get::<_, String>(0))?
         };
@@ -1003,7 +1083,7 @@ impl CoreService {
             (blob.clone(), mime.clone())
         };
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         match blob.strip_prefix("wav:") {
             Some(pcm) => {
                 let samples = vault.get_blob(pcm)?;
@@ -1027,7 +1107,7 @@ impl CoreService {
 
     pub fn has_interrupted_imports(&self) -> Result<Vec<String>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut statement = vault.db().prepare("SELECT json_extract(state,'$.selection') FROM jobs WHERE status='interrupted'")?;
         let rows = statement.query_map([], |r| r.get::<_, Option<String>>(0))?;
         Ok(rows.filter_map(|r| r.ok().flatten()).collect())
@@ -1036,7 +1116,7 @@ impl CoreService {
     /// Interrupted imports with the matter and file name needed to resume them.
     pub fn interrupted_imports(&self) -> Result<Vec<Value>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut statement = vault.db().prepare(
             "SELECT json_extract(j.state,'$.selection'),j.id,d.matter_id,d.display_name,j.updated_at FROM jobs j JOIN document_versions v ON v.id=j.id JOIN documents d ON d.id=v.document_id WHERE j.status='interrupted' ORDER BY j.updated_at DESC",
         )?;
@@ -1044,12 +1124,43 @@ impl CoreService {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    pub fn index_jobs(&self)->Result<Vec<Value>> {
+        let handle=self.vault()?;let vault=self.lock_vault(&handle)?;
+        let mut s=vault.db().prepare("SELECT j.id,j.version_id,j.total,j.completed,j.attempts,j.status,d.display_name,j.updated_at,m.kind FROM index_jobs j JOIN document_versions v ON v.id=j.version_id JOIN documents d ON d.id=v.document_id JOIN objects o ON o.id=v.id JOIN objects m ON m.id=d.matter_id WHERE o.active=1 AND j.status<>'completed' ORDER BY j.updated_at DESC LIMIT 100")?;
+        let mut rows=s.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"version_id":r.get::<_,String>(1)?,"total":r.get::<_,i64>(2)?,"completed":r.get::<_,i64>(3)?,"attempts":r.get::<_,i64>(4)?,"status":r.get::<_,String>(5)?,"display_name":r.get::<_,String>(6)?,"updated_at":r.get::<_,String>(7)?,"public":r.get::<_,String>(8)?=="PublicKnowledgeCollectionRef"})))?.collect::<std::result::Result<Vec<_>,_>>()?;
+        drop(s);drop(vault);let tasks=self.tasks()?;
+        let handle=self.vault()?;let vault=self.lock_vault(&handle)?;
+        for row in &mut rows {let root:String=vault.db().query_row("SELECT last_root FROM index_jobs WHERE id=?",[row["id"].as_str().ok_or(Error::Integrity)?],|r|r.get(0))?;row["running"]=json!(tasks.iter().any(|t|t.root==root&&t.status=="running"));}
+        Ok(rows)
+    }
+    /// An explicit local continuation. The durable job records both roots;
+    /// no generation grant is created and no external budget is reset.
+    pub fn index_resume(self:&Arc<Self>,id:&str)->Result<String> {
+        let _registration=self.index_resume_gate.lock().map_err(|_|Error::Integrity)?;
+        let handle=self.vault()?;
+        let (version,selection,matter)={let vault=self.lock_vault(&handle)?;
+            let version:String=vault.db().query_row("SELECT version_id FROM index_jobs WHERE id=? AND status<>'completed'",[id],|r|r.get(0)).optional()?.ok_or(Error::Denied)?;
+            let root:String=vault.db().query_row("SELECT last_root FROM index_jobs WHERE id=?",[id],|r|r.get(0))?;
+            if self.tasks()?.iter().any(|t|t.root==root&&t.status=="running"){return Err(Error::Conflict);}
+            let selection:Option<String>=vault.db().query_row("SELECT json_extract(state,'$.selection') FROM jobs WHERE id=? AND kind='import' AND status='interrupted'",[&version],|r|r.get(0)).optional()?.flatten();
+            let matter:String=vault.db().query_row("SELECT d.matter_id FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?",[&version],|r|r.get(0))?;
+            if vault.object_kind(&matter)?=="PublicKnowledgeCollectionRef"{return Err(Error::NeedsInput("public_package_continue"));}
+            (version,selection,matter)};
+        let task=if let Some(selection)=selection {self.start_skill("document-import",json!({"selection_id":selection,"target_ref":matter,"import_mode":"copy"}),"ui")?}
+            else {self.start_skill("knowledge-index",json!({"document_versions":[version],"operation":"build"}),"ui")?};
+        let root=self.task(&task)?.root;
+        // Bind before returning to the caller, even if the producer is still
+        // queued. A second resume can then see the registered running task.
+        self.lock_vault(&handle)?.db().execute("UPDATE index_jobs SET last_root=? WHERE id=? AND status<>'completed'",params![root,id])?;
+        Ok(task)
+    }
+
     /// Page view that first renders a display image for a native PDF page
     /// (format conversion of the stored original; nothing leaves the vault).
     pub fn render_page(&self, page: &str) -> Result<Value> {
         let handle = self.vault()?;
-        handle.lock().map_err(|_| Error::Integrity)?.expect_kind(page, &["PageRef"])?;
-        let cancel = AtomicBool::new(false);
+        self.lock_vault(&handle)?.expect_kind(page, &["PageRef"])?;
+        let cancel = self.session_cancel(&handle)?;
         let sink = |_: Progress| {};
         let ctx = Ctx { vault: &handle, services: &self.services, cancel: &cancel, progress: &sink };
         handlers::documents::ensure_display_image(&ctx, page)?;
@@ -1060,7 +1171,7 @@ impl CoreService {
     /// and sampled frames (page ids for the frame OCR view).
     pub fn media_view(&self, version: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(version, &["DocumentVersionRef"])?;
         let media: Option<(String, String, Option<f64>, i64, i64)> = vault
             .db()
@@ -1086,7 +1197,7 @@ impl CoreService {
 
     fn credential_store(&self) -> Result<crate::generation::credentials::CredentialStore> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         crate::generation::credentials::CredentialStore::for_vault(&self.services.layout.data_root, &vault.id, &vault.keys.credential)
     }
 
@@ -1109,14 +1220,14 @@ impl CoreService {
             None => None,
         };
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         crate::generation::connections::create_draft(&vault, &draft, credential.as_deref())
     }
 
     /// A draft that refers to an existing connection unchanged (probe/revoke).
     pub fn connection_reference(&self, connection: &str) -> Result<String> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let loaded = crate::generation::connections::load(&vault, connection)?;
         if loaded.status != "active" {
             return Err(Error::Denied);
@@ -1132,20 +1243,20 @@ impl CoreService {
     pub fn connections(&self) -> Result<Vec<Value>> {
         let store = self.credential_store()?;
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         crate::generation::connections::summary(&vault, &|id| store.exists(id))
     }
 
     pub fn set_default_connection(&self, connection: &str) -> Result<()> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         crate::generation::connections::set_default(&vault, connection)
     }
 
     /// What the native confirmation for a probe or revoke shows.
     pub fn describe_connection(&self, connection: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let loaded = crate::generation::connections::load(&vault, connection)?;
         Ok(json!({"name": loaded.name, "host": loaded.profile.endpoint.display_host(), "model_id": loaded.profile.model_id, "loopback": loaded.profile.endpoint.is_loopback()}))
     }
@@ -1161,8 +1272,11 @@ impl CoreService {
 
     /// Q&A preview; `deep` approves the planner and narrow roles ("深入分析").
     pub fn answer_preview_with(&self, text: &str, matters: &[String], connection: Option<&str>, deep: bool) -> Result<Value> {
+        self.answer_preview_policy(text,matters,connection,deep,&crate::retrieval_scope::Policy::default())
+    }
+    pub fn answer_preview_policy(&self,text:&str,matters:&[String],connection:Option<&str>,deep:bool,policy:&crate::retrieval_scope::Policy)->Result<Value> {
         let question = self.create_question(text)?;
-        let scope = self.create_scope(matters, &[])?;
+        let scope = self.create_scope_with_policy(matters, &[],policy)?;
         let purpose = if deep { "deep_answer" } else { "answer" };
         let input = json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "answer"});
         self.grant_preview(purpose, text, &question, &scope, matters.len(), connection, input, Excerpts::Retrieval, json!({}))
@@ -1213,7 +1327,7 @@ impl CoreService {
         let connection_id = self.connection_for(request["connection"].as_str())?;
         let (vision, audio_input) = {
             let handle = self.vault()?;
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             let connection = crate::generation::connections::load(&vault, &connection_id)?;
             (crate::generation::connections::capability(&vault, &connection, "vision")? == "supported",
              crate::generation::connections::capability(&vault, &connection, "audio_input")? == "supported")
@@ -1243,7 +1357,7 @@ impl CoreService {
                 let source = request["source_ref"].as_str().ok_or(Error::NeedsInput("source_ref"))?.to_owned();
                 let (version, media_kind): (String, String) = {
                     let handle = self.vault()?;
-                    let vault = handle.lock().map_err(|_| Error::Integrity)?;
+                    let vault = self.lock_vault(&handle)?;
                     vault.expect_kind(&source, &["MediaVersionRef"])?;
                     vault.db().query_row("SELECT v.id,v.media_kind FROM media m JOIN document_versions v ON v.id=m.version_id WHERE m.id=?", [&source], |r| Ok((r.get(0)?, r.get(1)?)))?
                 };
@@ -1266,7 +1380,7 @@ impl CoreService {
 
     fn connection_for(&self, connection: Option<&str>) -> Result<String> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let id = match connection {
             Some(id) => id.to_owned(),
             None => crate::generation::connections::default_connection(&vault)?.ok_or(Error::NeedsInput("connection"))?,
@@ -1284,7 +1398,7 @@ impl CoreService {
     /// Pages behind image references (pages or video frames) and their versions.
     fn image_pages(&self, images: &[String]) -> Result<(Vec<String>, Vec<String>)> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let (mut pages, mut versions) = (vec![], vec![]);
         for image in images {
             let page = match vault.object_kind(image)?.as_str() {
@@ -1304,21 +1418,21 @@ impl CoreService {
     /// Model copies of page images, bound to the (unapproved) grant.
     fn prepare_images(&self, grant: &str, pages: &[String]) -> Result<Vec<Value>> {
         let handle = self.vault()?;
-        let cancel = AtomicBool::new(false);
+        let cancel = self.session_cancel(&handle)?;
         let mut out = vec![];
         for page in pages {
             let (blob, page_no, display): (String, i64, String) = {
-                let vault = handle.lock().map_err(|_| Error::Integrity)?;
+                let vault = self.lock_vault(&handle)?;
                 vault.db().query_row(
                     "SELECT p.image_blob,p.page_no,d.display_name FROM pages p JOIN document_versions v ON v.id=p.version_id JOIN documents d ON d.id=v.document_id WHERE p.id=? AND p.image_blob IS NOT NULL",
                     [page], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             };
-            let png = handle.lock().map_err(|_| Error::Integrity)?.get_blob(&blob)?;
+            let png = self.lock_vault(&handle)?.get_blob(&blob)?;
             let encoded = self.services.local.call(&json!({"op": "encode_for_model", "png_base64": base64::engine::general_purpose::STANDARD.encode(&*png), "max_side": MEDIA_MAX_SIDE, "quality": MEDIA_QUALITY}), &cancel, Duration::from_secs(120))?;
             let jpeg = base64::engine::general_purpose::STANDARD.decode(encoded["jpeg_base64"].as_str().ok_or(Error::Contract)?).map_err(|_| Error::Contract)?;
             let location = if page_no >= 100_000 { "视频画面".to_owned() } else { format!("第{page_no}页") };
             let detail = json!({"display": display, "location": location, "page_no": page_no, "width": encoded["width"], "height": encoded["height"]});
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             let id = crate::handlers::observe::register_native(&vault, grant, page, "image", "image/jpeg", &jpeg, &detail)?;
             out.push(json!({"media_ref": id, "kind": "image", "page_id": page, "display": display, "location": location, "bytes": jpeg.len(), "width": encoded["width"], "height": encoded["height"]}));
         }
@@ -1327,7 +1441,7 @@ impl CoreService {
 
     fn update_preview(&self, grant: &str, preview: &Value) -> Result<()> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut stored = preview.clone();
         if let Some(object) = stored.as_object_mut() {
             for key in ["grant_id", "question_id", "scope_id"] {
@@ -1345,7 +1459,7 @@ impl CoreService {
         let connection_id = self.connection_for(connection)?;
         let (name, host, model, max_tokens) = {
             let handle = self.vault()?;
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             let loaded = crate::generation::connections::load(&vault, &connection_id)?;
             (loaded.name, loaded.profile.endpoint.display_host(), loaded.profile.model_id, loaded.profile.max_output_tokens)
         };
@@ -1360,6 +1474,7 @@ impl CoreService {
             }
             Excerpts::Pages(pages) => json!(self.page_excerpts(pages)?),
             Excerpts::Later => json!([]),
+            Excerpts::Ready(items)=>json!(items),
         };
         let excerpts: Vec<Value> = items.as_array().cloned().unwrap_or_default().iter().take(EGRESS_MAX_ITEMS as usize).map(|item| json!({
             "evidence_id": item["evidence_id"], "display_name": item["document"]["display_name"], "unit_title": item["unit_title"],
@@ -1372,7 +1487,8 @@ impl CoreService {
             preview[key] = value;
         }
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
+        preview["retrieval_policy"]=serde_json::from_str::<Value>(&vault.db().query_row("SELECT policy FROM scopes WHERE id=?",[scope],|r|r.get::<_,String>(0))?)?;
         let grant = vault.register("EgressGrantRef", "m2", Some(question))?;
         vault.db().execute(
             "INSERT INTO egress_grants(id,connection_id,host,purpose,scope_id,question_id,max_items,max_requests,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -1387,7 +1503,7 @@ impl CoreService {
     /// OCR text of the given pages as preview excerpts (the chunks that will be sent).
     fn page_excerpts(&self, pages: &[String]) -> Result<Vec<Value>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut out = vec![];
         for page in pages {
             let (version, page_no, display): (String, i64, String) = vault.db().query_row(
@@ -1414,7 +1530,7 @@ impl CoreService {
     /// The real parameters of an unapproved grant (for the native dialog).
     pub fn describe_grant(&self, grant: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(grant, &["EgressGrantRef"])?;
         let (preview, approved, root): (String, Option<String>, Option<String>) =
             vault.db().query_row("SELECT preview,approved_at,root FROM egress_grants WHERE id=? AND revoked_at IS NULL", [grant], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?.ok_or(Error::Denied)?;
@@ -1434,8 +1550,10 @@ impl CoreService {
     pub fn grant_start(self: &Arc<Self>, grant: &str, excluded: &[String], excluded_media: &[String]) -> Result<String> {
         let (purpose, input) = {
             let handle = self.vault()?;
-            let vault = handle.lock().map_err(|_| Error::Integrity)?;
+            let vault = self.lock_vault(&handle)?;
             let (purpose, preview): (String, String) = vault.db().query_row("SELECT purpose,preview FROM egress_grants WHERE id=? AND approved_at IS NULL AND root IS NULL AND revoked_at IS NULL", [grant], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
+            let batch:Option<(String,Option<String>,String)>=vault.db().query_row("SELECT b.state,b.approved_at,c.state FROM comparison_cells c JOIN comparisons b ON b.id=c.comparison_id WHERE c.grant_id=?",[grant],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+            if batch.as_ref().is_some_and(|(state,approved,cell)|state!="running"||approved.is_none()||cell!="running"){return Err(Error::Denied);}
             let mut preview: Value = serde_json::from_str(&preview)?;
             if !excluded.is_empty() || !excluded_media.is_empty() {
                 // Excluded excerpts and media cannot be sent in this task.
@@ -1463,7 +1581,7 @@ impl CoreService {
 
     pub fn answer_cancel_preview(&self, grant: &str) -> Result<()> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let revoked = vault.db().execute("UPDATE egress_grants SET revoked_at=? WHERE id=? AND approved_at IS NULL", params![now_rfc3339(), grant])?;
         if revoked == 1 {
             // The images prepared for the preview were never sent; they go now.
@@ -1475,7 +1593,7 @@ impl CoreService {
     /// Requests sent to generation services (audit view; no content).
     pub fn generation_requests(&self, limit: u32) -> Result<Vec<Value>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut statement = vault.db().prepare("SELECT r.purpose,r.host,r.model_id,r.status,r.error,r.input_tokens,r.output_tokens,r.materials,r.started_at,c.name FROM generation_requests r LEFT JOIN connections c ON c.id=r.connection_id ORDER BY r.started_at DESC LIMIT ?")?;
         let rows = statement.query_map([limit.min(500)], |r| Ok(json!({"purpose": r.get::<_, String>(0)?, "host": r.get::<_, String>(1)?, "model_id": r.get::<_, String>(2)?, "status": r.get::<_, String>(3)?,
             "error": r.get::<_, Option<String>>(4)?, "input_tokens": r.get::<_, Option<i64>>(5)?, "output_tokens": r.get::<_, Option<i64>>(6)?,
@@ -1485,7 +1603,7 @@ impl CoreService {
 
     pub fn describe_change(&self, change_ref: &str) -> Result<Value> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.expect_kind(change_ref, &["PreparedChangeRef"])?;
         let (matter, change, impact, status, title): (String, String, String, String, String) = vault.db().query_row(
             "SELECT c.matter_id,c.change,c.impact,c.status,m.title FROM changes c JOIN matters m ON m.id=c.matter_id WHERE c.id=?",
@@ -1541,7 +1659,7 @@ impl CoreService {
 
     pub fn object_exists(&self, id: &str) -> Result<bool> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         Ok(vault.db().query_row("SELECT active FROM objects WHERE id=?", [id], |r| r.get::<_, i64>(0)).optional()?.is_some_and(|v| v == 1))
     }
 }
@@ -1553,7 +1671,7 @@ impl CoreService {
 impl CoreService {
     pub fn harness_rows(&self, sql: &str, args: &[&str]) -> Result<Vec<Vec<Value>>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         let mut statement = vault.db().prepare(sql)?;
         let width = statement.column_count();
         let rows = statement.query_map(rusqlite::params_from_iter(args.iter()), |r| {
@@ -1579,14 +1697,14 @@ impl CoreService {
     /// Simulate on-disk states that only a process crash leaves behind.
     pub fn harness_execute(&self, sql: &str, args: &[&str]) -> Result<usize> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         Ok(vault.db().execute(sql, rusqlite::params_from_iter(args.iter()))?)
     }
 
     /// Encrypted object files currently registered in the unlocked vault.
     pub fn harness_blob_files(&self) -> Result<Vec<(String, PathBuf)>> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         vault.blob_files()
     }
 
@@ -1621,8 +1739,17 @@ impl CoreService {
 
     pub fn harness_vault_dir(&self) -> Result<PathBuf> {
         let handle = self.vault()?;
-        let vault = handle.lock().map_err(|_| Error::Integrity)?;
+        let vault = self.lock_vault(&handle)?;
         Ok(vault.dir.clone())
+    }
+
+    /// Hold a real vault mutex until the test releases it (no production API).
+    pub fn harness_hold_vault(&self, ready: std::sync::mpsc::Sender<()>, release: std::sync::mpsc::Receiver<()>) -> Result<()> {
+        let handle = self.vault()?;
+        let _vault = self.lock_vault(&handle)?;
+        ready.send(()).map_err(|_| Error::Integrity)?;
+        release.recv_timeout(Duration::from_secs(20)).map_err(|_| Error::Integrity)?;
+        Ok(())
     }
 }
 

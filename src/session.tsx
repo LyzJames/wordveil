@@ -9,6 +9,7 @@ export type View =
   | { name: 'matters' }
   | { name: 'matter'; id: string; tab?: string }
   | { name: 'qa'; matters?: string[]; question?: string }
+  | { name: 'comparison'; id?: string }
   | { name: 'connections' }
   | { name: 'knowledge' }
   | { name: 'tools' }

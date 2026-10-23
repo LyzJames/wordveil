@@ -33,10 +33,20 @@ pub const ADAPTER_VERSION: &str = "1.0";
 /// up, that thread ends on its own (reply or connection timeout) and its
 /// result is discarded. The outcome is then unknown and never retried here.
 pub fn call_cancellable(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool) -> crate::Result<GenResponse> {
+    call_with_permit(profile, key, request, cancel, None)
+}
+
+pub fn call_cancellable_with_slot(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool, slot: crate::services::SlotGuard) -> crate::Result<GenResponse> {
+    call_with_permit(profile, key, request, cancel, Some(slot))
+}
+
+fn call_with_permit(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool, slot: Option<crate::services::SlotGuard>) -> crate::Result<GenResponse> {
+    if cancel.load(Ordering::Acquire) { return Err(crate::Error::Cancelled); }
     let (sender, receiver) = channel();
     let stop = Arc::new(AtomicBool::new(false));
     let (profile, key, request, inner) = (profile.clone(), key.cloned(), request.clone(), stop.clone());
     std::thread::Builder::new().name("lvjin-generation".into()).spawn(move || {
+        let _slot = slot;
         let mut ignore = |_: &str| {};
         let _ = sender.send(adapters::call(&profile, key.as_ref(), &request, &inner, &mut ignore));
     })?;

@@ -18,7 +18,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use zeroize::Zeroizing;
 
-const MILESTONE: &str = "M2";
+// Test data and loopback fixtures live in docs, outside the application.
+#[cfg(feature="e2e")]
+#[path="../../../docs/tests/m3/ui_fixture.rs"]
+mod m3_ui_fixture;
+
+const MILESTONE: &str = lvjin_core::MILESTONE;
 
 struct Shell {
     core: Result<Arc<CoreService>, String>,
@@ -37,6 +42,7 @@ fn message(error: &Error) -> String {
         Error::Contract => "请求不符合正式合同。",
         Error::Budget => "已达到本次任务的预算上限。",
         Error::NeedsInput("api_key") => "需要填写该连接的 API Key。",
+        Error::NeedsInput("lock_cleanup") => "空间已锁定，正在结束先前的本机操作；请稍后再解锁。",
         Error::NeedsInput("connection") => "还没有可用的生成连接，请先在“生成接口”中添加并保存。",
         Error::NeedsInput("base_url") => "服务地址格式不正确（应以 https:// 开头）。",
         Error::NeedsInput("base_url_https") => "非本机服务必须使用 https:// 地址。",
@@ -46,8 +52,10 @@ fn message(error: &Error) -> String {
         Error::NeedsInput("protocol") => "所选服务不支持该协议。",
         Error::NeedsInput("timeout_s") => "超时需在 5–600 秒之间。",
         Error::NeedsInput("max_output_tokens") => "单次输出上限需在 256–65536 之间。",
+        Error::NeedsInput("index_not_ready") => "所选资料尚未完成索引，请先在工作台继续索引后再建立对照表。",
+        Error::NeedsInput("comparison_changed") => "对照表的资料或接口条件已变化，请检查版本和连接后重新建立对照表。",
         Error::NeedsInput(_) => "需要补充信息后才能继续。",
-        Error::Remote(_) => "生成接口请求失败。",
+        Error::Remote(_) => "外部服务请求失败，请查看对应请求记录。",
         Error::Worker(code) if code == "too_many_attempts" => "尝试次数过多，请稍等 30 秒后再试。",
         Error::Worker(_) => "本机处理失败。",
         _ => "操作失败。",
@@ -149,9 +157,54 @@ async fn connection_default(shell: State<'_, Shell>, connection: String) -> Repl
 
 /// Local retrieval for the preview; registers an unapproved, single-use grant.
 #[tauri::command]
-async fn answer_preview(shell: State<'_, Shell>, question: String, matters: Vec<String>, connection: Option<String>, deep: Option<bool>) -> Reply {
+async fn answer_preview(shell: State<'_, Shell>, question: String, matters: Vec<String>, connection: Option<String>, deep: Option<bool>,policy:Option<Value>) -> Reply {
     let core = core(&shell)?.clone();
-    blocking(move || core.answer_preview_with(&question, &matters, connection.as_deref(), deep.unwrap_or(false)).map_err(|e| message(&e))).await
+    blocking(move || {let policy=serde_json::from_value(policy.unwrap_or(json!({}))).map_err(|_|"检索条件格式不正确".to_string())?;core.answer_preview_policy(&question, &matters, connection.as_deref(), deep.unwrap_or(false),&policy).map_err(|e| message(&e))}).await
+}
+
+#[tauri::command]
+async fn qa_history(shell: State<'_, Shell>, query: lvjin_core::service::history::Query) -> Reply {
+    let core=core(&shell)?.clone();
+    blocking(move || core.qa_history(&query).map_err(|e|message(&e))).await
+}
+
+#[tauri::command]
+async fn comparison_create(shell:State<'_,Shell>,title:String,versions:Vec<String>,questions:Vec<String>,connection:Option<String>,max_requests:i64)->Reply {
+    let core=core(&shell)?.clone();blocking(move||core.comparison_create(&title,&versions,&questions,connection.as_deref(),max_requests).map(Value::String).map_err(|e|message(&e))).await
+}
+#[tauri::command]
+async fn comparison_list(shell:State<'_,Shell>)->Reply {Ok(json!(core(&shell)?.comparison_list().map_err(|e|message(&e))?))}
+#[tauri::command]
+async fn comparison_read(shell:State<'_,Shell>,id:String)->Reply {core(&shell)?.comparison_read(&id).map_err(|e|message(&e))}
+#[tauri::command]
+async fn comparison_prepare(shell:State<'_,Shell>,id:String)->Reply {core(&shell)?.comparison_prepare(&id).map(|_|Value::Null).map_err(|e|message(&e))}
+#[tauri::command]
+async fn comparison_pause(shell:State<'_,Shell>,id:String)->Reply {core(&shell)?.comparison_pause(&id).map(|_|Value::Null).map_err(|e|message(&e))}
+#[tauri::command]
+async fn index_jobs(shell:State<'_,Shell>)->Reply {core(&shell)?.index_jobs().map(|rows|json!(rows)).map_err(|e|message(&e))}
+#[tauri::command]
+async fn index_resume(shell:State<'_,Shell>,id:String)->Reply {core(&shell)?.index_resume(&id).map(Value::String).map_err(|e|message(&e))}
+#[tauri::command]
+async fn comparison_budget(shell:State<'_,Shell>,id:String,maximum:i64)->Reply {core(&shell)?.comparison_budget(&id,maximum).map(|_|Value::Null).map_err(|e|message(&e))}
+#[tauri::command]
+async fn comparison_preview(shell:State<'_,Shell>,id:String,selected:Vec<String>)->Reply {core(&shell)?.comparison_preview(&id,&selected).map_err(|e|message(&e))}
+#[tauri::command]
+async fn comparison_start(app:AppHandle,shell:State<'_,Shell>,id:String,selected:Vec<String>,binding:String)->Reply {
+    let core=core(&shell)?.clone();blocking(move||{
+        let preview=core.comparison_preview(&id,&selected).map_err(|e|message(&e))?;
+        if preview["binding"]!=json!(binding){return Err("预览条件已改变，请重新预览".into());}
+        let rows=preview["spec"]["documents"].as_array().cloned().unwrap_or_default();
+        let questions=preview["spec"]["questions"].as_array().cloned().unwrap_or_default();
+        let documents=rows.iter().enumerate().map(|(i,r)|format!("{}. {}（第 {} 版）",i+1,r["display_name"].as_str().unwrap_or(""),r["version_no"])).collect::<Vec<_>>().join("\n");
+        let questions=questions.iter().enumerate().map(|(i,q)|format!("{}. {}",i+1,q.as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n");
+        let text=format!("接收方：{}（{}）\n模型：{}\n用途：多文档对照表，顺序处理本次所选 {} 格；每格只读取对应行的固定版本，不包含联网搜索。\n\n资料：\n{}\n\n问题：\n{}\n\n整批累计请求上限：{} 次；已使用 {} 次，剩余 {} 次。每格累计最多 7 次；每次输出最多 {} 令牌，单次生成最多 10 段原文。失败、修复和重试均消耗额度。\n只恢复所选未完成格，保留已完成格及原计数。锁定、暂停、撤销或材料变化会停止后续调用。",preview["connection"]["name"].as_str().unwrap_or(""),preview["connection"]["host"].as_str().unwrap_or(""),preview["connection"]["model_id"].as_str().unwrap_or(""),preview["cells"].as_array().map(Vec::len).unwrap_or(0),documents,questions,preview["max_requests"],preview["used_requests"],preview["remaining_requests"],preview["max_output_tokens"]);
+        let chosen=preview["cells"].as_array().cloned().unwrap_or_default();
+        let coordinates=chosen.iter().map(|c|format!("资料 {} / 问题 {}",c["row"].as_u64().unwrap_or(0)+1,c["col"].as_u64().unwrap_or(0)+1)).collect::<Vec<_>>().join("、");
+        let unknown:u64=chosen.iter().map(|c|c["unknown_requests"].as_u64().unwrap_or(0)).sum();
+        let text=format!("{text}\n\n本次所选格：{coordinates}{}",if unknown>0{format!("\n有 {unknown} 次上次请求的结果尚不明确，服务商可能已处理。它们已计入原预算；本次确认允许在剩余额度内继续，可能重新发送未完成步骤。")}else{String::new()});
+        if !confirm(&app,"对照表整批发送确认",&text,"确认并顺序生成"){return Err("已取消，未开始生成".into());}
+        core.comparison_start(&id,&selected,&binding).map(|_|Value::Null).map_err(|e|message(&e))
+    }).await
 }
 
 /// Written analysis preview: local evidence, fixed roles, request limits.
@@ -207,6 +260,9 @@ fn egress_text(preview: &Value, excluded: usize, excluded_media: &[String]) -> S
         format!("用途：{purpose}"),
         format!("将发送：你的问题，以及所选资料中的原文摘录（预览中 {} 段；任务中可能在同一范围内替换，全程最多 {} 段）", offered.saturating_sub(excluded), preview["max_items"].as_i64().unwrap_or(0)),
     ];
+    if let Some(policy)=preview.get("retrieval_policy") {
+        lines.push(format!("检索日期：{}；地域：{}；关系扩展：{}",policy["as_of"].as_str().unwrap_or("今天"),lvjin_core::retrieval_scope::region_name(policy["region"].as_str()),if policy["graph_enabled"]==json!(true){"开启"}else{"关闭"}));
+    }
     if !media.is_empty() {
         let bytes: u64 = media.iter().filter_map(|m| m["bytes"].as_u64()).sum();
         lines.push(format!("将上传原始图片：{} 张（JPEG，长边不超过 2048 像素，共约 {} KB）；与本机识别不一致时，有分歧的图片会再上传一次", media.len(), bytes.div_ceil(1024)));
@@ -287,8 +343,19 @@ async fn app_status(shell: State<'_, Shell>) -> Reply {
         Err(error) => Ok(json!({"milestone": MILESTONE, "version": env!("CARGO_PKG_VERSION"), "installation_ok": false, "error": error})),
         Ok(core) => {
             let vaults = core.list_vaults().map_err(|e| message(&e))?;
-            Ok(json!({"milestone": MILESTONE, "version": env!("CARGO_PKG_VERSION"), "installation_ok": true, "production": production, "unlocked": core.is_unlocked(),
-                "session": core.session_handle(), "vaults": vaults}))
+            #[cfg(feature="e2e")]
+            let synthetic = if std::env::var("LVJIN_E2E_SEED").as_deref()==Ok("1") && !production && vaults.is_empty() && std::env::var_os("LVJIN_E2E_DATA_ROOT").is_some(){
+                // Test-build fixture setup, not a production login bypass.
+                // Only a fresh explicit synthetic data directory is accepted.
+                let core=core.clone();
+                Some(blocking(move||m3_ui_fixture::seed(&core).map(|info|json!(info)).map_err(|e|message(&e))).await?)
+            } else {None};
+            let status=json!({"milestone": MILESTONE, "version": env!("CARGO_PKG_VERSION"), "installation_ok": true, "production": production, "unlocked": core.is_unlocked(),
+                "session": core.session_handle(), "vaults": vaults});
+            #[cfg(feature="e2e")]
+            {let mut status=status;status["e2e_session"]=json!(synthetic);return Ok(status);}
+            #[cfg(not(feature="e2e"))]
+            Ok(status)
         }
     }
 }
@@ -407,7 +474,10 @@ async fn create_object(shell: State<'_, Shell>, kind: String, value: Value) -> R
         let list = |field: &str| -> Vec<String> { value[field].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default() };
         let id = match kind.as_str() {
             "question" => core.create_question(value["text"].as_str().unwrap_or("")),
-            "scope" => core.create_scope(&list("matters"), &list("versions")),
+            "scope" => {
+                let policy=serde_json::from_value(value.get("policy").cloned().unwrap_or(json!({}))).map_err(|_|"检索条件格式不正确".to_string())?;
+                core.create_scope_with_policy(&list("matters"), &list("versions"),&policy)
+            },
             "range" => core.create_range(value["media"].as_str().unwrap_or(""), value["start_s"].as_f64().unwrap_or(0.0), value["end_s"].as_f64()),
             "filter" => core.create_filter(value["kind"].as_str().unwrap_or(""), &list("ids")),
             "change" => core.draft_change(value["matter"].as_str().unwrap_or(""), &value["change"]),
@@ -423,6 +493,68 @@ async fn create_object(shell: State<'_, Shell>, kind: String, value: Value) -> R
 // ------------------------------------------- trusted actions (native dialogs)
 
 const IMPORT_EXTENSIONS: &[&str] = &["pdf", "docx", "xlsx", "csv", "tsv", "txt", "md", "png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp", "wav", "mp3", "m4a", "flac", "ogg", "mp4", "mov", "mkv", "avi"];
+
+#[tauri::command]
+async fn external_overview(shell: State<'_, Shell>) -> Reply {
+    let core=core(&shell)?.clone(); blocking(move||core.external_overview().map_err(|e|message(&e))).await
+}
+#[tauri::command]
+async fn external_save(app:AppHandle,shell:State<'_,Shell>,kind:String,value:Value,api_key:Option<String>)->Reply{
+    let core=core(&shell)?.clone();
+    blocking(move||{
+        let draft=core.external_draft(&kind,value,api_key.map(Zeroizing::new)).map_err(|e|message(&e))?;
+        let preview=core.external_draft_preview(&draft).map_err(|e|message(&e))?;
+        let text=format!("{}\n\n确认来源和只读工具范围后保存。工具的只读注解只是提示，仍需你信任该服务。保存配置不会发送业务请求；每次使用另行确认。",serde_json::to_string_pretty(&preview).unwrap_or_default());
+        if !confirm(&app,"保存或撤销外部能力配置",&text,"确认此配置"){
+            let _=core.external_draft_discard(&draft); return Ok(json!({"status":"declined"}));
+        }
+        core.external_settings(&draft).map_err(|e|message(&e))
+    }).await
+}
+#[tauri::command]
+async fn network_preview(shell:State<'_,Shell>,operation:String,request:Value)->Reply{
+    let core=core(&shell)?.clone();blocking(move||core.network_preview(&operation,&request).map_err(|e|message(&e))).await
+}
+#[tauri::command]
+async fn external_start(app:AppHandle,shell:State<'_,Shell>,action:String)->Reply{
+    let core=core(&shell)?.clone();blocking(move||{
+        let preview=core.action_preview(&action).map_err(|e|message(&e))?;
+        let text=format!("{}\n\n仅批准上面展示的目的地、内容、用途和预算。本次凭证十分钟内有效且只用一次；停止、超时或结果未知时不会自动重发。",serde_json::to_string_pretty(&preview).unwrap_or_default());
+        if !confirm(&app,"核对并确认本次操作",&text,"确认并开始"){return Ok(json!({"status":"declined"}));}
+        core.action_start(&action).map(Value::String).map_err(|e|message(&e))
+    }).await
+}
+#[tauri::command]
+async fn external_discard(shell:State<'_,Shell>,action:String)->Reply{
+    core(&shell)?.action_discard(&action).map(|_|Value::Null).map_err(|e|message(&e))
+}
+#[tauri::command]
+async fn knowledge_preview(app:AppHandle,shell:State<'_,Shell>,builtin:bool)->Reply{
+    let core=core(&shell)?.clone();blocking(move||{
+        if builtin{return core.builtin_knowledge_preview().map_err(|e|message(&e));}
+        let Some(path)=picked(app.dialog().file().set_title("选择公共知识包（JSON，最多 2 MiB）").add_filter("公共知识包",&["json"]).blocking_pick_file())? else{return Ok(Value::Null)};
+        if std::fs::metadata(&path).map_err(|_|"无法读取知识包")?.len()>lvjin_core::public_knowledge::MAX_PACKAGE as u64{return Err("知识包超过 2 MiB 上限".into());}
+        use std::io::Read;
+        let file=std::fs::File::open(&path).map_err(|_|"无法读取知识包")?;
+        let mut bytes=Vec::new();
+        file.take(lvjin_core::public_knowledge::MAX_PACKAGE as u64+1).read_to_end(&mut bytes).map_err(|_|"无法读取知识包")?;
+        if bytes.len()>lvjin_core::public_knowledge::MAX_PACKAGE{return Err("知识包超过 2 MiB 上限".into());}
+        core.knowledge_preview(&bytes,"native-selected-offline-package").map_err(|e|message(&e))
+    }).await
+}
+#[tauri::command]
+async fn public_mcp(app:AppHandle,shell:State<'_,Shell>,start:bool)->Reply{
+    let core=core(&shell)?.clone();blocking(move||{
+        if start{
+            if !confirm(&app,"启动公共法律金融只读服务","启动随应用发布的独立 MCP 服务，仅监听本机 127.0.0.1，并使用本次随机访问凭据。只查询随包公共法律金融文本，不读取你的私密事务。锁定或退出会停止服务；在应用中调用仍需逐次确认。","启动只读服务"){return Ok(json!({"status":"declined"}));}
+            core.public_mcp_start().map_err(|e|message(&e))
+        }else{core.public_mcp_stop().map(|_|Value::Null).map_err(|e|message(&e))}
+    }).await
+}
+#[tauri::command]
+async fn web_knowledge_preview(shell:State<'_,Shell>,result_ref:String,item:usize,metadata:Value)->Reply{
+    let core=core(&shell)?.clone();blocking(move||core.web_knowledge_preview(&result_ref,item,metadata).map_err(|e|message(&e))).await
+}
 
 #[tauri::command]
 async fn import_files(app: AppHandle, shell: State<'_, Shell>, matter: String, mode: String) -> Reply {
@@ -556,6 +688,7 @@ async fn view(shell: State<'_, Shell>, kind: String, id: String) -> Reply {
             "result" => core.result(&id),
             "page" => core.page_view(&id),
             "version" => core.version_pages(&id),
+            "relation_sources"=>core.relation_sources(&id).map(|rows|json!(rows)),
             "segment_audio" => core.segment_audio(&id),
             "interrupted" => core.interrupted_imports().map(|v| json!(v)),
             "render_page" => core.render_page(&id),
@@ -581,6 +714,13 @@ fn install_root() -> Option<PathBuf> {
 /// Production: installed tree beside the executable, data root from the
 /// installer. Development builds (dev-worker) use the verified docs layout.
 fn layout(root: &Path) -> Result<(Layout, PathBuf, bool), String> {
+    // The separate UI verification executable can use an installed image and
+    // a new synthetic data root. This entire branch is absent in production.
+    #[cfg(feature="e2e")]
+    if let (Some(assets),Some(data))=(std::env::var_os("LVJIN_E2E_ASSETS_ROOT").map(PathBuf::from),std::env::var_os("LVJIN_E2E_DATA_ROOT").map(PathBuf::from)) {
+        if !assets.is_absolute() || !data.is_absolute() || data.starts_with(&assets) {return Err("界面验收需要独立的绝对合成目录".into());}
+        return Layout::production(&assets,&data).map(|l|(l,assets.join("runtimes/webview2"),false)).map_err(|e|message(&e));
+    }
     #[cfg(feature = "dev-worker")]
     {
         let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -719,8 +859,11 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_status, touch, vault_create, vault_unlock, vault_lock, vault_restore, change_passphrase, run_skill, start_skill, tasks, task_cancel, task_retry,
             create_object, feedback_remove, import_files, resume_import, commit_change, export_commit, backup, privacy, view, connections, connection_save,
-            connection_probe, connection_revoke, connection_default, answer_preview, answer_start, answer_discard, generation_requests,
-            flows_interrupted, flow_continue, flow_discard, analysis_preview, media_preview
+            connection_probe, connection_revoke, connection_default, answer_preview, qa_history, answer_start, answer_discard, generation_requests,
+            comparison_create, comparison_list, comparison_read, comparison_prepare, comparison_pause, comparison_budget, comparison_preview, comparison_start,
+            index_jobs,index_resume,
+            flows_interrupted, flow_continue, flow_discard, analysis_preview, media_preview,
+            external_overview, external_save, network_preview, external_start, external_discard, knowledge_preview, public_mcp, web_knowledge_preview
         ])
         .run(tauri::generate_context!())
         .expect("desktop runtime failed");

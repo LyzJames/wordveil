@@ -8,6 +8,24 @@ use sha2::{Digest,Sha256};
 use usearch::{Index,IndexOptions,MetricKind,ScalarKind};
 use zeroize::Zeroizing;
 
+/// Connection-scoped cancellation for a potentially long read. The caller
+/// holds the vault mutex, so no other statement or progress handler can use
+/// this connection until the guard unregisters its borrowed atomic flag.
+pub struct QueryCancellation<'a> {connection:&'a rusqlite::Connection,_cancel:&'a std::sync::atomic::AtomicBool}
+impl<'a> QueryCancellation<'a> {
+    pub fn new(connection:&'a rusqlite::Connection,cancel:&'a std::sync::atomic::AtomicBool)->Self {
+        unsafe extern "C" fn stopped(data:*mut std::ffi::c_void)->i32 {
+            // The guard borrows this flag through every SQLite call and
+            // unregisters before either borrow can expire. No SQL in callback.
+            let flag=unsafe{&*(data as *const std::sync::atomic::AtomicBool)};
+            i32::from(flag.load(std::sync::atomic::Ordering::Acquire))
+        }
+        unsafe{rusqlite::ffi::sqlite3_progress_handler(connection.handle(),1000,Some(stopped),cancel as *const _ as *mut _);}
+        Self{connection,_cancel:cancel}
+    }
+}
+impl Drop for QueryCancellation<'_> {fn drop(&mut self){unsafe{rusqlite::ffi::sqlite3_progress_handler(self.connection.handle(),0,None,std::ptr::null_mut());}}}
+
 #[derive(Clone,Debug,Serialize,Deserialize,PartialEq,Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EmbeddingProfile {
@@ -86,6 +104,9 @@ impl DenseIndex {
     }
     pub fn len(&self)->usize {self.index.size()}
     pub fn is_empty(&self)->bool {self.index.size()==0}
+    /// USearch's allocator estimate; process working set is measured separately.
+    pub fn memory_bytes(&self)->usize {self.index.memory_usage()}
+    pub fn serialized_bytes(&self)->usize {self.index.serialized_length()}
     pub fn identity(&self)->&SnapshotIdentity {&self.identity}
     /// Incremental additions move the snapshot to a new generation (AAD-bound).
     pub fn set_generation(&mut self,generation:u64)->Result<()> {

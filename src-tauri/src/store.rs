@@ -20,7 +20,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 6;
 
 const M1_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -113,6 +113,59 @@ CREATE INDEX IF NOT EXISTS feedback_result ON feedback(result_ref);
 CREATE INDEX IF NOT EXISTS blobs_owner ON blobs(owner, purpose);
 "#;
 
+const M5_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS network_sources(id TEXT PRIMARY KEY REFERENCES objects(id), connection_id TEXT NOT NULL, domains TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS external_connections(id TEXT PRIMARY KEY REFERENCES objects(id), name TEXT NOT NULL, endpoint TEXT NOT NULL, credential TEXT, timeout_s INTEGER NOT NULL, proxy TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS external_bindings(id TEXT PRIMARY KEY REFERENCES objects(id), connection_id TEXT NOT NULL, name TEXT NOT NULL, descriptor TEXT NOT NULL, schema_hash TEXT NOT NULL, server_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS external_arguments(id TEXT PRIMARY KEY REFERENCES objects(id), binding_id TEXT NOT NULL, value TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS network_actions(id TEXT PRIMARY KEY REFERENCES objects(id), skill TEXT NOT NULL, input TEXT NOT NULL, preview TEXT NOT NULL, root TEXT UNIQUE, state TEXT NOT NULL, result_ref TEXT, expires_at TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS network_requests(id TEXT PRIMARY KEY, action_id TEXT NOT NULL, root TEXT NOT NULL, host TEXT NOT NULL, operation TEXT NOT NULL, status TEXT NOT NULL, error TEXT, started_at TEXT NOT NULL, finished_at TEXT);
+CREATE INDEX IF NOT EXISTS network_requests_root ON network_requests(root);
+CREATE TABLE IF NOT EXISTS knowledge_sources(id TEXT PRIMARY KEY REFERENCES objects(id), package TEXT NOT NULL, sha256 TEXT NOT NULL, preview TEXT NOT NULL, origin TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS knowledge_packages(id TEXT PRIMARY KEY REFERENCES objects(id), package_id TEXT NOT NULL, version TEXT NOT NULL, sha256 TEXT NOT NULL, collection_id TEXT NOT NULL, source_id TEXT NOT NULL, state TEXT NOT NULL, metadata TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(package_id,version));
+CREATE TABLE IF NOT EXISTS trusted_artifacts(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT NOT NULL, target TEXT NOT NULL, display_name TEXT NOT NULL, blob TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+"#;
+
+/// M3: bounded ANN partitions, durable unpublished index batches, scoped
+/// graph provenance and the comparison batch ledger. All payloads stay in
+/// SQLCipher; no cleartext job or vector files are created.
+const M6_SCHEMA: &str = r#"
+ALTER TABLE chunks ADD COLUMN partition_id TEXT NOT NULL DEFAULT '';
+UPDATE chunks SET partition_id=matter_id||':'||CAST((rowid-1)/10000 AS TEXT);
+CREATE INDEX chunks_partition ON chunks(partition_id,rowid);
+CREATE TABLE index_partitions(partition_id TEXT PRIMARY KEY,matter_id TEXT NOT NULL,generation INTEGER NOT NULL DEFAULT 0,space TEXT NOT NULL DEFAULT '',snapshot_blob TEXT,vector_count INTEGER NOT NULL DEFAULT 0,dirty INTEGER NOT NULL DEFAULT 1);
+INSERT INTO index_partitions(partition_id,matter_id) SELECT DISTINCT partition_id,matter_id FROM chunks;
+UPDATE index_state SET dirty=1;
+CREATE TRIGGER vectors_insert_partition AFTER INSERT ON chunk_vectors BEGIN
+ INSERT INTO index_partitions(partition_id,matter_id,dirty) SELECT partition_id,matter_id,1 FROM chunks WHERE rowid=new.chunk_rowid ON CONFLICT(partition_id) DO UPDATE SET dirty=1;
+ UPDATE index_state SET dirty=1 WHERE id=1;
+END;
+CREATE TRIGGER vectors_delete_partition BEFORE DELETE ON chunk_vectors BEGIN
+ UPDATE index_partitions SET dirty=1 WHERE partition_id=(SELECT partition_id FROM chunks WHERE rowid=old.chunk_rowid);
+ UPDATE index_state SET dirty=1 WHERE id=1;
+END;
+CREATE TRIGGER vectors_update_partition AFTER UPDATE ON chunk_vectors BEGIN
+ UPDATE index_partitions SET dirty=1 WHERE partition_id=(SELECT partition_id FROM chunks WHERE rowid=new.chunk_rowid);
+ UPDATE index_state SET dirty=1 WHERE id=1;
+END;
+CREATE TABLE index_jobs(id TEXT PRIMARY KEY,version_id TEXT NOT NULL UNIQUE,signature TEXT NOT NULL,space TEXT NOT NULL,chunker TEXT NOT NULL,original_root TEXT NOT NULL,last_root TEXT NOT NULL,status TEXT NOT NULL,total INTEGER NOT NULL DEFAULT 0,completed INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL);
+CREATE TABLE index_job_chunks(job TEXT NOT NULL REFERENCES index_jobs(id) ON DELETE CASCADE,ordinal INTEGER NOT NULL,payload TEXT NOT NULL,vector BLOB,PRIMARY KEY(job,ordinal));
+ALTER TABLE scopes ADD COLUMN policy TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE relations ADD COLUMN jurisdiction TEXT;
+ALTER TABLE relations ADD COLUMN extraction_method TEXT NOT NULL DEFAULT 'legacy';
+ALTER TABLE relations ADD COLUMN source_version TEXT;
+CREATE INDEX relations_matter_status ON relations(matter_id,status,src,dst);
+CREATE TABLE legal_sources(version_id TEXT PRIMARY KEY,metadata TEXT NOT NULL);
+CREATE TABLE retrieval_expansions(candidate_set TEXT PRIMARY KEY,root TEXT NOT NULL,result_ref TEXT NOT NULL);
+CREATE TABLE comparisons(id TEXT PRIMARY KEY REFERENCES objects(id),title TEXT NOT NULL,spec TEXT NOT NULL,connection_id TEXT,state TEXT NOT NULL,max_requests INTEGER NOT NULL DEFAULT 0,used_requests INTEGER NOT NULL DEFAULT 0,approved_at TEXT,approval_binding TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE comparison_cells(id TEXT PRIMARY KEY REFERENCES objects(id),comparison_id TEXT NOT NULL REFERENCES comparisons(id),row_no INTEGER NOT NULL,col_no INTEGER NOT NULL,version_id TEXT NOT NULL,question_id TEXT NOT NULL,scope_id TEXT NOT NULL,grant_id TEXT,root TEXT,task_id TEXT,run_id TEXT,result_ref TEXT,state TEXT NOT NULL,reason TEXT,attempts INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL,UNIQUE(comparison_id,row_no,col_no));
+CREATE INDEX comparison_root ON comparison_cells(root);
+CREATE TABLE comparison_roots(cell_id TEXT NOT NULL REFERENCES comparison_cells(id),root TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,PRIMARY KEY(cell_id,root));
+CREATE INDEX IF NOT EXISTS objects_active_id ON objects(id,active);
+CREATE INDEX IF NOT EXISTS chunks_scope_cover ON chunks(matter_id,version_id,rowid,id,partition_id);
+INSERT OR IGNORE INTO legal_sources(version_id,metadata) SELECT json_extract(j.value,'$.version_id'),json_extract(j.value,'$.metadata') FROM results r,json_each(r.payload,'$.imports') j WHERE r.kind='KnowledgeUpdateResultRef' AND json_type(j.value,'$.version_id')='text' AND json_type(j.value,'$.metadata')='object';
+"#;
+
 /// An unlocked vault. Dropping it closes SQLCipher and zeroizes keys.
 pub struct Vault {
     pub id: String,
@@ -121,7 +174,7 @@ pub struct Vault {
     pub(crate) keys: VaultKeys,
     pub runtime: Runtime,
     /// In-memory ANN accelerator; the SQLCipher vectors remain the baseline.
-    pub(crate) dense: Option<crate::index::DenseIndex>,
+    pub(crate) dense: Option<crate::partitioned_index::PartitionCache>,
 }
 
 pub fn new_ref() -> String {
@@ -301,7 +354,21 @@ impl Vault {
             )
             .optional()?
             .ok_or(Error::Denied)?;
-        Ok((skill, kind, serde_json::from_str(&payload)?))
+        let mut payload:Value=serde_json::from_str(&payload)?;
+        // Old finance/1 records may have called a grid candidate unique.
+        // Guard every consumer (UI, generation and export), while preserving
+        // the original encrypted record for audit and explicit recalculation.
+        if kind=="CalculationRef" {
+            if let Some(irr)=payload.get_mut("result").and_then(|r|r.get_mut("irr")).and_then(Value::as_object_mut) {
+                if irr.get("status").and_then(Value::as_str)==Some("unique") && irr.get("sign_changes").and_then(Value::as_i64)!=Some(1) {
+                    irr.remove("annual_rate");
+                    irr.insert("status".into(),Value::String("indeterminate".into()));
+                    irr.insert("reason".into(),Value::String("saved_uniqueness_not_proven".into()));
+                    irr.insert("roots_complete".into(),Value::Bool(false));
+                }
+            }
+        }
+        Ok((skill, kind, payload))
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
@@ -391,6 +458,17 @@ pub(crate) fn migrate(db: &Connection) -> Result<()> {
             return Err(error.into());
         }
     }
+    if version < 5 {
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M5_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-5') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=5;COMMIT;"));
+        if let Err(error) = applied { let _ = db.execute_batch("ROLLBACK;"); return Err(error.into()); }
+    }
+    if version < 6 {
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M6_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m3-6') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=6;COMMIT;"));
+        if let Err(error) = applied { let _ = db.execute_batch("ROLLBACK;"); return Err(error.into()); }
+    }
+    // Idempotent for pre-release Schema 6 development vaults too. Both are
+    // covering metadata indexes; original text and vectors remain unchanged.
+    db.execute_batch("CREATE INDEX IF NOT EXISTS objects_active_id ON objects(id,active);CREATE INDEX IF NOT EXISTS chunks_scope_cover ON chunks(matter_id,version_id,rowid,id,partition_id);CREATE INDEX IF NOT EXISTS history_results_invocation ON results(invocation,kind);CREATE INDEX IF NOT EXISTS history_invocations_root ON invocations(root,depth);CREATE INDEX IF NOT EXISTS history_grants_root ON egress_grants(root);CREATE INDEX IF NOT EXISTS history_grants_question ON egress_grants(question_id,root);")?;
     Ok(())
 }
 

@@ -122,7 +122,7 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
     }
     // At most two requests in flight across the application; wait before
     // reserving the attempt so a cancelled wait costs nothing.
-    let _slot = ctx.services.generation_slots.acquire(ctx.cancel)?;
+    let slot = ctx.services.generation_slots.acquire(ctx.cancel)?;
     ctx.check()?;
     let request_id = format!("gen_{}", uuid::Uuid::new_v4().simple());
     let (profile, credential, audit, store) = {
@@ -136,9 +136,10 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
         let versions: Vec<String> = serde_json::from_str(&versions)?;
         for id in &call.evidence {
             let (matter, version): (String, String) = vault.db().query_row("SELECT matter_id,version_id FROM chunks WHERE id=?", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
-            if !matters.contains(&matter) && !versions.contains(&version) {
+            if !matters.contains(&matter) || (!versions.is_empty()&&!versions.contains(&version)) {
                 return Err(Error::Denied);
             }
+            vault.expect_kind(id,&["EvidenceRef"])?;
         }
         // The grant's passage limit holds for the whole task, not per request.
         let mut sent = sent_evidence(&vault, invocation.root_id())?;
@@ -151,7 +152,9 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
             return Err(Error::Budget);
         }
         // Reserve the attempt in the root ledger before anything leaves.
+        crate::service::comparison::check(&vault,invocation.root_id())?;
         vault.runtime.dispatch_generation(invocation, &request_id, !call.media.is_empty())?;
+        crate::service::comparison::reserve(&vault,invocation.root_id())?;
         let materials = json!({"question_id": call.question, "evidence_ids": call.evidence, "media_ids": call.media,
             "prompt": format!("{}@{}", call.prompt, &call.prompt_sha[..12])});
         let audit = connections::begin_request(&vault, invocation.root_id(), invocation.id(), &connection, call.purpose, &materials)?;
@@ -167,7 +170,7 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
         };
         // Lock, cancel or exit stop the wait at once; the request's outcome
         // is then unknown and is never re-sent under the same key.
-        crate::generation::call_cancellable(&profile, key.as_ref(), request, ctx.cancel)
+        crate::generation::call_cancellable_with_slot(&profile, key.as_ref(), request, ctx.cancel, slot)
     })();
     let vault = ctx.lock()?;
     match &outcome {
@@ -219,7 +222,11 @@ pub(crate) fn generate_json(ctx: &Ctx, invocation: &Invocation, call: &Call, sys
     let (mode, streaming) = output_mode(ctx, invocation, call.purpose, &schema)?;
     let validator = jsonschema::validator_for(&schema).map_err(|_| Error::Integrity)?;
     let schema_note = if matches!(mode, OutputMode::JsonSchema { .. }) { String::new() } else { format!("\n\n只输出一个 JSON 对象，结构必须符合下面的 JSON Schema，不要输出其他文字：\n{schema}") };
-    let mut first = vec![Part::Text(format!("{user}{schema_note}"))];
+    let grant=grant_for_root(ctx,invocation.root_id())?.ok_or(Error::Denied)?;
+    let policy:String=ctx.lock()?.db().query_row("SELECT policy FROM scopes WHERE id=?",[&grant.scope_id],|r|r.get(0))?;
+    let policy:crate::retrieval_scope::Policy=serde_json::from_str(&policy)?;policy.validate()?;
+    let conditions=json!({"as_of":policy.date()?,"region":policy.region,"region_name":crate::retrieval_scope::region_name(policy.region.as_deref()),"graph_enabled":policy.graph_enabled});
+    let mut first = vec![Part::Text(format!("应用记录的本次检索条件（筛选条件，不是事实证据）：{conditions}\n\n{user}{schema_note}"))];
     first.extend(media);
     let attempts = if call.media.is_empty() { 2 } else { 1 };
     let mut messages = vec![Message { role: "user", parts: first }];
@@ -1220,7 +1227,8 @@ fn marked_numbers(text: &str) -> Vec<(String, bool)> {
         let next = chars.get(end).copied();
         let previous = start.checked_sub(1).map(|i| chars[i]);
         // Dates and date parts are compared separately.
-        if matches!(next, Some('年' | '月' | '日' | '号' | '-' | '/')) || matches!(previous, Some('-' | '/')) {
+        let date_part = matches!(previous,Some('/')) || (previous==Some('-') && start>=2 && chars[start-2].is_ascii_digit());
+        if matches!(next, Some('年' | '月' | '日' | '号' | '-' | '/')) || date_part {
             continue;
         }
         let before: String = chars[start.saturating_sub(3)..start].iter().collect();
@@ -1230,34 +1238,34 @@ fn marked_numbers(text: &str) -> Vec<(String, bool)> {
             || matches!(next, Some('元' | '块'))
             || matches!(previous, Some('¥' | '￥'))
             || before.ends_with("人民币");
+        let negative=matches!(previous,Some('-'|'−'|'负'));
         if marked || value >= 100.0 {
-            out.push((format_number(value), percent));
+            out.push((format_number(if negative{-value}else{value}), percent));
         }
     }
     out
 }
 
-/// Percent values of the decimal fractions in `text` ("0.6000" is 60,
-/// "-0.1429" is 14.29): calculation results give changes and thresholds as
-/// ratios, and an answer may restate them as percentages.
-fn ratio_percents(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out: Vec<String> = vec![];
-    let mut index = 0;
-    while index < chars.len() {
-        let whole = index == 0 || !(chars[index - 1].is_ascii_alphanumeric() || chars[index - 1] == '.');
-        if !(chars[index].is_ascii_digit() && whole) {
-            index += 1;
-            continue;
-        }
-        let (value, end) = read_arabic(&chars, index);
-        if chars[index..end].contains(&'.') && value < 10.0 {
-            let percent = format_number(value * 100.0);
-            if !out.contains(&percent) {
-                out.push(percent);
+/// Only explicitly dimensionless fields of a structured calculation may be
+/// restated as percentages. Currency amounts and arbitrary prose never qualify.
+fn ratio_percents(text: &str) -> Vec<(String, i8, bool)> {
+    fn visit(value: &Value, key: &str, out: &mut Vec<(String, i8, bool)>) {
+        match value {
+            Value::Object(fields) => for (key, value) in fields { visit(value, key, out); },
+            Value::Array(rows) => for value in rows { visit(value, key, out); },
+            _ if matches!(key, "expense_change_ratio" | "anomaly_threshold" | "annual_rate") => {
+                let number = value.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| value.as_f64());
+                if let Some(number) = number.filter(|n| n.is_finite()) {
+                    let direction = if key == "anomaly_threshold" || number == 0.0 { 0 } else if number < 0.0 { -1 } else { 1 };
+                    out.push((format_number(number.abs() * 100.0), direction, key=="expense_change_ratio"));
+                }
             }
+            _ => {}
         }
-        index = end;
+    }
+    let mut out = vec![];
+    for line in text.lines() {
+        if let Ok(value) = serde_json::from_str::<Value>(line) { visit(&value, "", &mut out); }
     }
     out
 }
@@ -1266,8 +1274,25 @@ fn ratio_percents(text: &str) -> Vec<String> {
 /// restate a ratio of the source ("增加约60%" for 0.6000, "下降14.29%" for
 /// -0.1429); a ratio written as a percentage ("0.6%") still does not match.
 pub fn numbers_supported(claim: &str, source: &str) -> bool {
+    fn direction(clause:&str)->(bool,bool){
+        (["增加", "增长", "上升", "上涨", "提高"].iter().any(|s|clause.contains(s)),
+         ["减少", "下降", "降低", "下跌"].iter().any(|s|clause.contains(s)))
+    }
     let (numbers, ratios) = (key_numbers(source), ratio_percents(source));
-    marked_numbers(claim).iter().all(|(number, percent)| numbers.contains(number) || (*percent && ratios.contains(number)))
+    let percentages:Vec<(String,i8)>=source.split(['，',',','；',';','。','\n']).flat_map(|clause|{
+        let (up,down)=direction(clause);
+        marked_numbers(clause).into_iter().filter_map(move|(number,percent)|percent.then_some((number,if up&&!down{1}else if down&&!up{-1}else{0})))
+    }).collect();
+    claim.split(['，', ',', '；', ';', '。', '\n']).all(|clause| {
+        let (up,down)=direction(clause);
+        marked_numbers(clause).iter().all(|(number, percent)| {
+            if !percent { return numbers.contains(number); }
+            let negative=number.starts_with('-');
+            percentages.iter().any(|(value,dir)|number==value && !(up&&down) && (!up||*dir>=0) && (!down||*dir<=0)) || ratios.iter().any(|(ratio, direction, change)| {
+                number.trim_start_matches('-') == ratio && (!negative||*direction<0) && (!up || (*change&&*direction>=0&&!negative)) && (!down || (*change&&*direction<=0)) && !(up && down)
+            })
+        })
+    })
 }
 
 /// A whole number (Arabic or Chinese) at `start`, for dates.
@@ -1444,7 +1469,7 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
             "unsupported"
         } else if signal == "signal_flagged" {
             "partial"
-        } else if matches!(signal, "coverage_incomplete" | "execution_failed" | "not_run") && calc_refs.is_empty() {
+        } else if matches!(signal, "coverage_incomplete" | "execution_failed" | "not_run") {
             "unchecked"
         } else {
             "supported"

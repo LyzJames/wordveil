@@ -2,6 +2,7 @@
 // confirmed actions: those come from native dialogs inside the Rust commands.
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type { TurnKind } from './turns';
 
 export type Warning = { code: string; message: string };
 export type Envelope = {
@@ -26,6 +27,8 @@ export type AppStatus = {
   production?: boolean;
   unlocked?: boolean;
   session?: string | null;
+  /** Returned only by a separate e2e build with a fresh synthetic fixture. */
+  e2e_session?: UnlockInfo | null;
   vaults?: VaultSummary[];
 };
 export type UnlockInfo = { handle: string; vault_id: string; root_matter: string; name: string };
@@ -46,7 +49,7 @@ export type Cashflow = { id: string; date: string; amount: string; currency: str
 export type Todo = { id: string; title: string; due_on: string | null; status: string; source_fact: string | null };
 /** An open todo of any matter that is overdue or due within two weeks (workbench). */
 export type DueTodo = { id: string; title: string; due_on: string; matter_id: string; matter_title: string };
-export type Relation = { id: string; src: string; dst: string; relation_type: string; origin: string; status: string; created_at: string };
+export type Relation = { id: string; src: string; dst: string; relation_type: string; origin: string; status: string; created_at: string; evidence?: { evidence_id?: string; block?: number } | null; valid_from?: string | null; valid_to?: string | null; jurisdiction?: string | null; source_version?: string | null };
 export type Snapshot = {
   matter: { id: string; title: string; matter_type: string; region: string | null; status: string; is_root: number; notes: string | null };
   matters?: Matter[];
@@ -61,7 +64,19 @@ export type Snapshot = {
   calculations: { id: string; calculation_type: string; created_at: string }[];
   timeline: { date: string; kind: string; ref: string; label: string; status: string }[];
 };
-export type EvidenceItem = { evidence_id: string; version_id: string; matter_id: string; document: { display_name: string; version_no: number; media_kind: string }; unit_title: string; exact_text: string; text: string; locators: Locator[]; highlight_indexes: number[]; pages: string[] };
+export type GraphProof = { version_id?: string; document?: { display_name: string; version_no: number }; locators?: Locator[]; evidence_id?: string };
+export type GraphPath = { hops: number; steps: { relation_type: string; traversal: string; origin: string; status: string; proof: GraphProof; valid_from?: string | null; valid_to?: string | null; jurisdiction?: string | null }[] };
+export type EvidenceItem = { evidence_id: string; version_id: string; matter_id: string; document: { display_name: string; version_no: number; media_kind: string }; unit_title: string; exact_text: string; text: string; locators: Locator[]; highlight_indexes: number[]; pages: string[]; graph_paths?: GraphPath[]; legal_source?: { title: string; issuer: string; region: string; effective_on: string; expires_on: string | null; verified_on: string; source_url: string } | null };
+export type RetrievalPolicy = { graph_enabled?: boolean; as_of?: string | null; region?: string | null };
+export type ComparisonDocument = { version_id: string; matter_id: string; display_name: string; version_no: number; content_sha256: string; chunks: number };
+export type ComparisonCell = { id: string; row: number; col: number; state: string; reason: string | null; result_ref: string | null; task_id: string | null; run_id: string | null; attempts: number; used_requests: number; used_attempts: number; remaining_requests: number; progress?: Progress | null };
+export type Comparison = { id: string; title: string; state: string; max_requests: number; used_requests: number; remaining_requests: number; spec: { documents: ComparisonDocument[]; questions: string[]; per_cell_max_requests: number }; cells: ComparisonCell[] };
+export type ComparisonListItem = { id: string; title: string; state: string; max_requests: number; used_requests: number; updated_at: string };
+export type ComparisonPreview = { id: string; title: string; binding: string; spec: Comparison['spec']; connection: AnswerPreview['connection']; max_requests: number; used_requests: number; remaining_requests: number; per_cell_max_requests: number; max_output_tokens: number; cells: { id: string; row: number; col: number; state: string; used_requests: number; remaining_requests: number; unknown_requests: number; preview: AnswerPreview; continuation: boolean }[] };
+export type IndexJob = { id: string; version_id: string; total: number; completed: number; attempts: number; status: string; display_name: string; updated_at: string; public: boolean; running: boolean };
+export type HistoryQuery = { search?: string; matter?: string | null; from?: string | null; through?: string | null; before?: number | null; limit?: number };
+export type HistoryEntry = { id: string; question: string; kind: TurnKind; matters: string[]; created_at: string };
+export type HistoryPage = { items: HistoryEntry[]; next_cursor: number | null };
 
 export type Capability = { status: 'supported' | 'unsupported' | 'unknown' | 'unavailable' | 'policy_blocked'; stale: boolean; evidence: string; limits: unknown; tested_at: string };
 export type Connection = {
@@ -79,6 +94,7 @@ export type AnswerPreview = {
   connection: { id: string; name: string; host: string; model_id: string }; excerpts: Excerpt[]; max_items: number; max_requests: number; max_output_tokens: number;
   roles?: string[]; native_media?: NativeMedia[]; native_media_note?: string;
   media_policy?: { frames: number; audio_seconds: number; range: { start_s: number; end_s: number | null } };
+  retrieval_policy?: RetrievalPolicy;
 };
 export type ClaimRow = { claim_id: string; text: string; evidence: { label: string; evidence_id: string }[]; status: 'supported' | 'partial' | 'unsupported' | 'unchecked' | 'advice' | null; message: string | null; flagged: { start: number; end: number; utf16_start: number; utf16_end: number }[] | null };
 export type Answer = {
@@ -113,6 +129,21 @@ export type RetrievalResult = {
 export type Feedback = { id: string; claim_id: string | null; issue: 'unsupported' | 'wrong_source' | 'contradiction' | 'other'; note: string | null; created_at: string };
 export type LockPolicy = { auto_lock_minutes: number; lock_on_system_lock: boolean };
 export type GenerationRequestRow = { purpose: string; host: string; model_id: string; status: string; error: string | null; input_tokens: number | null; output_tokens: number | null; started_at: string; connection: string | null };
+
+export type PublicDocumentInfo = { id: string; title: string; issuer: string; source_url: string; published_on: string; effective_on: string; expires_on: string | null; region: string; status: string; verified_on: string; sha256: string; rights: string };
+export type PublicPackageInfo = { package_id: string; title: string; version: string; as_of: string; region: string; documents: PublicDocumentInfo[]; limitations: string[] };
+export type ExternalOverview = {
+  sources: { id: string; name: string; domains: string[]; enabled: boolean }[];
+  connections: { id: string; name: string; endpoint: string; enabled: boolean }[];
+  bindings: { id: string; connection_id: string; name: string; descriptor: ToolDescriptor; schema_hash: string; active: boolean }[];
+  packages: { id: string; package_id: string; version: string; sha256: string; state: string; metadata: PublicPackageInfo; created_at: string }[];
+  requests: { host: string; operation: string; status: string; error: string | null; started_at: string }[];
+};
+export type ToolDescriptor = { name: string; description?: string; inputSchema: Record<string, unknown>; outputSchema?: Record<string, unknown>; annotations?: { readOnlyHint?: boolean } };
+export type ActionPreview = { action_id: string; skill: string; operation: string; destination: string; sent: unknown; purpose?: string; domains?: string[]; tool?: string; max_requests: number; note?: string; sensitive_hint?: string; pricing?: string };
+export type WebItem = { title: string; url: string; text: string; sha256: string; accessed_at: string; published_at: string | null; publisher: string | null; snapshot: string; service_authority?: number };
+export type WebResearch = { query: string; items: WebItem[]; omitted_sources: number; note: string; accessed_at: string };
+export type ToolCatalog = { connection_id: string; received_at: string; exchange: { server: unknown; server_hash: string; result: { tools: ToolDescriptor[] }; exchanges: number } };
 
 export class CoreError extends Error {}
 
@@ -152,7 +183,18 @@ export const api = {
   connectionProbe: (connection: string) => wrap(invoke<string>('connection_probe', { connection })),
   connectionRevoke: (connection: string) => wrap(invoke<Envelope>('connection_revoke', { connection })),
   connectionDefault: (connection: string) => wrap(invoke<null>('connection_default', { connection })),
-  answerPreview: (question: string, matters: string[], connection: string | null = null, deep = false) => wrap(invoke<AnswerPreview>('answer_preview', { question, matters, connection, deep })),
+  answerPreview: (question: string, matters: string[], connection: string | null = null, deep = false, policy: RetrievalPolicy = {}) => wrap(invoke<AnswerPreview>('answer_preview', { question, matters, connection, deep, policy })),
+  qaHistory: (query: HistoryQuery = {}) => wrap(invoke<HistoryPage>('qa_history', { query })),
+  comparisonCreate: (title: string, versions: string[], questions: string[], connection: string | null, maxRequests: number) => wrap(invoke<string>('comparison_create', { title, versions, questions, connection, maxRequests })),
+  comparisonList: () => wrap(invoke<ComparisonListItem[]>('comparison_list')),
+  comparisonRead: (id: string) => wrap(invoke<Comparison>('comparison_read', { id })),
+  comparisonPrepare: (id: string) => wrap(invoke<null>('comparison_prepare', { id })),
+  comparisonPreview: (id: string, selected: string[] = []) => wrap(invoke<ComparisonPreview>('comparison_preview', { id, selected })),
+  comparisonStart: (id: string, selected: string[], binding: string) => wrap(invoke<null>('comparison_start', { id, selected, binding })),
+  comparisonPause: (id: string) => wrap(invoke<null>('comparison_pause', { id })),
+  comparisonBudget: (id: string, maximum: number) => wrap(invoke<null>('comparison_budget', { id, maximum })),
+  indexJobs: () => wrap(invoke<IndexJob[]>('index_jobs')),
+  indexResume: (id: string) => wrap(invoke<string>('index_resume', { id })),
   analysisPreview: (kind: 'contract-review' | 'loan-analysis' | 'budget-analysis', request: object) => wrap(invoke<AnswerPreview>('analysis_preview', { kind, request })),
   mediaPreview: (kind: 'image-review' | 'audio-review' | 'video-review', request: object) => wrap(invoke<AnswerPreview>('media_preview', { kind, request })),
   /** Opens the native confirmation; the task starts only if the user confirms there. */
@@ -163,6 +205,14 @@ export const api = {
   flowDiscard: (run: string) => wrap(invoke<null>('flow_discard', { run })),
   answerDiscard: (grant: string) => wrap(invoke<null>('answer_discard', { grant })),
   generationRequests: () => wrap(invoke<GenerationRequestRow[]>('generation_requests')),
+  externalOverview: () => wrap(invoke<ExternalOverview>('external_overview')),
+  externalSave: (kind: 'source' | 'mcp' | 'binding' | 'disable_source' | 'disable_mcp' | 'disable_package', value: object, apiKey: string | null = null) => wrap(invoke<Envelope | Declined>('external_save', { kind, value, apiKey })),
+  networkPreview: (operation: 'search' | 'fetch' | 'catalog' | 'tool', request: object) => wrap(invoke<ActionPreview>('network_preview', { operation, request })),
+  externalStart: (action: string) => wrap(invoke<string | Declined>('external_start', { action })),
+  externalDiscard: (action: string) => wrap(invoke<null>('external_discard', { action })),
+  knowledgePreview: (builtin: boolean) => wrap(invoke<ActionPreview | null>('knowledge_preview', { builtin })),
+  publicMcp: (start: boolean) => wrap(invoke<{ connection_id?: string; endpoint?: string; status?: string } | null>('public_mcp', { start })),
+  webKnowledgePreview: (resultRef: string, item: number, metadata: object) => wrap(invoke<ActionPreview>('web_knowledge_preview', { resultRef, item, metadata })),
 };
 
 export const onTask = (handler: (event: TaskEvent) => void): Promise<UnlistenFn> => listen<TaskEvent>('lvjin://task', (e) => handler(e.payload));

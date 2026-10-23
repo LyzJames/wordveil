@@ -10,6 +10,7 @@ type Interrupted = { selection_id: string; matter_id: string; display_name: stri
 export function Workbench() {
   const { info, go, tasks, revision, refresh, matters, mattersLoaded, due, connection, newMatter } = useSession();
   const interrupted = useLoad(() => api.view<Interrupted[]>('interrupted'), [revision]);
+  const indexJobs=useLoad(api.indexJobs,[revision]);
   const { run } = useAction();
   const [, tick] = useState(0);
   const active = tasks.filter((t) => t.status === 'running');
@@ -17,8 +18,8 @@ export function Workbench() {
   const failed = tasks.filter((t) => t.status === 'failed' && t.envelope).slice(0, 2);
   const pending = matters.filter((m) => (m.candidate_facts ?? 0) > 0);
   const recent = [...matters].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 6);
-  const loaded = interrupted.data !== undefined && mattersLoaded;
-  const nothing = pending.length === 0 && (interrupted.data?.length ?? 0) === 0 && failed.length === 0 && due.length === 0;
+  const loaded = interrupted.data !== undefined && indexJobs.data!==undefined && mattersLoaded;
+  const nothing = pending.length === 0 && (interrupted.data?.length ?? 0) === 0 && (indexJobs.data?.length??0)===0 && failed.length === 0 && due.length === 0;
 
   return (
     <div className="page fade-in">
@@ -91,6 +92,7 @@ export function Workbench() {
                   原件已加密保存，可以从中断处继续，不会重复导入（{relative(item.updated_at)}）。
                 </Callout>
               ))}
+              {indexJobs.data?.map((job)=><Callout key={job.id} tone="warning" title={`《${job.display_name}》${job.running?'正在创建索引':'的索引可继续'}`} action={<button className="btn btn-sm" disabled={job.running} onClick={()=>job.public?go({name:'knowledge'}):run(async()=>{await api.indexResume(job.id);refresh();},'已从保存的批次继续索引')}>{job.public?'在知识中心继续公共包':'继续索引'}</button>}>已完成 {job.completed}/{job.total} 个片段向量。来源与模型空间未变化时会复用已完成的批次；完整后才发布新索引。</Callout>)}
               {due.length > 0 && (
                 <ul className="due-list" aria-label="即将到期的待办">
                   {due.map((t) => {

@@ -22,12 +22,15 @@ pub mod connections;
 pub mod documents;
 pub mod flows;
 pub mod indexing;
+pub mod graph;
 pub mod matters;
 pub mod outputs;
 pub mod maintenance;
 pub mod mediaflow;
 pub mod observe;
 pub mod workflows;
+pub mod external;
+pub mod knowledge;
 
 pub type VaultHandle = Arc<Mutex<Vault>>;
 
@@ -57,7 +60,10 @@ impl Ctx<'_> {
         (self.progress)(Progress { skill: invocation.skill().into(), stage, done, total });
     }
     pub fn authorize(&self, invocation: &Invocation, capability: &str) -> Result<()> {
-        self.lock()?.runtime.authorize(invocation, capability)
+        self.check()?;
+        let vault = self.lock()?;
+        self.check()?;
+        vault.runtime.authorize(invocation, capability)
     }
 }
 
@@ -102,6 +108,9 @@ pub fn run(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
         "answer-compose" => answers::answer_compose(ctx, invocation, input),
         "answer-grounding" => answers::answer_grounding(ctx, invocation, input),
         "connection-settings" => connections::settings(ctx, invocation, input),
+        "web-research" => external::research(ctx, invocation, input),
+        "external-tools" => external::tools_call(ctx, invocation, input),
+        "knowledge-update" => knowledge::update(ctx, invocation, input),
         "lvjin-retrieval" => workflows::retrieval(ctx, invocation, input),
         "contract-review" | "loan-analysis" | "budget-analysis" => workflows::analysis(ctx, invocation, input),
         _ => Ok(unavailable()),

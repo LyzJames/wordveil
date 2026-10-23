@@ -1,6 +1,6 @@
 [project]
 name = "lvjin-worker"
-version = "0.2.0"
+version = "0.4.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "pydantic==2.14.1",
@@ -9,6 +9,9 @@ dependencies = [
     "paddlepaddle==3.3.1",
     "paddleocr==3.7.0",
     "usearch==2.26.4",
+    # M3 release security fixes; hashed Windows wheels in docs/tooling/m3.
+    "pillow==13.0.0",
+    "certifi==2026.10.19",
     # LangGraph orchestrator (M2); hash-locked set in docs/tooling/m2/orchestrator-requirements.txt
     "langgraph==1.2.12",
     "langgraph-checkpoint==4.2.0",

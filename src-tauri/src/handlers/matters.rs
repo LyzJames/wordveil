@@ -101,7 +101,7 @@ fn read(ctx: &Ctx, invocation: &Invocation, matter: &str) -> Result<EnvelopePart
     let is_root = info[5] == json!(1);
     let mut payload = json!({"matter": matter_json});
     if is_root {
-        let list = rows(ctx, "SELECT m.id,m.title,m.matter_type,m.status,m.updated_at,(SELECT COUNT(*) FROM documents d WHERE d.matter_id=m.id),(SELECT COUNT(*) FROM facts f WHERE f.matter_id=m.id AND f.status='candidate') FROM matters m JOIN objects o ON o.id=m.id WHERE m.is_root=0 AND o.active=1 ORDER BY m.updated_at DESC", &[], 7)?;
+        let list = rows(ctx, "SELECT m.id,m.title,m.matter_type,m.status,m.updated_at,(SELECT COUNT(*) FROM documents d WHERE d.matter_id=m.id),(SELECT COUNT(*) FROM facts f WHERE f.matter_id=m.id AND f.status='candidate') FROM matters m JOIN objects o ON o.id=m.id WHERE m.is_root=0 AND o.active=1 AND o.kind='MatterRef' ORDER BY m.updated_at DESC", &[], 7)?;
         payload["matters"] = json!(list.iter().map(|r| json!({"id": r[0], "title": r[1], "matter_type": r[2], "status": r[3], "updated_at": r[4], "documents": r[5], "candidate_facts": r[6]})).collect::<Vec<_>>());
         // Open todos that are overdue or due within two weeks, for the workbench.
         let horizon = (chrono::Local::now().date_naive() + chrono::Duration::days(14)).format("%Y-%m-%d").to_string();
@@ -123,8 +123,8 @@ fn read(ctx: &Ctx, invocation: &Invocation, matter: &str) -> Result<EnvelopePart
     payload["accounts"] = json!(accounts.iter().map(|r| json!({"id": r[0], "name": r[1], "currency": r[2]})).collect::<Vec<_>>());
     let todos = rows(ctx, "SELECT t.id,t.title,t.due_on,t.status,t.source_fact FROM todos t JOIN objects o ON o.id=t.id WHERE t.matter_id=? AND o.active=1 ORDER BY t.due_on", &[matter], 5)?;
     payload["todos"] = json!(todos.iter().map(|r| json!({"id": r[0], "title": r[1], "due_on": r[2], "status": r[3], "source_fact": r[4]})).collect::<Vec<_>>());
-    let relations = rows(ctx, "SELECT r.id,r.src,r.dst,r.relation_type,r.evidence,r.origin,r.status,r.created_at FROM relations r JOIN objects o ON o.id=r.id WHERE r.matter_id=? AND o.active=1", &[matter], 8)?;
-    payload["relations"] = json!(relations.iter().map(|r| json!({"id": r[0], "src": r[1], "dst": r[2], "relation_type": r[3], "evidence": parse_json(&r[4]), "origin": r[5], "status": r[6], "created_at": r[7]})).collect::<Vec<_>>());
+    let relations = rows(ctx, "SELECT r.id,r.src,r.dst,r.relation_type,r.evidence,r.origin,r.status,r.created_at,r.valid_from,r.valid_to,r.jurisdiction,r.source_version FROM relations r JOIN objects o ON o.id=r.id WHERE r.matter_id=? AND o.active=1", &[matter], 12)?;
+    payload["relations"] = json!(relations.iter().map(|r| json!({"id": r[0], "src": r[1], "dst": r[2], "relation_type": r[3], "evidence": parse_json(&r[4]), "origin": r[5], "status": r[6], "created_at": r[7],"valid_from":r[8],"valid_to":r[9],"jurisdiction":r[10],"source_version":r[11]})).collect::<Vec<_>>());
     let assumptions = rows(ctx, "SELECT a.id,a.kind,a.value FROM assumptions a JOIN objects o ON o.id=a.id WHERE a.matter_id=? AND o.active=1 ORDER BY a.created_at", &[matter], 3)?;
     payload["assumptions"] = json!(assumptions.iter().map(|r| json!({"id": r[0], "kind": r[1], "value": parse_json(&r[2])})).collect::<Vec<_>>());
     let calcs = rows(ctx, "SELECT r.id,json_extract(r.payload,'$.calculation_type'),r.created_at FROM results r JOIN objects o ON o.id=r.id WHERE r.kind='CalculationRef' AND o.active=1 AND json_extract(r.payload,'$.matter_id')=? ORDER BY r.created_at DESC LIMIT 50", &[matter], 3)?;
@@ -276,7 +276,18 @@ fn validate(tx: &Transaction, matter: &str, change: &Value) -> Result<Value> {
                     return Err(Error::Contract);
                 }
             }
-            Ok(json!({"creates": "relation", "relation_type": kind}))
+            let start=change["valid_from"].as_str();let end=change["valid_to"].as_str();
+            if start.is_some_and(|d|!crate::retrieval_scope::canonical_date(d)) || end.is_some_and(|d|!crate::retrieval_scope::canonical_date(d)) || start.zip(end).is_some_and(|(s,e)|s>=e) {return Err(Error::Contract);}
+            let region=change["jurisdiction"].as_str();
+            crate::retrieval_scope::Policy{region:region.map(str::to_owned),..Default::default()}.validate()?;
+            let proof=if let Some(id)=change["evidence"]["evidence_id"].as_str() {
+                let record:Option<(String,String)>=tx.query_row("SELECT c.version_id,c.body FROM chunks c JOIN objects o ON o.id=c.id WHERE c.id=? AND o.active=1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+                let (version,text)=record.ok_or(Error::Denied)?;
+                let source_version:Option<String>=tx.query_row("SELECT version_id FROM chunks WHERE id=? UNION ALL SELECT id FROM document_versions WHERE id=? UNION ALL SELECT source_version FROM facts WHERE id=?",params![src,src,src],|r|r.get(0)).optional()?.flatten();
+                if source_version.as_deref()!=Some(version.as_str()){return Err(Error::Denied);}
+                json!({"evidence_id":id,"version_id":version,"excerpt":text.chars().take(240).collect::<String>()})
+            }else{Value::Null};
+            Ok(json!({"creates": "relation", "relation_type": kind,"source":proof,"retrieval_eligible":!proof.is_null(),"valid_from":start,"valid_to":end,"jurisdiction":region}))
         }
         "remove_relation" => {
             let id = require(change, "relation_id")?;
@@ -541,8 +552,8 @@ fn apply(tx: &Transaction, scope: &str, matter: &str, change: &Value, removed: &
                 if let Some(version) = source {
                     let edge = register(tx, scope, "EdgeRef", Some(&id))?;
                     let evidence: Option<String> = tx.query_row("SELECT source_locator FROM facts WHERE id=?", [&id], |r| r.get(0))?;
-                    tx.execute("INSERT INTO relations(id,matter_id,src,dst,relation_type,evidence,origin,status,created_at) VALUES(?,?,?,?,'evidence_for',?,'user_confirmed_candidate','confirmed',?)",
-                        params![edge, matter, version, id, evidence, now])?;
+                    tx.execute("INSERT INTO relations(id,matter_id,src,dst,relation_type,evidence,origin,status,created_at,source_version,extraction_method) VALUES(?,?,?,?,'evidence_for',?,'user_confirmed_candidate','confirmed',?,?,'confirmed_fact')",
+                        params![edge, matter, version, id, evidence, now,version])?;
                 }
             }
         }
@@ -617,8 +628,9 @@ fn apply(tx: &Transaction, scope: &str, matter: &str, change: &Value, removed: &
         }
         "add_relation" => {
             let id = register(tx, scope, "EdgeRef", Some(matter))?;
-            tx.execute("INSERT INTO relations(id,matter_id,src,dst,relation_type,evidence,origin,status,created_at) VALUES(?,?,?,?,?,?,'user','confirmed',?)",
-                params![id, matter, require(change, "src")?, require(change, "dst")?, require(change, "relation_type")?, change.get("evidence").map(Value::to_string), now])?;
+            let source_version:Option<String>=match change["evidence"]["evidence_id"].as_str(){Some(e)=>tx.query_row("SELECT version_id FROM chunks WHERE id=?",[e],|r|r.get(0)).optional()?,None=>None};
+            tx.execute("INSERT INTO relations(id,matter_id,src,dst,relation_type,evidence,origin,status,created_at,valid_from,valid_to,jurisdiction,source_version,extraction_method) VALUES(?,?,?,?,?,?,'user','confirmed',?,?,?,?,?,'user_confirmed')",
+                params![id, matter, require(change, "src")?, require(change, "dst")?, require(change, "relation_type")?, change.get("evidence").map(Value::to_string), now,change["valid_from"].as_str(),change["valid_to"].as_str(),change["jurisdiction"].as_str(),source_version])?;
             created.push(id);
         }
         "remove_relation" => {
@@ -670,6 +682,11 @@ fn apply(tx: &Transaction, scope: &str, matter: &str, change: &Value, removed: &
 /// full-text and vector rows, facts/cashflows/relations from the version,
 /// retrieval/evidence/export snapshots that reference it.
 pub fn delete_version(tx: &Transaction, version: &str, removed: &mut Vec<String>) -> Result<()> {
+    tx.execute("DELETE FROM index_job_chunks WHERE job IN (SELECT id FROM index_jobs WHERE version_id=?)",[version])?;
+    tx.execute("DELETE FROM index_jobs WHERE version_id=?",[version])?;
+    tx.execute("DELETE FROM legal_sources WHERE version_id=?",[version])?;
+    tx.execute("UPDATE comparisons SET state='stale',updated_at=? WHERE id IN (SELECT comparison_id FROM comparison_cells WHERE version_id=?)",params![now_rfc3339(),version])?;
+    tx.execute("UPDATE comparison_cells SET state='stale',result_ref=NULL,reason='source_deleted',updated_at=? WHERE version_id=?",params![now_rfc3339(),version])?;
     let mut objects: Vec<String> = vec![version.to_owned()];
     let chunk_rows: Vec<(i64, String)> = {
         let mut statement = tx.prepare("SELECT rowid,id FROM chunks WHERE version_id=?")?;
@@ -728,12 +745,12 @@ pub fn delete_version(tx: &Transaction, version: &str, removed: &mut Vec<String>
     objects.extend(facts.iter().cloned());
     objects.extend(cash.iter().cloned());
     let linked: Vec<String> = {
-        let mut statement = tx.prepare("SELECT id,src,dst FROM relations")?;
-        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        let mut statement = tx.prepare("SELECT id,src,dst,source_version FROM relations")?;
+        let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,r.get::<_,Option<String>>(3)?)))?;
         let mut ids = vec![];
         for row in rows {
-            let (id, src, dst) = row?;
-            if objects.contains(&src) || objects.contains(&dst) {
+            let (id, src, dst,source) = row?;
+            if objects.contains(&src) || objects.contains(&dst) || source.as_deref()==Some(version) {
                 ids.push(id);
             }
         }

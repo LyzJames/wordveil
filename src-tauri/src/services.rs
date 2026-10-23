@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
-    sync::{Condvar, Mutex, atomic::{AtomicBool, Ordering}},
+    sync::{Arc, Condvar, Mutex, atomic::{AtomicBool, Ordering}},
     time::{Duration, Instant},
 };
 
@@ -24,37 +24,42 @@ pub const GENERATION_CONCURRENCY: u32 = 2;
 const ORCHESTRATOR_MEMORY: usize = 1024 * 1024 * 1024;
 
 /// A counting semaphore whose waiters keep honouring cancellation.
-pub struct Slots {
+#[derive(Clone)]
+pub struct Slots(Arc<SlotState>);
+
+struct SlotState {
     used: Mutex<u32>,
     freed: Condvar,
     limit: u32,
 }
 
-pub struct SlotGuard<'a>(&'a Slots);
+/// Owned by the actual HTTP worker, including after its caller cancels.
+pub struct SlotGuard(Slots);
 
 impl Slots {
     pub fn new(limit: u32) -> Self {
-        Self { used: Mutex::new(0), freed: Condvar::new(), limit }
+        Self(Arc::new(SlotState { used: Mutex::new(0), freed: Condvar::new(), limit }))
     }
-    pub fn acquire(&self, cancellation: &AtomicBool) -> Result<SlotGuard<'_>> {
-        let mut used = self.used.lock().map_err(|_| Error::Integrity)?;
-        while *used >= self.limit {
+    pub fn acquire(&self, cancellation: &AtomicBool) -> Result<SlotGuard> {
+        let mut used = self.0.used.lock().map_err(|_| Error::Integrity)?;
+        while *used >= self.0.limit {
             if cancellation.load(Ordering::Acquire) {
                 return Err(Error::Cancelled);
             }
-            used = self.freed.wait_timeout(used, Duration::from_millis(50)).map_err(|_| Error::Integrity)?.0;
+            used = self.0.freed.wait_timeout(used, Duration::from_millis(50)).map_err(|_| Error::Integrity)?.0;
         }
+        if cancellation.load(Ordering::Acquire) { return Err(Error::Cancelled); }
         *used += 1;
-        Ok(SlotGuard(self))
+        Ok(SlotGuard(self.clone()))
     }
 }
 
-impl Drop for SlotGuard<'_> {
+impl Drop for SlotGuard {
     fn drop(&mut self) {
-        if let Ok(mut used) = self.0.used.lock() {
+        if let Ok(mut used) = self.0.0.used.lock() {
             *used = used.saturating_sub(1);
         }
-        self.0.freed.notify_one();
+        self.0.0.freed.notify_one();
     }
 }
 
@@ -173,6 +178,12 @@ pub struct Services {
     pub log: EventLog,
     pub residency: ResidencyPolicy,
     pub generation_slots: Slots,
+    pub external_slots: Slots,
+    /// A version's durable index job has one producer; searches may continue
+    /// against the last published chunks while that producer runs models.
+    pub indexing_slots: Slots,
+    pub external_rate: crate::network::RateLimits,
+    pub public_mcp: Mutex<Option<crate::public_mcp_server::Managed>>,
 }
 
 impl Services {
@@ -200,6 +211,10 @@ impl Services {
             log,
             residency: ResidencyPolicy::for_installed_memory(installed_memory_bytes()),
             generation_slots: Slots::new(GENERATION_CONCURRENCY),
+            external_slots: Slots::new(2),
+            indexing_slots: Slots::new(1),
+            external_rate: crate::network::RateLimits::default(),
+            public_mcp: Mutex::new(None),
             pool: Mutex::new(None),
             layout,
         })
@@ -280,6 +295,7 @@ impl Services {
 
     /// Lock/exit: stop every sensitive worker so no plaintext stays resident.
     pub fn stop_sensitive(&self) {
+        if let Ok(mut process)=self.public_mcp.lock(){process.take();}
         self.local.stop();
         if let Ok(guard) = self.pool.lock() {
             if let Some(pool) = guard.as_ref() {

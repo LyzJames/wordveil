@@ -556,8 +556,10 @@ export function loanFigures(r: Record<string, any>): [string, string][] {
   return rows.filter((row): row is [string, string] => typeof row[1] === 'string');
 }
 
-function Irr({ irr }: { irr: { status: string; annual_rate?: string; roots?: string[] } }) {
+function Irr({ irr }: { irr: { status: string; reason?: string; annual_rate?: string; roots?: string[] } }) {
   if (irr.status === 'unique' && irr.annual_rate) return <span className="amount">{(Number(irr.annual_rate) * 100).toFixed(6)}%</span>;
-  if (irr.status === 'multiple_roots') return <span className="t-reading">存在多个解（{irr.roots?.map((x) => `${(Number(x) * 100).toFixed(2)}%`).join('、')}），不输出单一数字</span>;
+  if (irr.status === 'multiple_roots') return <span className="t-reading">已找到多个解（{irr.roots?.map((x) => `${(Number(x) * 100).toFixed(2)}%`).join('、')}），可能还有其他解，不输出单一数字</span>;
+  if (irr.reason === 'saved_uniqueness_not_proven') return <span className="t-reading">此历史记录尚未确认唯一解，请重新计算</span>;
+  if (irr.status === 'indeterminate') return <span className="t-reading">{irr.reason === 'all_cashflows_cancel' ? '同日现金流全部抵消，无法确定年化率' : irr.reason === 'no_root_found_in_searched_range' ? '在本次搜索范围内未找到可靠解，不代表无解' : '现金流方向多次变化，无法确认唯一解，不输出单一年化率'}</span>;
   return <span className="t-reading">无法确定（现金流不完整或无解）</span>;
 }

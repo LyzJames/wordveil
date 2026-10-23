@@ -1,13 +1,13 @@
 {
-  "schema_version": "lvjin.m1-release/1",
-  "version": "0.2.0-m1",
-  "milestone": "M1",
-  "business_workflows_implemented": "M1 local closed loop: import, five-model OCR, ASR and frame OCR text, matters, Decimal finance, hybrid retrieval and rerank, evidence, export, encrypted backup/restore",
-  "generation_connection": "not included in M1; analysis entries report requires_generation",
-  "network_requests": "none in M1; workers run in no-network AppContainers",
+  "schema_version": "lvjin.m3-release/1",
+  "version": "0.4.0-m3",
+  "milestone": "M3",
+  "business_workflows_implemented": "M2 baseline plus source-backed bounded graph, date/region scopes, partitioned F32 index, durable index batches and sequential document comparison with cell recovery",
+  "generation_connection": "user-configured text/native image/audio generation, seven narrow roles, LangGraph flows, source grounding; explicit egress approval",
+  "network_requests": "public search/fetch, public knowledge and read-only MCP separately approved; workers stay in no-network AppContainers",
   "automatic_downloads": false,
   "updates": "whole offline installer; no updater, network or signing key embedded",
-  "signing": "M1 internal build is unsigned; external release requires an owned Authenticode certificate and a signed media manifest",
+  "signing": "M3 personal test build is unsigned; external release requires an owned Authenticode certificate and a signed media manifest",
   "cpu": "Windows x64, AVX2/FMA, CPU FP32, 4 threads; GPU disabled",
   "minimum_test_profile": {
     "os": "Windows 11 x64",
@@ -18,14 +18,15 @@
   },
   "recommended_ram_bytes": 17179869184,
   "job_process_commit_limit_bytes": 8589934592,
-  "large_residents_max": 1,
+  "large_residents_max": 3,
   "resident_large_model_tiers": [
     {
       "min_physical_memory_gib": 16,
-      "max_resident_large_models": 2,
+      "max_resident_large_models": 3,
       "coresident_large_models": [
         "embedding",
-        "reranker"
+        "reranker",
+        "grounding"
       ],
       "max_concurrent_heavy_stages": 1
     }
@@ -399,6 +400,6 @@
   ],
   "performance_scope": "Model artefacts are unchanged from M0; the M0 cold-load/inference probes apply to the same files. M1 business-flow timings are in the M1 benchmark report, not embedded here.",
   "ffmpeg_version": "9.0.2",
-  "webview2_fixed_version": "155.0.4283.60",
+  "webview2_fixed_version": "155.0.4283.62",
   "vc_runtime_version": "14.44.35112"
 }

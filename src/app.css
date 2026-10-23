@@ -267,3 +267,9 @@ ol.plain.numbered { list-style: decimal; padding-left: 20px; }
 .thumbs button { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--stroke-subtle); border-radius: 6px; background: var(--surface); cursor: pointer; color: var(--text-secondary); font-size: 0.6875rem; }
 .thumbs button[aria-current="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent-text); }
 .thumbs img, .thumbs .thumb-blank { width: 56px; height: 72px; object-fit: contain; background: var(--surface-sunken); border-radius: 3px; }
+.qa-retrieval-options { padding: 8px 20px; border-bottom: 1px solid var(--stroke-subtle); }
+.qa-retrieval-options .inline-form { flex-wrap: wrap; margin-top: 12px; gap: 12px; }
+.qa-retrieval-options summary { cursor: pointer; color: var(--text-secondary); }
+.evidence-provenance { margin: 10px 0; padding: 8px 0; border-top: 1px solid var(--stroke-subtle); overflow-wrap: anywhere; }
+.evidence-provenance summary { cursor: pointer; }
+.evidence-provenance li { margin: 8px 0; }

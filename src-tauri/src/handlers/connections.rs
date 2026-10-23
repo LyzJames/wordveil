@@ -19,6 +19,10 @@ pub fn settings(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
     ctx.authorize(invocation, "settings.connection")?;
     let operation = text_of(input, "operation")?;
     let draft_id = text_of(input, "connection_draft_id")?;
+    if let Some(payload) = super::external::settings(ctx, invocation, &draft_id)? {
+        let id = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "ConnectionResultRef", &payload)?;
+        return Ok(completed(Some(id)));
+    }
     let draft = connections::read_draft(&*ctx.lock()?, &draft_id)?;
     let payload = match operation.as_str() {
         "save" => {
@@ -60,7 +64,7 @@ pub fn settings(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
             let binding = connection.profile.binding();
             let started = std::time::Instant::now();
             let mut sent = 0u32;
-            let results = probe::run(&connection.profile, key.as_ref(), ctx.cancel, |result| {
+            let results = probe::run_with_slots(&connection.profile, key.as_ref(), ctx.cancel, &ctx.services.generation_slots, |result| {
                 // Record each finished check right away (audit + capability row).
                 if let Ok(vault) = ctx.lock() {
                     if result.sent {

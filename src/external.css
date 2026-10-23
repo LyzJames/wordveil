@@ -1,0 +1,17 @@
+.external-page { max-width: 1120px; }
+.external-stack { display: flex; flex-direction: column; gap: 14px; }
+.external-page > .callout, .external-page > .tabs { margin-bottom: 20px; }
+.external-page details > summary { cursor: pointer; padding: 6px 0; }
+.external-page details[open] > summary { margin-bottom: 12px; }
+.external-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.external-row > h2, .external-row > h3 { flex: 1; min-width: 170px; }
+.external-json, .external-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; padding: 16px; border: 1px solid var(--stroke-subtle); border-radius: var(--radius-card); background: var(--surface-sunken); color: var(--text-primary); font: 0.875rem/1.8 var(--font-ui); }
+.external-text { max-height: 520px; }
+.external-wrap { overflow-wrap: anywhere; }
+.external-documents { display: flex; flex-direction: column; gap: 6px; }
+.external-document { padding: 10px 12px; border: 1px solid var(--stroke-subtle); border-radius: var(--radius-card); }
+.external-document p + p { margin-top: 6px; }
+.external-page section.card { padding: 20px; }
+.external-page details.card { padding: 16px 20px; }
+.external-page textarea { resize: vertical; }
+@media (max-width: 680px) { .external-row { align-items: flex-start; } .external-json { padding: 12px; } }

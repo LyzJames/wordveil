@@ -68,6 +68,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): { data: T |
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((t) => t + 1), []);
   useEffect(() => {
     let alive = true;
     setLoading(true);
@@ -80,7 +81,7 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[]): { data: T |
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, tick]);
-  return { data, error, loading, reload: () => setTick((t) => t + 1) };
+  return { data, error, loading, reload };
 }
 
 /** True once `ms` have passed; skeletons appear only for slow loads (design 8.20). */

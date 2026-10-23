@@ -6,7 +6,7 @@
 use super::{GenRequest, GenResponse, OutputMode, Part, Profile, Protocol, Provider, ToolCall, Usage, transport};
 use crate::{Error, Result};
 use serde_json::{Map, Value, json};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
 const RESPONSE_LIMIT: usize = 8 << 20;
@@ -14,6 +14,7 @@ const RESPONSE_LIMIT: usize = 8 << 20;
 /// Send one request. `on_delta` receives streamed text fragments (used only to
 /// report progress; the final text is the concatenation).
 pub fn call(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool, on_delta: &mut dyn FnMut(&str)) -> Result<GenResponse> {
+    if cancel.load(Ordering::Acquire) { return Err(Error::Cancelled); }
     // The connection's own output cap bounds every request (cost control).
     let capped;
     let request = if request.max_output_tokens > profile.max_output_tokens {

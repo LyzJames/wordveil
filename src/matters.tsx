@@ -10,6 +10,7 @@ import { AnalysisButton } from './analysis';
 import { MediaAnalysisButton } from './media';
 import { ExportButton } from './export';
 import { Icon, type IconName } from './icons';
+import { REGIONS } from './regions';
 import { CalcTab, CashflowTab } from './money';
 import { useSession, type ViewerTarget } from './session';
 import { Chip, Empty, ErrorLine, Field, Modal, Skeleton, Tabs, useAction, useLoad } from './ui';
@@ -701,7 +702,7 @@ function TimelineTab({ matter, snapshot: s }: { matter: string; snapshot: Snapsh
 // ---------------------------------------------------------------- relations
 
 function RelationsTab({ matter, snapshot: s }: { matter: string; snapshot: Snapshot }) {
-  const { refresh } = useSession();
+  const { refresh,open } = useSession();
   const { busy, run } = useAction();
   const nodes = useMemo(() => {
     const list: { id: string; label: string }[] = s.documents.map((d) => ({ id: d.version_id, label: `资料：${d.display_name}（第 ${d.version_no} 版）` }));
@@ -712,14 +713,22 @@ function RelationsTab({ matter, snapshot: s }: { matter: string; snapshot: Snaps
   const [src, setSrc] = useState('');
   const [dst, setDst] = useState('');
   const [type, setType] = useState('cites');
+  const [proof,setProof]=useState('');
+  const [validFrom,setValidFrom]=useState('');
+  const [validTo,setValidTo]=useState('');
+  const [region,setRegion]=useState('');
+  const sourceVersion=s.documents.find((d)=>d.version_id===src)?.version_id??s.facts.find((f)=>f.id===src)?.source_version??'';
+  const sources=useLoad(()=>sourceVersion?api.view<{evidence_id:string;unit_title:string;excerpt:string}[]>('relation_sources',sourceVersion):Promise.resolve([]),[sourceVersion]);
+  useEffect(()=>setProof(''),[src]);
+  const invalidDates=!!(validFrom&&validTo&&validFrom>=validTo);
   async function add(e: React.FormEvent) {
     e.preventDefault();
-    const done = await run(() => applyChange(matter, { type: 'add_relation', relation_type: type, src, dst }), '已写入关系');
+    const done = await run(() => applyChange(matter, { type: 'add_relation', relation_type: type, src, dst,evidence:proof?{evidence_id:proof}:null,valid_from:validFrom||null,valid_to:validTo||null,jurisdiction:region||null }), '已写入关系');
     if (done) refresh();
   }
   return (
     <section>
-      <p className="t-caption text-secondary reading" style={{ marginBottom: 12 }}>这里只保存你明确确认的关系（例如“新版本取代旧版本”“该资料是某事实的依据”）。确认候选事实时会自动记录“依据”关系。</p>
+      <p className="t-caption text-secondary reading" style={{ marginBottom: 12 }}>这里只保存你明确确认的关系。选择原文依据后，可在对应范围的关系检索中用于查找资料；未附原文的关系只保留为个人记录。确认候选事实时会自动保留其来源。</p>
       {s.relations.length === 0 ? (
         <p className="text-secondary">还没有关系。</p>
       ) : (
@@ -734,7 +743,7 @@ function RelationsTab({ matter, snapshot: s }: { matter: string; snapshot: Snaps
                   <td>{name(r.src)}</td>
                   <td><Chip tone="info">{RELATION_TYPES[r.relation_type] ?? r.relation_type} →</Chip></td>
                   <td>{name(r.dst)}</td>
-                  <td className="t-caption text-tertiary">{r.origin === 'user_confirmed_candidate' ? '确认候选时记录' : '手动'}</td>
+                  <td className="t-caption text-tertiary">{r.evidence?'含原文依据':'个人记录，未用于图检索'}{r.valid_from&&<div>{r.valid_from} 起</div>}{r.valid_to&&<div>{r.valid_to} 起失效</div>}{r.source_version&&<button className="btn btn-xs" onClick={()=>open({version:r.source_version!,title:'关系的原文来源'})}>查看来源</button>}</td>
                   <td className="row-actions"><button className="btn btn-xs" disabled={busy} onClick={() => run(async () => { const d = await applyChange(matter, { type: 'remove_relation', relation_id: r.id }); if (d) refresh(); }, '已移除')}>移除</button></td>
                 </tr>
               ))}
@@ -746,8 +755,13 @@ function RelationsTab({ matter, snapshot: s }: { matter: string; snapshot: Snaps
         <Field label="起点"><select value={src} onChange={(e) => setSrc(e.target.value)} required><option value="">选择…</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}</select></Field>
         <Field label="关系"><select value={type} onChange={(e) => setType(e.target.value)}>{Object.entries(RELATION_TYPES).map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select></Field>
         <Field label="终点"><select value={dst} onChange={(e) => setDst(e.target.value)} required><option value="">选择…</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.label}</option>)}</select></Field>
-        <button className="btn" disabled={busy || !src || !dst || src === dst}>写入关系</button>
+        <Field label="起点资料中的原文依据（选填）"><select value={proof} onChange={(e)=>setProof(e.target.value)} disabled={!sourceVersion||sources.loading}><option value="">只保留为个人记录</option>{sources.data?.map((source)=><option key={source.evidence_id} value={source.evidence_id}>{source.unit_title||'原文'}：{source.excerpt.slice(0,100)}</option>)}</select></Field>
+        <Field label="生效日期（选填）"><input type="date" value={validFrom} onChange={(e)=>setValidFrom(e.target.value)} /></Field>
+        <Field label="失效日期（当天起不适用）"><input type="date" value={validTo} onChange={(e)=>setValidTo(e.target.value)} /></Field>
+        <Field label="关系的适用地域"><select value={region} onChange={(e)=>setRegion(e.target.value)}><option value="">未注明</option>{REGIONS.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></Field>
+        <button className="btn" disabled={busy || !src || !dst || src === dst||invalidDates}>写入关系</button>
       </form>
+      <ErrorLine text={invalidDates?'失效日期必须晚于生效日期。':sources.error} />
     </section>
   );
 }
