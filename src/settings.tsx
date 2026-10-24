@@ -307,16 +307,18 @@ const MODEL_ROLE: Record<string, string> = {
 function About() {
   const status = useLoad(() => api.status(), []);
   const models = useLoad(() => api.view<Models>('models'), []);
+  const gpu = models.data?.models.some(model => model.compute?.includes('CUDA'));
   return (
     <section className="stack">
       <dl className="figures">
         <div className="figure"><dt>版本</dt><dd>{status.data?.version}</dd></div>
         <div className="figure"><dt>阶段</dt><dd>{status.data?.milestone}<small>内部版</small></dd></div>
-        <div className="figure"><dt>运行</dt><dd>CPU<small>本机模型断网可用</small></dd></div>
+        <div className="figure"><dt>运行</dt><dd>{gpu ? 'CPU / 可用 GPU' : 'CPU'}<small>{gpu ? '重排通过设备自检后使用 GPU' : '本机模型断网可用'}</small></dd></div>
         <div className="figure"><dt>大模型常驻</dt><dd>{models.data ? `最多 ${models.data.residency.max_large} 个` : '—'}<small>{models.data && models.data.residency.max_large > 1 ? '≥16 GB 内存；回答核查模型提前加载' : '按需加载'}</small></dd></div>
       </dl>
       <h2 className="t-subtitle">随软件安装的九个辅助模型</h2>
       <p className="t-caption text-tertiary">内置模型随完整安装介质提供并在本机运行；应用不提供下载、导入、切换或卸载。安装文件损坏时请使用同版本完整介质修复。</p>
+      {gpu && <p className="t-caption text-secondary">重排加速已验证 RTX 3060 Laptop GPU；设备、显存或自检不满足要求时使用 CPU。其余辅助阶段继续使用 CPU，模型权重只有一份。</p>}
       {models.data ? (
         <div className="table-wrap">
           <table className="table">

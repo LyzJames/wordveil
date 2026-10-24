@@ -23,7 +23,7 @@ import './app.css';
 function App() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [info, setInfo] = useState<UnlockInfo | null>(null);
-  const load = useCallback(() => api.status().then(setStatus).catch((e) => setStatus({ milestone: 'M3', version: '', installation_ok: false, error: String(e) })), []);
+  const load = useCallback(() => api.status().then(setStatus).catch((e) => setStatus({ milestone: 'M4', version: '', installation_ok: false, error: String(e) })), []);
   useEffect(() => {
     load();
   }, [load]);

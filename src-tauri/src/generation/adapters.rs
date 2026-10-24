@@ -10,6 +10,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
 const RESPONSE_LIMIT: usize = 8 << 20;
+const MAX_STREAM_BLOCKS: usize = 128;
+
+fn stream_index(value: &Value) -> Result<usize> {
+    value.as_u64().and_then(|v| usize::try_from(v).ok()).filter(|v| *v < MAX_STREAM_BLOCKS)
+        .ok_or_else(|| Error::Remote("malformed_stream".into()))
+}
 
 /// Send one request. `on_delta` receives streamed text fragments (used only to
 /// report progress; the final text is the concatenation).
@@ -73,7 +79,7 @@ pub fn call(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenReq
         }
     };
     // Anthropic structured output arrives as the forced tool's input.
-    if profile.protocol == Protocol::AnthropicMessages {
+    if profile.protocol == Protocol::AnthropicMessages && output.finish == "tool_calls" {
         if let OutputMode::JsonSchema { name, .. } = &request.output {
             if let Some(call) = output.tool_calls.iter().find(|c| &c.name == name) {
                 output.text = call.arguments.clone();
@@ -84,13 +90,16 @@ pub fn call(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenReq
     if output.finish == "content_filter" {
         return Err(Error::Remote("refused".into()));
     }
+    if output.finish == "other" {
+        return Err(Error::Remote("generation_incomplete".into()));
+    }
     Ok(output)
 }
 
 /// Provider error bodies are untrusted text; only known codes are kept.
 fn refine_error(status: u16, body: Option<&Value>) -> &'static str {
     let code = body
-        .and_then(|b| b.get("error"))
+        .map(|b| b.get("error").unwrap_or(b))
         .and_then(|e| e.get("code").or_else(|| e.get("type")))
         .and_then(Value::as_str)
         .unwrap_or("");
@@ -231,7 +240,7 @@ fn chat_stream(reader: Box<dyn std::io::Read + Send>, cancel: &AtomicBool, on_de
             }
             if let Some(fragments) = choice["delta"]["tool_calls"].as_array() {
                 for fragment in fragments {
-                    let index = fragment["index"].as_u64().unwrap_or(0) as usize;
+                    let index = stream_index(&fragment["index"])?;
                     while calls.len() <= index {
                         calls.push((String::new(), String::new()));
                     }
@@ -252,7 +261,7 @@ fn chat_stream(reader: Box<dyn std::io::Read + Send>, cancel: &AtomicBool, on_de
         }
         Ok(true)
     })?;
-    if !done && out.finish == "other" {
+    if !done {
         return Err(Error::Remote("stream_incomplete".into()));
     }
     out.tool_calls = calls.into_iter().filter(|(name, _)| !name.is_empty()).map(|(name, arguments)| ToolCall { name, arguments }).collect();
@@ -469,7 +478,7 @@ fn anthropic_stream(reader: Box<dyn std::io::Read + Send>, cancel: &AtomicBool, 
                 out.model = payload["message"]["model"].as_str().map(str::to_owned);
             }
             "content_block_start" => {
-                let index = payload["index"].as_u64().unwrap_or(0) as usize;
+                let index = stream_index(&payload["index"])?;
                 while blocks.len() <= index {
                     blocks.push(None);
                 }
@@ -478,7 +487,7 @@ fn anthropic_stream(reader: Box<dyn std::io::Read + Send>, cancel: &AtomicBool, 
                 }
             }
             "content_block_delta" => {
-                let index = payload["index"].as_u64().unwrap_or(0) as usize;
+                let index = stream_index(&payload["index"])?;
                 match payload["delta"]["type"].as_str() {
                     Some("text_delta") => {
                         if let Some(text) = payload["delta"]["text"].as_str() {

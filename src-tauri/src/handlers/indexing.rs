@@ -449,6 +449,7 @@ pub fn rerank(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
     };
     let top: Vec<Value> = candidates.into_iter().take(RERANK_PAIRS).collect();
     let mut items = vec![];
+    let mut backend=json!({"device":"cpu","profile":ctx.services.key("reranker")?.profile});
     if !top.is_empty() {
         let texts: Vec<String> = {
             let vault = ctx.lock()?;
@@ -459,6 +460,7 @@ pub fn rerank(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
         };
         ctx.check()?;
         let scored = ctx.services.predict("reranker", &json!({"kind": "reranker", "question": question, "documents": texts}), ctx.cancel)?;
+        if !scored["backend"].is_null() {backend=scored["backend"].clone();}
         let scores = scored["scores"].as_array().ok_or(Error::Contract)?;
         if scores.len() != top.len() {
             return Err(Error::Contract);
@@ -471,7 +473,7 @@ pub fn rerank(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
     }
     let strong = items.iter().filter(|i| i["rerank_score"].as_f64().unwrap_or(0.0) >= 0.5).count();
     let take = strong.clamp(6, 10).min(items.len());
-    let payload = json!({"question_ref": question_ref, "candidate_set_id": candidate_set, "model": "Qwen3-Reranker-0.6B yes/no", "pairs": items.len(), "initial_take": take, "items": items});
+    let payload = json!({"question_ref": question_ref, "candidate_set_id": candidate_set, "model": "Qwen3-Reranker-0.6B yes/no", "backend":backend,"pairs": items.len(), "initial_take": take, "items": items});
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "EvidenceBundleRef", &payload)?;
     let mut parts = completed(Some(result));
     parts.evidence_refs = items.iter().take(take).filter_map(|i| i["evidence_id"].as_str().map(str::to_owned)).collect();

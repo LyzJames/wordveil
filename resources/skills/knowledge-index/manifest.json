@@ -32,7 +32,7 @@
       "rule": "remove 需已确认删除事件或明确用户动作"
     }
   ],
-  "version": "0.4.0-m3",
+  "version": "0.5.0-m4",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

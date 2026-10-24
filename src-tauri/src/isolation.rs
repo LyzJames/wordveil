@@ -188,7 +188,12 @@ impl IsolatedProcess {
         for key in ["TEMP","TMP","HOME","USERPROFILE","LOCALAPPDATA","APPDATA"] { environment.insert(key.into(),scratch_text.clone()); }
         // os.makedirs checks a directory's parent even when exist_ok=True. Give
         // vendor caches a child of the granted workdir, never an ungranted parent.
-        for key in ["HF_HOME","TORCH_HOME","PADDLE_HOME","PADDLE_PDX_CACHE_HOME","XDG_CACHE_HOME","NUMBA_CACHE_DIR","MPLCONFIGDIR"] { environment.insert(key.into(),scratch.join("cache").to_str().ok_or(Error::Contract)?.into()); }
+        for key in ["HF_HOME","TORCH_HOME","PADDLE_HOME","PADDLE_PDX_CACHE_HOME","XDG_CACHE_HOME","NUMBA_CACHE_DIR","MPLCONFIGDIR","CUDA_CACHE_PATH"] { environment.insert(key.into(),scratch.join("cache").to_str().ok_or(Error::Contract)?.into()); }
+        // Windows redirects the AppContainer TEMP into Packages/<profile>/AC/Temp.
+        // Inductor imports create a default cache there even for eager inference;
+        // the added profile path can exceed MAX_PATH in an ordinary nested vault.
+        // Keep it in this worker's granted scratch, without a system-policy change.
+        environment.insert("TORCHINDUCTOR_CACHE_DIR".into(),scratch.join("cache/torchinductor").to_str().ok_or(Error::Contract)?.into());
         for (key,value) in [("SystemRoot",root_text.clone()),("WINDIR",root_text.clone()),("PATH",format!("{};{}\\System32",executable.parent().ok_or(Error::Contract)?.display(),root_text)),("PYTHONNOUSERSITE","1".into()),("PYTHONUTF8","1".into()),("PYTHONDONTWRITEBYTECODE","1".into()),("HF_HUB_OFFLINE","1".into()),("TRANSFORMERS_OFFLINE","1".into()),("HF_HUB_DISABLE_TELEMETRY","1".into()),("DO_NOT_TRACK","1".into()),("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK","True".into()),("CUDA_VISIBLE_DEVICES","".into()),("TOKENIZERS_PARALLELISM","false".into()),("OMP_NUM_THREADS","4".into()),("MKL_NUM_THREADS","4".into())] { environment.insert(key.into(),value); }
         let mut block:Vec<u16>=environment.iter().flat_map(|(key,value)|wide(format!("{key}={value}"))).collect(); block.push(0);
         let mut process=std::ptr::null_mut(); let mut job=std::ptr::null_mut(); let mut pid=0;

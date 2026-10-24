@@ -4,5 +4,5 @@
   "generation_skill": "query-plan",
   "generation_purpose": "task_plan",
   "allowed_skills": [],
-  "version": "0.4.0-m3"
+  "version": "0.5.0-m4"
 }

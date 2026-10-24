@@ -37,7 +37,7 @@
       "rule": "不得编造地区/日期/身份"
     }
   ],
-  "version": "0.4.0-m3",
+  "version": "0.5.0-m4",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "generation",
   "input_schema": "input.schema.json",

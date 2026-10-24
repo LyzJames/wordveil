@@ -32,7 +32,7 @@ fn text_request(prompt: &str, output: OutputMode, stream: bool) -> GenRequest {
 }
 
 fn temporary(code: &str) -> bool {
-    matches!(code, "auth_failed" | "insufficient_balance" | "rate_limited" | "timeout" | "network" | "connection_failed" | "host_not_found" | "tls" | "server_error" | "server_busy" | "forbidden" | "model_not_found" | "redirect_refused")
+    matches!(code, "auth_failed" | "insufficient_balance" | "rate_limited" | "timeout" | "network" | "connection_failed" | "host_not_found" | "tls" | "server_error" | "server_busy" | "forbidden" | "model_not_found" | "redirect_refused" | "generation_incomplete" | "stream_incomplete")
 }
 
 fn failure(capability: &'static str, error: &Error) -> ProbeResult {
@@ -62,6 +62,7 @@ pub fn describe(code: &str) -> &'static str {
         "tls" => "TLS 证书或加密连接失败",
         "server_error" => "服务端错误",
         "server_busy" => "服务繁忙",
+        "generation_incomplete" => "服务未完成生成，请稍后重新自检",
         "forbidden" => "无权使用该资源或地区受限",
         "model_not_found" => "模型 ID 不存在或无权使用",
         "redirect_refused" => "服务返回了重定向，已拒绝跟随",

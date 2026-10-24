@@ -69,9 +69,9 @@ pub fn charge_live(host:&str,operation:&str)->Result<()>{
     let _guard=GUARD.lock().map_err(|_|Error::Integrity)?;
     let path=std::path::PathBuf::from(path);
     let mut report:Value=if path.exists(){serde_json::from_slice(&std::fs::read(&path)?)?}else{serde_json::json!({"limit":30,"requests":[]})};
-    // M3 has a separately authorized 50-request allowance. Older stage
+    // M3 and M4 each have a separately authorized 50-request allowance. Older stage
     // records retain their original 30-request hard ceiling.
-    let ceiling=if report["stage"]=="M3"{50}else{30};
+    let ceiling=if matches!(report["stage"].as_str(),Some("M3"|"M4")){50}else{30};
     let limit=report["limit"].as_u64().unwrap_or(0).min(ceiling);
     let rows=report["requests"].as_array_mut().ok_or(Error::Contract)?;
     if rows.len() as u64>=limit{return Err(Error::Budget);}

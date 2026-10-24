@@ -28,11 +28,17 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--model')
     parser.add_argument('--artifact',type=Path)
+    parser.add_argument('--backend',choices=['cpu','cuda_or_cpu','cpu_fallback'],default='cpu')
+    parser.add_argument('--backend-profile',type=Path)
     parser.add_argument('--service',choices=['local','orchestrator'],help='Run the non-model local service (parsing, OCR geometry, chunking, finance) or the LangGraph orchestrator of one root task.')
     parser.add_argument('--tokenizer',type=Path,help='Core-selected read-only Qwen tokenizer.json for chunk token counts.')
     parser.add_argument('--diagnose-installation',action='store_true',help='Return model-load diagnostics before accepting any business input (M0 verification).')
     parser.add_argument('--installation-fixture',type=Path,help='With installation diagnostics, run one core-selected synthetic fixture and exit without reading stdin.')
     args=parser.parse_args()
+    if args.backend!='cpu' and (args.model!='reranker' or not args.backend_profile or args.service):
+        parser.error('The qualified backend is restricted to the reranker')
+    if args.backend=='cpu' and args.backend_profile:
+        parser.error('CPU reference workers take no backend policy')
     if args.service:
         if args.model or args.artifact or args.installation_fixture:
             parser.error('The local service takes no model arguments')
@@ -46,14 +52,18 @@ def main():
         parser.error('--model and --artifact are required')
     if args.installation_fixture and not args.diagnose_installation:
         parser.error('Installation fixtures require explicit installation diagnostics')
-    os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK='True',CUDA_VISIBLE_DEVICES='',TOKENIZERS_PARALLELISM='false')
+    os.environ.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK='True',CUDA_VISIBLE_DEVICES='0' if args.backend=='cuda_or_cpu' else '',TOKENIZERS_PARALLELISM='false')
     protocol=sys.stdout.buffer
     # Vendor diagnostics may contain inputs. They never enter ordinary app logs.
     with open(os.devnull,'w',encoding='utf-8') as sink:
         try:
             with contextlib.redirect_stdout(sink),contextlib.redirect_stderr(sink):
                 from agent_core.inference import CpuModel
-                model=CpuModel(args.model,args.artifact)
+                if args.backend!='cpu':
+                    from agent_core.reranker_backend import RerankerBackend
+                    model=RerankerBackend(args.artifact,args.backend_profile,force_cpu=args.backend=='cpu_fallback')
+                else:
+                    model=CpuModel(args.model,args.artifact)
         except Exception as error:
             result={'event':'error','code':'model_load_failed','error_type':type(error).__name__}
             if args.diagnose_installation:
@@ -74,7 +84,7 @@ def main():
                 import traceback
                 emit(protocol,{'event':'error','code':'installation_fixture_failed','installation_diagnostics':traceback.format_exc(limit=14)[-6500:]})
                 return 1
-        emit(protocol,{'event':'ready','model_id':args.model})
+        emit(protocol,{'event':'ready','model_id':args.model,'backend':model.metadata() if args.backend!='cpu' else {'device':'cpu'}})
         while True:
             line=sys.stdin.buffer.readline(MAX_REQUEST+1)
             if not line:

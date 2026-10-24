@@ -24,7 +24,8 @@ impl Installation {
         let value:Self=serde_json::from_slice(&bytes)?;
         let identities:std::collections::BTreeSet<_>=value.artifacts.iter().map(|v|v.key.model.as_str()).collect();
         let fixed:std::collections::BTreeSet<_>=["embedding","reranker","grounding","ocr-det","uvdoc","textline-ori","ocr-rec","doc-ori","asr"].into_iter().collect();
-        if value.schema_version!="lvjin.installation/1" || value.milestone!=crate::MILESTONE || !value.cpu_only || value.artifacts.len()!=9 || identities!=fixed || value.worker_directory!="runtimes/worker" || value.runtime_files.is_empty(){return Err(Error::Integrity);}
+        let policies=value.artifacts.iter().filter(|a|crate::worker_process::qualified_reranker_policy(&a.key)).count();
+        if value.schema_version!="lvjin.installation/1" || value.milestone!=crate::MILESTONE || value.cpu_only!=(policies==0) || policies>1 || value.artifacts.iter().any(|a|a.key.device!="cpu"&&!crate::worker_process::qualified_reranker_policy(&a.key)) || value.artifacts.len()!=9 || identities!=fixed || value.worker_directory!="runtimes/worker" || value.runtime_files.is_empty(){return Err(Error::Integrity);}
         Ok(value)
     }
     pub fn pool(self,root:&Path,work:&Path)->Result<ModelPool> {

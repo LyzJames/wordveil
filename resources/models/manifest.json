@@ -111,7 +111,7 @@
       "storage_tensor_dtypes": {
         "BF16": 310
       },
-      "compute_profile": "CPU float32; no GPU provider",
+      "compute_profile": "CPU FP32；已验证 RTX 3060 Laptop GPU 可用时使用 CUDA 12.6 FP32，失败回退 CPU；同一份权重",
       "development_evidence": "quality-reranker-original-development.json",
       "development_evidence_sha256": "c122741b7e3a3638d4576a62bd2bc4945bb3ec867cd3a446b437bb44a18fe4f9",
       "candidate_decisions": [

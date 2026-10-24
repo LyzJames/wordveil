@@ -47,7 +47,7 @@
       "rule": "默认空；获准合同录音/视频及时间范围由核心解析"
     }
   ],
-  "version": "0.4.0-m3",
+  "version": "0.5.0-m4",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local-analysis",
   "input_schema": "input.schema.json",

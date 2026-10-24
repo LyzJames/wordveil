@@ -5,10 +5,10 @@ import, OCR, speech recognition, retrieval, verification and calculation run on
 the local computer; documents are stored encrypted (SQLCipher). Generated
 answers use a model service the user connects and approves per request.
 
-The M3 implementation (0.4.0) retains all 30 skill handlers, approved
+The M4 implementation (0.5.0) retains all 30 skill handlers, approved
 DeepSeek Search/Fetch, versioned official public knowledge packages, a
 read-only MCP client and the independent `lvjin-public-mcp` business service.
-The public service uses only the six bundled mainland Chinese official texts;
+The public service uses only the 20 bundled mainland Chinese official texts;
 it never opens the user's encrypted vault. External operations require their
 own immutable approval, and arbitrary local stdio programs are not enabled.
 Installation and completion evidence is kept in the documentation workspace.
@@ -27,7 +27,7 @@ FP32 inference remain fixed. Test results, limits and actual installed-media
 acceptance are recorded separately; implementation does not imply every
 release gate has passed.
 
-Post-acceptance source fixes (2026-10-24) add a vault-scoped Q&A history
+M4 includes a vault-scoped Q&A history
 browser with search, mainland date filters and cursor pagination. Opening a
 saved answer, citation or feedback is read-only and never restarts generation.
 The financial engine reports one annual rate only when a verified root and
@@ -35,6 +35,23 @@ one cash-flow sign change establish uniqueness; a bounded grid cannot certify
 other cases. Saved calculations with unproven uniqueness are guarded on read,
 preserving the original encrypted audit record. The previously accepted M3
 installation media remains a separate, unchanged historical deliverable.
+
+The public package covers common mainland personal contracts and housing,
+lending, labor, consumer protection, insurance, marriage/inheritance and
+individual income tax. Official source URLs, amendment/effective dates,
+verification dates, text hashes and coverage limits travel with every text.
+Tax-rate annexes are retained; an old labor interpretation with a partially
+repealed provision and a proposed insurance-law revision are excluded.
+
+One CUDA-capable offline runtime preserves the nine selected model artefacts.
+Only reranking may use the qualified RTX 3060 Laptop GPU, with FP32 IEEE
+arithmetic, a numerical self-check and micro-batches of two. Unsupported
+devices, unavailable CUDA, low VRAM and execution errors use CPU. The core
+waits for a dead GPU worker before one local CPU retry and keeps one owner per
+artefact. Other models remain CPU. No driver or runtime is downloaded at use.
+Generation adapters reject truncated/unfinished streams and bound streamed
+tool indexes before allocation. Actual quality, timing, installed fallback and
+upgrade/rollback evidence are recorded separately in `docs/reports/m4`.
 
 ## Layout
 

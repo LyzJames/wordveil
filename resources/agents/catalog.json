@@ -1,6 +1,6 @@
 {
   "schema_version": "lvjin.roles/1",
-  "version": "0.4.0-m3",
+  "version": "0.5.0-m4",
   "roles": [
     {
       "id": "planner",
@@ -8,7 +8,7 @@
       "generation_skill": "query-plan",
       "generation_purpose": "task_plan",
       "allowed_skills": [],
-      "version": "0.4.0-m3"
+      "version": "0.5.0-m4"
     },
     {
       "id": "evidence-researcher",
@@ -22,7 +22,7 @@
         "evidence-read",
         "web-research"
       ],
-      "version": "0.4.0-m3"
+      "version": "0.5.0-m4"
     },
     {
       "id": "legal-analyst",
@@ -34,7 +34,7 @@
         "graph-relations",
         "evidence-read"
       ],
-      "version": "0.4.0-m3"
+      "version": "0.5.0-m4"
     },
     {
       "id": "finance-analyst",
@@ -45,7 +45,7 @@
         "finance-calculate",
         "evidence-read"
       ],
-      "version": "0.4.0-m3"
+      "version": "0.5.0-m4"
     },
     {
       "id": "media-reader",
@@ -59,7 +59,7 @@
         "audio-review",
         "media-decode"
       ],
-      "version": "0.4.0-m3",
+      "version": "0.5.0-m4",
       "tool_input_constraints": {
         "image-review": {
           "mode": "extract_text"
@@ -80,7 +80,7 @@
         "answer-grounding",
         "knowledge-search"
       ],
-      "version": "0.4.0-m3"
+      "version": "0.5.0-m4"
     },
     {
       "id": "synthesizer",
@@ -91,7 +91,7 @@
         "evidence-read",
         "answer-grounding"
       ],
-      "version": "0.4.0-m3"
+      "version": "0.5.0-m4"
     }
   ],
   "limits": {

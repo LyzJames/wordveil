@@ -173,6 +173,7 @@ impl Layout {
 pub struct Services {
     pub layout: Layout,
     pool: Mutex<Option<ModelPool>>,
+    reranker_cpu_only: AtomicBool,
     pub local: LocalWorker,
     pub media: MediaTools,
     pub log: EventLog,
@@ -216,6 +217,7 @@ impl Services {
             external_rate: crate::network::RateLimits::default(),
             public_mcp: Mutex::new(None),
             pool: Mutex::new(None),
+            reranker_cpu_only: AtomicBool::new(false),
             layout,
         })
     }
@@ -238,7 +240,9 @@ impl Services {
     }
 
     pub fn key(&self, model: &str) -> Result<ModelKey> {
-        self.layout.artifacts.iter().find(|a| a.key.model == model).map(|a| a.key.clone()).ok_or(Error::Integrity)
+        let key=self.layout.artifacts.iter().find(|a| a.key.model == model).map(|a| a.key.clone()).ok_or(Error::Integrity)?;
+        if self.reranker_cpu_only.load(Ordering::Acquire) {if let Some(cpu)=crate::worker_process::reranker_cpu_key(&key){return Ok(cpu);}}
+        Ok(key)
     }
 
     pub fn lease(&self, model: &str, cancellation: &AtomicBool) -> Result<ModelLease> {
@@ -259,8 +263,21 @@ impl Services {
     /// One fixed-model inference through the shared owner (singleflight, one
     /// heavy stage). The lease is released afterwards (idle TTL applies).
     pub fn predict(&self, model: &str, request: &Value, cancellation: &AtomicBool) -> Result<Value> {
-        let lease = self.lease(model, cancellation)?;
-        lease.predict(request, cancellation)
+        let key=self.key(model)?;
+        let result=(||{let lease=self.pool()?.acquire(&key,cancellation,Instant::now()+Duration::from_secs(600))?;lease.predict(request,cancellation)})();
+        // Only this pure, local stage may retry once after a GPU worker dies.
+        // Failed leases shut down and wait before the same artefact's CPU key
+        // can acquire its single owner. Integrity/cancellation never retries.
+        let recoverable=matches!(&result,Err(Error::Io(_))) || matches!(&result,Err(Error::Worker(code)) if code=="model_worker_start_failed");
+        if crate::worker_process::qualified_reranker_policy(&key) && recoverable && !cancellation.load(Ordering::Acquire) {
+            self.reranker_cpu_only.store(true,Ordering::Release);
+            let cpu=crate::worker_process::reranker_cpu_key(&key).ok_or(Error::Integrity)?;
+            let lease=self.pool()?.acquire(&cpu,cancellation,Instant::now()+Duration::from_secs(600))?;
+            let mut output=lease.predict(request,cancellation)?;
+            output["backend"]["fallback_reason"]=serde_json::json!("gpu_worker_failed");
+            return Ok(output);
+        }
+        result
     }
 
     /// A fresh private scratch directory for one isolated process.

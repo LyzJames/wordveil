@@ -18,6 +18,23 @@ pub struct CpuArtifact {
     pub files:Vec<ArtifactFile>,
 }
 
+/// A locked execution policy, not a claim that every worker uses a GPU. The
+/// ready/result metadata records the actual device. Both paths share one owner
+/// and one artefact; the CPU numerical reference remains independently tested.
+pub fn qualified_reranker_policy(key:&ModelKey)->bool {
+    key.model=="reranker" && key.device=="cuda_or_cpu"
+        && key.engine=="transformers-5.20.0-torch-2.14.1-cu126"
+        && key.profile=="reranker-fp32-ieee-cuda86-or-cpu-v1"
+}
+
+pub fn reranker_cpu_key(key:&ModelKey)->Option<ModelKey> {
+    if !qualified_reranker_policy(key) {return None;}
+    Some(ModelKey{device:"cpu".into(),profile:"reranker-fp32-ieee-cpu-microbatch2-v1".into(),..key.clone()})
+}
+fn reranker_cpu_policy(key:&ModelKey)->bool {
+    key.model=="reranker" && key.device=="cpu" && key.engine=="transformers-5.20.0-torch-2.14.1-cu126" && key.profile=="reranker-fp32-ieee-cpu-microbatch2-v1"
+}
+
 /// How an isolated worker process is started. Production uses only the frozen,
 /// hash-verified worker. The source launcher exists only in dev/test builds.
 #[derive(Clone)]
@@ -78,9 +95,13 @@ impl WorkerInstallation {
         let work_root=work_root.canonicalize()?;
         let mut selected=BTreeMap::new();
         for artifact in artifacts {
-            if artifact.key.device!="cpu" || artifact.key.profile.is_empty() || artifact.files.is_empty() || !matches!(artifact.key.model.as_str(),"embedding"|"reranker"|"grounding"|"asr"|"ocr-det"|"ocr-rec"|"uvdoc"|"textline-ori"|"doc-ori") { return Err(Error::Integrity); }
+            if (artifact.key.device!="cpu" && !qualified_reranker_policy(&artifact.key)) || artifact.key.profile.is_empty() || artifact.files.is_empty() || !matches!(artifact.key.model.as_str(),"embedding"|"reranker"|"grounding"|"asr"|"ocr-det"|"ocr-rec"|"uvdoc"|"textline-ori"|"doc-ori") { return Err(Error::Integrity); }
             let directory=root.join(&artifact.directory).canonicalize()?;
             if !directory.starts_with(&root) { return Err(Error::Integrity); }
+            if let Some(key)=reranker_cpu_key(&artifact.key) {
+                let fallback=CpuArtifact{key:key.clone(),..artifact.clone()};
+                if selected.insert(key,fallback).is_some() {return Err(Error::Integrity);}
+            }
             if selected.insert(artifact.key.clone(),artifact).is_some() { return Err(Error::Integrity); }
         }
         Ok(Self { root,launcher,work_root,artifacts:selected,worker_files })
@@ -118,7 +139,17 @@ impl WorkerInstallation {
         let scratch=self.work_root.join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir(&scratch)?;
         let argument=strip(&directory)?;
-        let policy=self.launcher.policy(vec!["--model".into(),key.model.clone(),"--artifact".into(),argument],vec![directory],scratch.clone(),8usize*1024*1024*1024)?;
+        let mut arguments=vec!["--model".into(),key.model.clone(),"--artifact".into(),argument];
+        let mut runtime=vec![directory];
+        if qualified_reranker_policy(key) || reranker_cpu_policy(key) {
+            let profile=self.root.join("resources/models/reranker-backend.json").canonicalize()?;
+            if !profile.starts_with(&self.root) {return Err(Error::Integrity);}
+            let actual=std::fs::read(&profile)?;
+            if Sha256::digest(&actual)!=Sha256::digest(include_bytes!("../../resources/models/reranker-backend.json")) {return Err(Error::Integrity);}
+            arguments.extend(["--backend".into(),if qualified_reranker_policy(key){"cuda_or_cpu".into()}else{"cpu_fallback".into()},"--backend-profile".into(),strip(&profile)?]);
+            runtime.push(profile);
+        }
+        let policy=self.launcher.policy(arguments,runtime,scratch.clone(),8usize*1024*1024*1024)?;
         let mut process=IsolatedProcess::spawn(policy)?;
         // A worker that exits before reporting ready (memory pressure, broken
         // runtime) is a start failure, not an integrity fault of the files.
@@ -128,7 +159,13 @@ impl WorkerInstallation {
             Err(_)=>{ let _=process.terminate(); let _=std::fs::remove_dir_all(&scratch); return Err(Error::Worker("model_worker_start_failed".into())); }
         };
         if ready.get("event").and_then(Value::as_str)!=Some("ready") || ready.get("model_id").and_then(Value::as_str)!=Some(&key.model) {
+            if qualified_reranker_policy(key) && ready["event"]=="error" && ready["code"]=="model_load_failed" {
+                process.terminate()?;return Err(Error::Worker("model_worker_start_failed".into()));
+            }
             process.terminate()?; return Err(Error::Integrity);
+        }
+        if (qualified_reranker_policy(key)||reranker_cpu_policy(key)) && (ready["backend"]["policy"]!="reranker-fp32-ieee-cuda86-or-cpu-v1" || !matches!(ready["backend"]["device"].as_str(),Some("cpu"|"cuda:0")) || (reranker_cpu_policy(key)&&ready["backend"]["device"]!="cpu")) {
+            process.terminate()?;return Err(Error::Integrity);
         }
         Ok(Box::new(CpuWorker { process,model_id:key.model.clone(),stopped:false,scratch }))
     }

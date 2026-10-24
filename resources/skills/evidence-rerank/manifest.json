@@ -35,7 +35,7 @@
       "rule": "只能引用已登记问题维度"
     }
   ],
-  "version": "0.4.0-m3",
+  "version": "0.5.0-m4",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

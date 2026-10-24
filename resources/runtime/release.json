@@ -1,20 +1,29 @@
 {
-  "schema_version": "lvjin.m3-release/1",
-  "version": "0.4.0-m3",
-  "milestone": "M3",
-  "business_workflows_implemented": "M2 baseline plus source-backed bounded graph, date/region scopes, partitioned F32 index, durable index batches and sequential document comparison with cell recovery",
+  "schema_version": "lvjin.m4-release/1",
+  "version": "0.5.0-m4",
+  "milestone": "M4",
+  "business_workflows_implemented": "M3 baseline plus 20 verified official texts across seven personal legal/financial scenarios, persistent encrypted Q&A history and conservative finance/2 uniqueness guards; current protocol stream completion and allocation bounds",
   "generation_connection": "user-configured text/native image/audio generation, seven narrow roles, LangGraph flows, source grounding; explicit egress approval",
   "network_requests": "public search/fetch, public knowledge and read-only MCP separately approved; workers stay in no-network AppContainers",
   "automatic_downloads": false,
   "updates": "whole offline installer; no updater, network or signing key embedded",
-  "signing": "M3 personal test build is unsigned; external release requires an owned Authenticode certificate and a signed media manifest",
-  "cpu": "Windows x64, AVX2/FMA, CPU FP32, 4 threads; GPU disabled",
+  "signing": "M4 personal test build is unsigned; external release requires an owned Authenticode certificate and a signed media manifest",
+  "cpu": "Windows x64, AVX2/FMA, CPU FP32, 4 threads, mandatory fallback; CPU numerical reference retained",
   "minimum_test_profile": {
     "os": "Windows 11 x64",
     "physical_ram_bytes": 8589934592,
     "page_file_required": true,
     "threads": 4,
     "cpu_target": "i9-12900H host / VMware 4-vCPU profile; other CPUs have no measured latency guarantee"
+  },
+  "optional_reranker_backend": {
+    "policy": "reranker-fp32-ieee-cuda86-or-cpu-v1",
+    "qualified_device": "NVIDIA GeForce RTX 3060 Laptop GPU",
+    "runtime": "torch 2.14.1+cu126",
+    "precision": "FP32 IEEE",
+    "weights": "same selected reranker artefact; no second copy",
+    "cpu_reference": "same Torch source revision and exactly equal compared CPU outputs; embedding profile remains CPU",
+    "fallback": "unsupported hardware, unavailable runtime, insufficient VRAM, numerical check or device failure -> CPU; dead worker stopped before one CPU retry"
   },
   "recommended_ram_bytes": 17179869184,
   "job_process_commit_limit_bytes": 8589934592,
@@ -400,6 +409,6 @@
   ],
   "performance_scope": "Model artefacts are unchanged from M0; the M0 cold-load/inference probes apply to the same files. M1 business-flow timings are in the M1 benchmark report, not embedded here.",
   "ffmpeg_version": "9.0.2",
-  "webview2_fixed_version": "155.0.4283.62",
+  "webview2_fixed_version": "156.0.4314.42",
   "vc_runtime_version": "14.44.35112"
 }

@@ -2,7 +2,7 @@
 
 /// Application version (the validation programs report it).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const MILESTONE: &str = "M3";
+pub const MILESTONE: &str = "M4";
 
 pub mod crypto;
 pub mod durable;
