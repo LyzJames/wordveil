@@ -13,7 +13,7 @@ pub fn credential_store(ctx: &Ctx) -> Result<CredentialStore> {
 pub fn check_search_connection(connection:&connections::Connection)->Result<()>{
     let endpoint=&connection.profile.endpoint;
     let official=connection.profile.provider==generation::Provider::Deepseek && endpoint.scheme=="https" && endpoint.host=="api.deepseek.com" && endpoint.port.is_none_or(|p|p==443) && matches!(endpoint.base_path.as_str(),""|"/v1");
-    if connection.status!="active" || (!official && !(cfg!(feature="m0-harness")&&endpoint.is_loopback())){return Err(Error::Denied);}
+    if connection.status!="active" || (!official && !(cfg!(feature="test-harness")&&endpoint.is_loopback())){return Err(Error::Denied);}
     Ok(())
 }
 pub fn source(vault: &Vault, id: &str) -> Result<(connections::Connection, Vec<String>)> {
@@ -184,7 +184,7 @@ pub fn settings(ctx:&Ctx,invocation:&Invocation,draft_id:&str)->Result<Option<Va
             check_search_connection(&connection)?;
             let domains:Vec<String>=serde_json::from_value(value["domains"].clone())?;
             let domains=network::checked_domains(&domains)?;
-            let id=vault.register("ApprovedSourceRef","m2-b",Some(&connection.id))?;
+            let id=vault.register("ApprovedSourceRef", "0.3.0-b",Some(&connection.id))?;
             vault.db().execute("INSERT INTO network_sources(id,connection_id,domains,enabled,created_at) VALUES(?,?,?,1,?)",params![id,connection.id,serde_json::to_string(&domains)?,now_rfc3339()])?;
             source(&vault,&id)?;json!({"source_id":id})
         }
@@ -196,10 +196,10 @@ pub fn settings(ctx:&Ctx,invocation:&Invocation,draft_id:&str)->Result<Option<Va
             let timeout=value["timeout_s"].as_u64().unwrap_or(30);
             if !(5..=120).contains(&timeout){return Err(Error::Contract);}
             let proxy=match value["proxy"].as_str().unwrap_or("system"){"none"=>"none","system"=>"system",_=>return Err(Error::Contract)};
-            let id=vault.register("ExternalConnectionRef","m2-b",None)?;
+            let id=vault.register("ExternalConnectionRef", "0.3.0-b",None)?;
             vault.db().execute("INSERT INTO external_connections(id,name,endpoint,credential,timeout_s,proxy,enabled,created_at) VALUES(?,?,?,?,?,?,1,?)",params![id,name,endpoint.base_url(),credential,timeout as i64,proxy,now_rfc3339()])?;
             let descriptor=json!({"name":"__catalog__","inputSchema":{"type":"object","properties":{},"additionalProperties":false}});
-            let binding=vault.register("ApprovedToolBindingRef","m2-b",Some(&id))?;
+            let binding=vault.register("ApprovedToolBindingRef", "0.3.0-b",Some(&id))?;
             vault.db().execute("INSERT INTO external_bindings(id,connection_id,name,descriptor,schema_hash,server_hash,created_at) VALUES(?,?,'__catalog__',?,?,'unbound',?)",params![binding,id,descriptor.to_string(),mcp::descriptor_hash(&descriptor),now_rfc3339()])?;
             json!({"connection_id":id})
         }
@@ -218,7 +218,7 @@ pub fn settings(ctx:&Ctx,invocation:&Invocation,draft_id:&str)->Result<Option<Va
             if enabled!=1{return Err(Error::Denied);}
             let hash=mcp::descriptor_hash(tool);
             let server_hash=payload["exchange"]["server_hash"].as_str().ok_or(Error::Contract)?;
-            let id=vault.register("ApprovedToolBindingRef","m2-b",Some(connection))?;
+            let id=vault.register("ApprovedToolBindingRef", "0.3.0-b",Some(connection))?;
             vault.db().execute("INSERT INTO external_bindings(id,connection_id,name,descriptor,schema_hash,server_hash,created_at) VALUES(?,?,?,?,?,?,?)",params![id,connection,name,tool.to_string(),hash,server_hash,now_rfc3339()])?;
             json!({"binding_id":id,"schema_hash":hash})
         }

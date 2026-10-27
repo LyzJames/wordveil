@@ -5,7 +5,7 @@ import { api, applyChange, commitChange, ensure, KINDS, money, prepareChange, ty
 import { ExportButton } from './export';
 import { Icon } from './icons';
 import { useSession } from './session';
-import { Amount, Chip, Empty, ErrorLine, Field, Modal, useAction } from './ui';
+import { Amount, Callout, Chip, Empty, ErrorLine, Field, Modal, useAction } from './ui';
 
 const KIND_RULE_DEFAULTS = [
   { contains: '本人账户转账', kind: 'transfer' },
@@ -286,7 +286,7 @@ function TableMapping({ matter, snapshot: s, onClose, onDone }: { matter: string
   );
 }
 
-type CalcResult = { calculation_type: string; result: Record<string, any>; assumptions_used: Record<string, string>; engine: string };
+type CalcResult = { calculation_type: string; result: Record<string, any>; assumptions_used: Record<string, string>; engine: string; requires_recalculation?: boolean; recalculation_reason?: string };
 type CalcOutcome = { envelope: string; payload: CalcResult; status: string; warnings: string[]; key: string; inputs: number };
 
 const CALC_TYPES: Record<string, string> = { sum: '收支汇总', budget: '月度预算与异常', loan: '借款对账', annualized: '年化利率（XIRR）' };
@@ -349,6 +349,7 @@ export function CalcTab({ matter, snapshot: s }: { matter: string; snapshot: Sna
         <div className="grid-2">
           <Field label="开始（可选）"><input type="date" value={period.start} onChange={(e) => setPeriod({ ...period, start: e.target.value })} /></Field>
           <Field label="结束（可选）"><input type="date" value={period.end} onChange={(e) => setPeriod({ ...period, end: e.target.value })} /></Field>
+          {(type === 'loan' || type === 'annualized') && <p className="t-caption text-secondary">仅计算起止日期内的记录，包含边界当天。借款期初本金需要纳入所选记录；期间外记录不计入余额或年化收益率，缺少必要收付款时会说明无法计算。</p>}
         </div>
         {(type === 'sum' || type === 'budget') && (
           <>
@@ -425,6 +426,7 @@ function CalcView({ result, name, stale, onRecalculate, busy }: { result: CalcOu
   const currency = useMemo(() => Object.keys(r.by_currency ?? {})[0] ?? r.currency ?? 'CNY', [r]);
   const unit = currency === 'CNY' ? '元' : currency;
   const c = r.by_currency?.[currency];
+  if (result.payload.requires_recalculation) return <Callout tone="warning" title="需要重新计算">{result.payload.recalculation_reason}<button className="btn" onClick={onRecalculate} disabled={busy}>重新计算</button></Callout>;
   return (
     <section aria-labelledby="calc-result">
       <div className="section-head">

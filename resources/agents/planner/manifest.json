@@ -1,8 +1,0 @@
-{
-  "id": "planner",
-  "title": "任务规划者",
-  "generation_skill": "query-plan",
-  "generation_purpose": "task_plan",
-  "allowed_skills": [],
-  "version": "0.5.0-m4"
-}

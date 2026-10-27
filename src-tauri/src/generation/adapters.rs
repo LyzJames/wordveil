@@ -20,6 +20,10 @@ fn stream_index(value: &Value) -> Result<usize> {
 /// Send one request. `on_delta` receives streamed text fragments (used only to
 /// report progress; the final text is the concatenation).
 pub fn call(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool, on_delta: &mut dyn FnMut(&str)) -> Result<GenResponse> {
+    call_options(profile,key,request,cancel,on_delta,super::options::Effort::Auto,false)
+}
+
+pub fn call_options(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenRequest, cancel: &AtomicBool, on_delta: &mut dyn FnMut(&str), effort:super::options::Effort, helper:bool) -> Result<GenResponse> {
     if cancel.load(Ordering::Acquire) { return Err(Error::Cancelled); }
     // The connection's own output cap bounds every request (cost control).
     let capped;
@@ -29,11 +33,12 @@ pub fn call(profile: &Profile, key: Option<&Zeroizing<String>>, request: &GenReq
     } else {
         request
     };
-    let body = match profile.protocol {
+    let mut body = match profile.protocol {
         Protocol::ChatCompletions => chat_body(profile, request),
         Protocol::Responses => responses_body(profile, request),
         Protocol::AnthropicMessages => anthropic_body(profile, request),
     };
+    super::options::apply(&mut body,profile,effort,helper)?;
     let body = serde_json::to_vec(&body)?;
     let bearer;
     let mut headers: Vec<(&str, &str)> = vec![];
@@ -410,8 +415,8 @@ fn anthropic_body(profile: &Profile, request: &GenRequest) -> Value {
                 .filter_map(|part| match part {
                     Part::Text(text) => Some(json!({"type": "text", "text": text})),
                     Part::ImagePng(url) => {
-                        let data = url.strip_prefix("data:image/png;base64,")?;
-                        Some(json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}))
+                        let (mime,data)=if let Some(data)=url.strip_prefix("data:image/png;base64,"){("image/png",data)}else{("image/jpeg",url.strip_prefix("data:image/jpeg;base64,")?)};
+                        Some(json!({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}}))
                     }
                     // The Messages API has no audio input; probes report it unsupported.
                     Part::AudioWav(_) => None,

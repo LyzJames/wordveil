@@ -90,7 +90,7 @@ impl CredentialStore {
     }
 
     /// Seal with the format-1 public entropy (only for the migration tests).
-    #[cfg(feature = "m0-harness")]
+    #[cfg(feature = "test-harness")]
     pub fn put_legacy_for_test(&self, credential: &str, secret: &Zeroizing<String>) -> Result<()> {
         let sealed = protect(secret.as_bytes(), &self.legacy)?;
         std::fs::create_dir_all(&self.directory)?;

@@ -40,10 +40,10 @@ fn apply(ctx:&Ctx,invocation:&Invocation,source:&str,package:&Package,hash:&str)
             vault.db().execute("UPDATE trusted_artifacts SET root=? WHERE target=?",params![invocation.root_id(),collection])?;
             (id,collection)
         }else{
-            let collection=vault.register("PublicKnowledgeCollectionRef","m2-b",None)?;
+            let collection=vault.register("PublicKnowledgeCollectionRef", "0.3.0-b",None)?;
             let now=now_rfc3339();
             vault.db().execute("INSERT INTO matters(id,title,matter_type,region,status,is_root,created_at,updated_at) VALUES(?,?,'public_knowledge',?,'importing',0,?,?)",params![collection,format!("{} · {}",package.title,package.version),package.region,now,now])?;
-            let id=vault.register("KnowledgePackageRef","m2-b",Some(&collection))?;
+            let id=vault.register("KnowledgePackageRef", "0.3.0-b",Some(&collection))?;
             vault.db().execute("INSERT INTO knowledge_packages(id,package_id,version,sha256,collection_id,source_id,state,metadata,created_at) VALUES(?,?,?,?,?,?,'pending',?,?)",params![id,package.package_id,package.version,hash,collection,source,package.summary().to_string(),now])?;
             (id,collection)
         }
@@ -59,7 +59,7 @@ fn apply(ctx:&Ctx,invocation:&Invocation,source:&str,package:&Package,hash:&str)
                 let vault=ctx.lock()?;
                 let existing:Option<String>=vault.db().query_row("SELECT id FROM trusted_artifacts WHERE target=? AND display_name=?",params![collection,display],|r|r.get(0)).optional()?;
                 if let Some(id)=existing{id}else{
-                    let id=vault.register("OfflinePackageArtifactRef","m2-b",Some(&collection))?;
+                    let id=vault.register("OfflinePackageArtifactRef", "0.3.0-b",Some(&collection))?;
                     let text=doc.import_text();
                     let blob=vault.put_blob(&id,"public_import",text.as_bytes())?;
                     vault.db().execute("INSERT INTO trusted_artifacts(id,root,target,display_name,blob,bytes,sha256) VALUES(?,?,?,?,?,?,?)",params![id,invocation.root_id(),collection,display,blob,text.len() as i64,sha256_hex(text.as_bytes())])?;

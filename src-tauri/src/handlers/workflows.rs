@@ -32,7 +32,7 @@ pub fn create_scope_with(ctx: &Ctx, matters: &[String], versions: &[String],poli
         let public=statement.query_map([],|r|r.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?;
         for collection in public {if !matters.contains(&collection){matters.push(collection);}}
     }
-    let id = vault.register("ScopeRef", "m1", None)?;
+    let id = vault.register("ScopeRef", "0.2.0", None)?;
     vault.db().execute("INSERT INTO scopes(id,matters,versions,policy,created_at) VALUES(?,?,?,?,?)", params![id, serde_json::to_string(&matters)?, serde_json::to_string(versions)?,serde_json::to_string(&policy)?, now_rfc3339()])?;
     Ok(id)
 }
@@ -103,7 +103,7 @@ pub fn retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "RetrievalResultRef", &payload)?;
     parts.data_ref = Some(result);
     parts.evidence_refs = found.evidence;
-    if parts.evidence_refs.is_empty() && !parts.warnings.iter().any(|(code, _)| code == "insufficient_evidence") {
+    if parts.evidence_refs.is_empty() && !found.process.iter().any(|p| p["status"] != "completed") && !parts.warnings.iter().any(|(code, _)| code == "insufficient_evidence" || code == "retrieval_failed") {
         warn(&mut parts, "insufficient_evidence", "依据不足：所选范围内没有检索到相关原文。");
     }
     if wants_answer && !can_generate {
@@ -207,7 +207,7 @@ fn answer_flow(
     for code in out["warnings"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
         if let Some(message) = super::flows::flow_warning(code) {
             if !parts.warnings.iter().any(|(c, _)| c == code) {
-                warn(parts, code, message);
+                warn(parts, code, &message);
             }
         }
     }
@@ -259,7 +259,7 @@ pub(crate) fn deliver_answer(ctx: &Ctx, invocation: &Invocation, draft: &str, re
                 let r = r.as_str()?;
                 labels.iter().find(|(_, v)| v == r).map(|(label, _)| json!({"label": label, "evidence_id": r}))
             }).collect();
-            json!({"claim_id": id, "text": claim["text"], "evidence": cited, "status": check["status"], "message": check["message"], "flagged": check["flagged"]})
+            json!({"claim_id": id, "text": claim["text"], "evidence": cited, "status": check["status"], "message": check["message"], "flagged": check["flagged"], "arithmetic": check["arithmetic"]})
         }).collect();
         sections.insert(section.into(), Value::Array(rows));
     }
@@ -309,13 +309,16 @@ fn matter_of_version(ctx: &Ctx, version: &str) -> Result<String> {
     ctx.lock()?.db().query_row("SELECT d.matter_id FROM document_versions v JOIN documents d ON d.id=v.document_id JOIN objects o ON o.id=v.id WHERE v.id=? AND o.active=1", [version], |r| r.get(0)).optional()?.ok_or(Error::Denied)
 }
 
-fn confirmed_cashflows(ctx: &Ctx, matter: &str, kinds: &[&str], accounts: &[String], period: Option<(&str, &str)>) -> Result<Vec<String>> {
+fn confirmed_cashflows(ctx: &Ctx, matter: &str, versions: &[String], kinds: &[&str], accounts: &[String], period: Option<(&str, &str)>) -> Result<Vec<String>> {
     let vault = ctx.lock()?;
-    let mut statement = vault.db().prepare("SELECT c.id,c.kind,c.account_id,c.occurred_on FROM cashflows c JOIN objects o ON o.id=c.id WHERE c.matter_id=? AND c.status='confirmed' AND o.active=1 ORDER BY c.occurred_on")?;
-    let rows = statement.query_map([matter], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?)))?;
+    let mut statement = vault.db().prepare("SELECT c.id,c.kind,c.account_id,c.occurred_on,c.source_version FROM cashflows c JOIN objects o ON o.id=c.id WHERE c.matter_id=? AND c.status='confirmed' AND o.active=1 ORDER BY c.occurred_on,c.id")?;
+    let rows = statement.query_map([matter], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?)))?;
     let mut output = vec![];
     for row in rows {
-        let (id, kind, account, date) = row?;
+        let (id, kind, account, date, source) = row?;
+        if !versions.is_empty() && !source.as_ref().is_some_and(|v| versions.contains(v)) {
+            continue;
+        }
         if !kinds.is_empty() && !kinds.contains(&kind.as_str()) {
             continue;
         }
@@ -348,7 +351,7 @@ pub fn analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
         let (kind, version): (String, String) = ctx.lock()?.db().query_row("SELECT v.media_kind,v.id FROM media m JOIN document_versions v ON v.id=m.version_id WHERE m.id=?", [media_ref], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
         let range = {
             let vault = ctx.lock()?;
-            let id = vault.register("ApprovedTimeRangeRef", "m1", Some(media_ref))?;
+            let id = vault.register("ApprovedTimeRangeRef", "0.2.0", Some(media_ref))?;
             vault.db().execute("INSERT INTO ranges(id,media_id,start_s,end_s,created_at) VALUES(?,?,0,NULL,?)", params![id, media_ref, now_rfc3339()])?;
             id
         };
@@ -369,7 +372,19 @@ pub fn analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
             return Err(Error::Denied);
         }
     }
-    if skill == "loan-analysis" || skill == "budget-analysis" {
+    if can_generate && (skill == "loan-analysis" || skill == "budget-analysis") {
+        // A written analysis reuses only the immutable calculation that was
+        // shown and approved. It never silently recomputes a wider set.
+        let grant = super::answers::grant_for_root(ctx, invocation.root_id())?.ok_or(Error::Denied)?;
+        calculation = grant.calculations.first().and_then(|v| v["calculation_id"].as_str()).map(str::to_owned);
+        if calculation.is_none() {
+            if grant.excluded.is_empty() {
+                warn(&mut parts, "no_confirmed_cashflows", "所选资料中没有已确认的金额记录可计算；书面分析仅使用已授权原文。");
+            } else {
+                warn(&mut parts, "calculation_not_approved", "本次未授权发送计算结果，书面分析仅使用已授权原文。");
+            }
+        }
+    } else if skill == "loan-analysis" || skill == "budget-analysis" {
         let (kinds, calc_type, period): (Vec<&str>, &str, Option<(String, String)>) = if skill == "loan-analysis" {
             (vec!["loan_out", "repayment", "principal_received", "payment", "fee", "interest"], "loan", None)
         } else {
@@ -378,7 +393,7 @@ pub fn analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
             (vec![], "budget", Some((start, end)))
         };
         let accounts: Vec<String> = input["account_ids"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-        let inputs = confirmed_cashflows(ctx, &matter, &kinds, &accounts, period.as_ref().map(|(a, b)| (a.as_str(), b.as_str())))?;
+        let inputs = confirmed_cashflows(ctx, &matter, &versions, &kinds, &accounts, period.as_ref().map(|(a, b)| (a.as_str(), b.as_str())))?;
         if inputs.is_empty() {
             warn(&mut parts, "no_confirmed_cashflows", "没有已确认的金额记录可计算；请先校对并确认相关记录。");
         } else {
@@ -388,7 +403,7 @@ pub fn analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
                     let vault = ctx.lock()?;
                     let mut ids = vec![];
                     for (key, value) in [("period_start", start), ("period_end", end)] {
-                        let id = vault.register("AssumptionRef", "m1", Some(&matter))?;
+                        let id = vault.register("AssumptionRef", "0.2.0", Some(&matter))?;
                         vault.db().execute("INSERT INTO assumptions(id,matter_id,kind,value,created_at) VALUES(?,?,?,?,?)", params![id, matter, key, json!(value).to_string(), now_rfc3339()])?;
                         ids.push(id);
                     }
@@ -446,8 +461,14 @@ fn written_analysis(
         (Some(scope), Some(retrieval)) => (scope, retrieval),
         _ => return Err(Error::Integrity),
     };
-    let bundle = ctx.lock()?.get_result(retrieval)?.2["evidence_bundle"].clone();
+    let retrieved = ctx.lock()?.get_result(retrieval)?.2;
+    let bundle = retrieved["evidence_bundle"].clone();
     if bundle.is_null() {
+        if retrieved["process"].as_array().is_some_and(|steps| steps.iter().any(|p| matches!(p["step"].as_str(), Some("search" | "rerank")) && p["status"] != "completed")) {
+            warn(parts, "retrieval_failed", "本机检索未完成，未生成书面分析；请查看具体失败原因后重新准备。");
+            parts.status = "partial".into();
+            return Ok(json!({"analysis": null, "analysis_status": "retrieval_failed", "roles": [], "process": retrieved["process"]}));
+        }
         warn(parts, "insufficient_evidence", "依据不足：所选资料中没有检索到可用于分析的原文，未生成书面分析。");
         parts.status = "partial".into();
         return Ok(json!({"analysis": null, "analysis_status": "insufficient_evidence", "roles": [], "process": []}));
@@ -547,7 +568,7 @@ pub(crate) fn close_retrieval(ctx: &Ctx, invocation: &Invocation, input: &Value,
     for code in output["warnings"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
         if let Some(message) = super::flows::flow_warning(code) {
             if !parts.warnings.iter().any(|(c, _)| c == code) {
-                warn(&mut parts, code, message);
+                warn(&mut parts, code, &message);
             }
         }
     }

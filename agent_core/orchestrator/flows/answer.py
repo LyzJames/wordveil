@@ -52,7 +52,7 @@ def build(core: Core) -> StateGraph:
         return common.retrieve(core, state)
 
     def after_retrieve(state: State) -> str:
-        if not state['generate']:
+        if not state['generate'] or state.get('stop'):
             return 'end'
         return 'compose' if state.get('bundle') and state.get('evidence') else 'insufficient'
 
@@ -77,4 +77,4 @@ def build(core: Core) -> StateGraph:
 def output(state: State) -> dict[str, Any]:
     return {'queries': state.get('queries', []), 'plan_ref': state.get('plan_ref'), 'candidate_set': state.get('candidate_set'), 'evidence_bundle': state.get('bundle'),
             'evidence_read': state.get('read'), 'evidence': state.get('evidence', []), 'draft': state.get('draft'), 'report': state.get('report'),
-            'revisions': state.get('revisions', 0), 'partial': bool(state.get('partial')), 'process': state.get('process', []), 'warnings': state.get('warnings', [])}
+            'revisions': state.get('revisions', 0), 'partial': bool(state.get('partial')), 'stop': state.get('stop'), 'process': state.get('process', []), 'warnings': state.get('warnings', [])}

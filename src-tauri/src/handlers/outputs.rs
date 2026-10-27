@@ -124,10 +124,14 @@ fn render_evidence(items: &[Value], labels: &std::collections::BTreeMap<String, 
     }
     ordered.sort_by_key(|(label, _)| label.parse::<u32>().unwrap_or(u32::MAX));
     let mut line = |mark: String, item: &Value, out: &mut String| {
-        let pages: Vec<String> = item["locators"].as_array().cloned().unwrap_or_default().iter().filter_map(|l| l["page_no"].as_i64().map(|p| p.to_string())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let pages: Vec<String> = item["locators"].as_array().cloned().unwrap_or_default().iter().filter_map(|l| l["page_no"].as_i64().filter(|p| *p < 100_000).map(|p| p.to_string())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let parts = item["source_parts"].as_array().cloned().unwrap_or_default();
+        let quote = if parts.iter().any(|p| matches!(p["kind"].as_str(), Some("frame_ocr" | "audio_asr"))) {
+            parts.iter().map(|p| format!("【{}】\n{}", s(&p["label"]), s(&p["text"]))).collect::<Vec<_>>().join("\n")
+        } else { s(&item["exact_text"]) };
         out.push_str(&format!("{} 《{}》第 {} 版{}\n\n> {}\n\n", mark, md(&s(&item["document"]["display_name"])), s(&item["document"]["version_no"]),
-            if pages.is_empty() { String::new() } else { format!("，第 {} 页", pages.join("、")) }, md(&s(&item["exact_text"])).replace('\n', "\n> ")));
-        csv_rows.push(vec!["原文依据".into(), s(&item["document"]["display_name"]), pages.join(";"), s(&item["exact_text"])]);
+            if pages.is_empty() { String::new() } else { format!("，第 {} 页", pages.join("、")) }, md(&quote).replace('\n', "\n> ")));
+        csv_rows.push(vec!["原文依据".into(), s(&item["document"]["display_name"]), pages.join(";"), quote]);
     };
     for (label, item) in &ordered {
         line(format!("\\[{label}\\]"), item, out);
@@ -145,9 +149,25 @@ fn answer_labels(answer: &Value) -> std::collections::BTreeMap<String, String> {
 }
 
 fn render(kind: &str, id: &str, payload: &Value, format: &str, lookup: &Lookup, out: &mut String, csv_rows: &mut Vec<Vec<String>>) {
+    if let Some(chat)=payload.get("shouyu_conversation").filter(|c|c.is_object()) {
+        out.push_str(&format!("## {}\n\n",md(&s(&chat["title"]))));
+        for message in chat["messages"].as_array().into_iter().flatten() {
+            let generated=message["role"]=="assistant";
+            let speaker=if generated{"守语（人工智能生成，未经逐句核查）"}else{"你"};
+            out.push_str(&format!("### {speaker}\n\n{}\n\n",md(&s(&message["text"]))));
+            csv_rows.push(vec![if generated{"人工智能生成".into()}else{"用户".into()},s(&message["created_at"]),s(&message["text"])]);
+        }
+        return;
+    }
     match kind {
         "CalculationRef" => {
             out.push_str(&format!("## 计算结果：{}\n\n", md(&s(&payload["calculation_type"]))));
+            if payload["requires_recalculation"] == true {
+                let reason = s(&payload["recalculation_reason"]);
+                out.push_str(&format!("{reason}\n\n"));
+                csv_rows.push(vec!["计算".into(), "需要重新计算".into(), reason]);
+                return;
+            }
             out.push_str(&format!("- 计算引擎：{}\n- 口径：{}\n- 计算时间：{}\n\n", md(&s(&payload["engine"])), md(&payload["assumptions_used"].to_string()), md(&s(&payload["computed_at"]))));
             out.push_str("```json\n");
             out.push_str(&serde_json::to_string_pretty(&payload["result"]).unwrap_or_default().replace("```", "'''"));
@@ -271,13 +291,13 @@ pub fn export(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
         }
         let generated = rows.iter().any(|row| row.first().is_some_and(|c| c == "人工智能生成"));
         let mut markdown = format!(
-            "# 律金智库导出\n\n- 导出时间：{}\n- 说明：本文件由本机整理；“候选”内容未经确认，不构成法律或财务结论。\n{}\n",
+            "# 守语导出\n\n- 导出时间：{}\n- 说明：本文件由本机整理，请核对重要信息。\n{}\n",
             now_rfc3339(),
-            if generated { "- 含人工智能生成内容：是。标有“由人工智能生成”的部分来自你连接的生成接口，已在本机逐句核对依据，请对照原文使用。\n" } else { "" }
+            if generated { "- 含人工智能生成内容：是。请按每项记录的核查状态对照原文使用。\n" } else { "" }
         );
         markdown.push_str(&body);
         if generated {
-            rows.insert(0, vec!["说明".into(), "本文件含人工智能生成内容（类别为“人工智能生成”的行），已在本机逐句核对依据，请对照原文使用。".into()]);
+            rows.insert(0, vec!["说明".into(), "本文件含人工智能生成内容，请按原记录的核查状态核对。".into()]);
         }
         let content = if format == "csv" {
             let mut text = String::from("\u{feff}");
@@ -362,7 +382,7 @@ pub fn diagnostics(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<
     let mut report = json!({
         "target": target,
         "app_version": env!("CARGO_PKG_VERSION"),
-        "milestone": crate::MILESTONE,
+        "release_version": crate::RELEASE_VERSION,
         "installation": {"production_layout": layout.production, "models": layout.artifacts.len(), "embedding_space_id": layout.space.id},
         "residency": {"max_large": ctx.services.residency.max_large, "coresident": ctx.services.residency.coresident},
         "local_worker_running": ctx.services.local.running(),

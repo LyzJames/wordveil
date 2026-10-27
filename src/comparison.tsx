@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, snapshot, stageName, type Comparison, type ComparisonCell, type ComparisonPreview, type DocumentRow, type RetrievalResult } from './api';
 import { EvidenceList } from './evidence';
+import { ExcerptText } from './egress';
 import { Icon } from './icons';
 import { sourceOf, useSession } from './session';
 import { Busy, Callout, Chip, ErrorLine, Field, Modal, useAction, useLoad } from './ui';
@@ -118,6 +119,7 @@ function MatrixCell({ cell, disabled, onOpen, onResume }: { cell: ComparisonCell
     {(cell.state === 'running' || cell.state === 'preparing') && <div role="status"><span className="spinner" /> {cell.progress ? stageName(cell.progress.stage) : cell.state === 'preparing' ? '本机检索与原文定位' : '等待处理进度'}{cell.progress && cell.progress.total > 0 ? ` ${cell.progress.done}/${cell.progress.total}` : ''}</div>}
     {text && <p className="matrix-answer">{text.slice(0, 260)}{text.length > 260 ? '…' : ''}</p>}
     {cell.state === 'no_evidence' && <p>这份资料未找到回答该问题的依据。</p>}
+    {recoverable && <p className="t-caption text-secondary">{cell.reason_message || '任务未完成，请查看处理过程。'}</p>}
     {recoverable && <p className="t-caption text-secondary">已保留本格进度和请求计数。恢复只处理本格。</p>}
     <ErrorLine text={data.error} />
     <div className="actions">{cell.result_ref && <button className="btn btn-xs" onClick={onOpen}>{text ? '查看回答与引用' : '查看已找到的原文'}（{citations}）</button>}{recoverable && <button className="btn btn-xs" disabled={disabled || cell.remaining_requests <= 0} onClick={onResume}>{cell.attempts ? '恢复此格' : '重新准备'}</button>}</div>
@@ -132,7 +134,7 @@ function BatchPreview({ preview, onCancel, onConfirm }: { preview: ComparisonPre
     <Callout title="一次确认整批预算，顺序生成所选格子">已完成格不会重复生成。暂停、锁定或失败后，可单独恢复未完成格；保留原计数。</Callout>
     {preview.cells.some((c)=>c.unknown_requests>0)&&<Callout tone="warning" title="有上次请求的结果尚不明确">服务商可能已经处理这些请求，已计入原预算。本次确认会允许在剩余额度内继续所选格，可能重新发送未完成步骤。</Callout>}
     <dl className="kv"><dt>接收方</dt><dd>{preview.connection.name}（{preview.connection.host}）· {preview.connection.model_id}</dd><dt>累计请求上限</dt><dd>{preview.max_requests} 次；已用 {preview.used_requests} 次，剩余 {preview.remaining_requests} 次；每格累计最多 {preview.per_cell_max_requests} 次</dd><dt>输出上限</dt><dd>每次最多 {preview.max_output_tokens.toLocaleString('zh-CN')} 令牌；失败、格式修复和重试均消耗请求额度</dd><dt>资料范围</dt><dd>每格仅使用对应行的固定版本，单次生成最多 10 段原文；不联网搜索。下列为本机准备的摘录，后续仍只在该固定版本内检索，实际发送材料可在请求记录中核对。</dd></dl>
-    <div className="batch-preview-cells">{preview.cells.map((cell) => <section key={cell.id}><label className="matrix-pick"><input type="checkbox" checked={chosen.has(cell.id)} onChange={() => setChosen((items) => { const next = new Set(items); if (next.has(cell.id)) next.delete(cell.id); else next.add(cell.id); return next; })} /><span><strong>{preview.spec.documents[cell.row].display_name} · 第 {preview.spec.documents[cell.row].version_no} 版</strong><br />问题 {cell.col + 1}：{preview.spec.questions[cell.col]}</span></label><p className="t-caption text-secondary">{cell.continuation ? '恢复此格' : '尚未调用生成接口'} · 已用 {cell.used_requests} 次，单格剩余 {cell.remaining_requests} 次</p><details><summary>查看本机准备的原文摘录（{cell.preview.excerpts.length} 段）</summary>{cell.preview.excerpts.map((item) => <blockquote key={item.evidence_id}><span className="t-caption text-secondary">{item.display_name} · {item.unit_title}</span><p>{item.excerpt}</p></blockquote>)}</details></section>)}</div>
+    <div className="batch-preview-cells">{preview.cells.map((cell) => <section key={cell.id}><label className="matrix-pick"><input type="checkbox" checked={chosen.has(cell.id)} onChange={() => setChosen((items) => { const next = new Set(items); if (next.has(cell.id)) next.delete(cell.id); else next.add(cell.id); return next; })} /><span><strong>{preview.spec.documents[cell.row].display_name} · 第 {preview.spec.documents[cell.row].version_no} 版</strong><br />问题 {cell.col + 1}：{preview.spec.questions[cell.col]}</span></label><p className="t-caption text-secondary">{cell.continuation ? '恢复此格' : '尚未调用生成接口'} · 已用 {cell.used_requests} 次，单格剩余 {cell.remaining_requests} 次</p><details><summary>查看本机准备的原文摘录（{cell.preview.excerpts.length} 段）</summary>{cell.preview.excerpts.map((item) => <blockquote key={item.evidence_id}><span className="t-caption text-secondary">{item.display_name} · {item.unit_title}</span><ExcerptText excerpt={item} /></blockquote>)}</details></section>)}</div>
   </Modal>;
 }
 

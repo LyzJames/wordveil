@@ -10,13 +10,11 @@
   ],
   "direct_capabilities": [
     "vault.write",
-    "public_knowledge.write",
     "file.selection.read",
     "vault.read"
   ],
   "conditional_capabilities": [
     "vault.write",
-    "public_knowledge.write",
     "file.selection.read",
     "vault.read"
   ],
@@ -45,7 +43,7 @@
       "rule": "显式新增副本或新版本"
     }
   ],
-  "version": "0.5.0-m4",
+  "version": "0.6.0",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

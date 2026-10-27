@@ -1,4 +1,4 @@
-//! Trusted UI boundary for M2-B. Immutable previews are single-use, expire in
+//! Trusted UI boundary for 0.3.0-B. Immutable previews are single-use, expire in
 //! ten minutes and bind the exact skill input to exactly one confirmed root.
 use super::*;
 use crate::{generation::credentials::CredentialStore, network, mcp, public_knowledge::Package};
@@ -49,7 +49,7 @@ impl CoreService {
         } else { None };
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
-        let id = vault.register("ConnectionDraftRef", "m2-b", None)?;
+        let id = vault.register("ConnectionDraftRef", "0.3.0-b", None)?;
         let profile = json!({"external_kind":kind,"value":value});
         vault.db().execute("INSERT INTO connection_drafts(id,profile,credential,created_at) VALUES(?,?,?,?)", params![id, profile.to_string(), credential, now_rfc3339()])?;
         Ok(id)
@@ -100,7 +100,7 @@ impl CoreService {
     fn external_action(&self, skill: &str, input: &Value, preview: Value) -> Result<Value> {
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
-        let id = vault.register("NetworkActionRef", "m2-b", None)?;
+        let id = vault.register("NetworkActionRef", "0.3.0-b", None)?;
         let mut preview = preview;
         preview["action_id"] = json!(id);
         preview["skill"] = json!(skill);
@@ -137,7 +137,7 @@ impl CoreService {
                 } else { (request["binding_id"].as_str().ok_or(Error::Contract)?.to_owned(), request["arguments"].clone()) };
                 let row = crate::handlers::external::binding(&vault, &binding)?;
                 mcp::validate_arguments(&row.descriptor["inputSchema"], &arguments)?;
-                let args = vault.register("ValidatedTypedArgumentsRef", "m2-b", Some(&binding))?;
+                let args = vault.register("ValidatedTypedArgumentsRef", "0.3.0-b", Some(&binding))?;
                 vault.db().execute("INSERT INTO external_arguments(id,binding_id,value,created_at) VALUES(?,?,?,?)", params![args,binding,arguments.to_string(),now_rfc3339()])?;
                 let input = json!({"binding_id":binding,"arguments_ref":args});
                 let preview = json!({"operation":operation,"destination":row.endpoint.display_host(),"endpoint":row.endpoint.base_url(),"tool":row.name,"sent":arguments,"max_requests":mcp::MAX_EXCHANGES,
@@ -172,7 +172,7 @@ impl CoreService {
         let (skill,input,handle,invocation) = self.begin_action(id)?;
         self.spawn(&skill,input,handle,invocation)
     }
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     pub fn harness_run_action(&self, id: &str) -> Result<Value> {
         let (_,input,handle,invocation) = self.begin_action(id)?;
         let cancel = self.session_cancel(&handle)?;
@@ -197,7 +197,7 @@ impl CoreService {
         let changed = package.documents.iter().filter(|d| !old_docs.iter().any(|old| old["id"] == d.id && old["sha256"] == d.sha256)).map(|d| d.metadata()).collect::<Vec<_>>();
         let removed = old_docs.iter().filter(|old| !package.documents.iter().any(|d| old["id"] == d.id)).cloned().collect::<Vec<_>>();
         let preview = json!({"package":package.summary(),"sha256":hash,"previous_version":prior.map(|p|p.0),"changed":changed,"removed":removed,"origin":origin,"note":"确认后导入公共集合并建立索引；保留旧包版本及历史引用。哈希校验不等同于第三方签名或法律适用性核定。"});
-        let source = vault.register("KnowledgeSourceRef", "m2-b", None)?;
+        let source = vault.register("KnowledgeSourceRef", "0.3.0-b", None)?;
         vault.db().execute("INSERT INTO knowledge_sources(id,package,sha256,preview,origin,state,created_at) VALUES(?,?,?,?,?,'previewed',?)", params![source,canonical,hash,preview.to_string(),origin,now_rfc3339()])?;
         drop(vault); drop(handle);
         let input = json!({"source_selection_id":source,"update_mode":"apply"});

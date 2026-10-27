@@ -77,7 +77,7 @@ struct SpaceFile {
 
 /// Where trusted resources live. Production paths come only from the installed
 /// tree beside the executable; development paths are compiled only with
-/// `dev-worker` and point at verified M0 source artifacts under docs.
+/// `dev-worker` and point at verified 0.1.0 source artifacts under docs.
 #[derive(Clone)]
 pub struct Layout {
     pub install_root: PathBuf,
@@ -124,7 +124,7 @@ impl Layout {
         })
     }
 
-    /// Development/test layout: app sources, M0 source artifacts and the docs
+    /// Development/test layout: app sources, 0.1.0 source artifacts and the docs
     /// FFmpeg build. Artifact keys and file hashes equal the production ones.
     #[cfg(feature = "dev-worker")]
     pub fn development(docs: &Path, app: &Path, data_root: &Path) -> Result<Self> {
@@ -134,7 +134,7 @@ impl Layout {
         }
         let resources = app.join("resources");
         let space = load_space(&resources)?;
-        let dev: DevInstall = serde_json::from_slice(&std::fs::read(docs.join("fixtures/m1/dev-installation.json"))?)?;
+        let dev: DevInstall = serde_json::from_slice(&std::fs::read(docs.join("fixtures/v0.6.0/dev-installation.json"))?)?;
         let embedding = dev.artifacts.iter().find(|a| a.key.model == "embedding").ok_or(Error::Integrity)?;
         if embedding.key.artifact != space.profile.artifact_sha256 {
             return Err(Error::Integrity);
@@ -145,7 +145,7 @@ impl Layout {
             launcher: Launcher::Source {
                 python: python.join("python-utf8.exe"),
                 base: python.clone(),
-                site: docs.join("tooling/env/m0-py/Lib/site-packages"),
+                site: docs.join("tooling/env/v0.1.0-py/Lib/site-packages"),
                 app: app.to_path_buf(),
             },
             ffmpeg_bin: docs.join("build/ffmpeg-dist/bin"),
@@ -292,7 +292,7 @@ impl Services {
     pub fn orchestrator_policy(&self, scratch: PathBuf) -> Result<SpawnPolicy> {
         // Synthetic tests only (never compiled into production): a scripted,
         // possibly hostile orchestrator `script.py|scenario`, run isolated alike.
-        #[cfg(all(feature = "m0-harness", feature = "dev-worker"))]
+        #[cfg(all(feature = "test-harness", feature = "dev-worker"))]
         if let (Some(spec), Launcher::Source { python, base, .. }) = (std::env::var_os("LVJIN_TEST_ORCHESTRATOR"), &self.layout.launcher) {
             let spec = spec.to_string_lossy().to_string();
             let (script, scenario) = spec.split_once('|').ok_or(Error::Contract)?;

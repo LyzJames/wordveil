@@ -1,4 +1,4 @@
-//! Registered business handlers for the M1 local closed loop.
+//! Registered business handlers for the 0.2.0 local closed loop.
 //!
 //! Every handler runs under an invocation issued by the trusted runtime, checks
 //! its capability before side effects, keeps vault locks short, and returns
@@ -118,6 +118,38 @@ pub fn run(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
 }
 
 /// Map an execution error to the unified status set (contract section 8).
+pub(crate) fn error_message(code: &str) -> Option<String> {
+    let stripped = code.strip_prefix("worker:").or_else(|| code.strip_prefix("worker_")).unwrap_or(code);
+    let text = match stripped {
+        "model_queue_timeout" => "本机模型排队超过 10 分钟；可能有其他资料仍在识别或建立索引。待任务结束后可重新提问，已完成的步骤保留。",
+        "snapshot_stale" => "检索期间资料索引发生变化；本次没有使用不一致的索引。请待资料处理结束后重新提问。",
+        "source_changed" => "引用的原文分段已更新，当前索引尚未同步；请完成该资料的重新索引后再提问。",
+        "preview_retrieval_failed" => "发送预览的本机检索未完成；请待资料处理结束后重新准备，当前没有发送请求。",
+        "flow_timeout" => "任务运行超过时限；已保留已完成的步骤，请查看处理过程后继续。",
+        "orchestrator_exit" | "channel_closed" => "任务执行进程意外退出；已保留已完成的步骤和请求计数。",
+        "coverage_incomplete" => "部分内容超过本机核查长度或预算，未核查的内容仍标为未核查。",
+        "answer_attempt_budget" => "本次任务已用完 3 次起草或修订尝试（结构修复也计数）；已保留最后可用的回答和核查记录。",
+        "generation_request_budget" => "本次任务已达到授权的生成请求次数上限（最多 7 次，失败和结构修复也计数）；已完成结果保留。",
+        "egress_passage_budget" => "本次任务已达到全程最多 10 段原文的发送上限；没有额外发送新段落，已完成结果保留。",
+        "native_media_budget" => "本次任务已用完 2 次原生媒体读取尝试；已完成的识别和核查结果保留。",
+        "budget" => "已达到本任务请求或推理预算；已完成的结果和计数保留。",
+        "cancelled" => "任务已停止、撤销或空间已锁定。",
+        "locked" => "私密空间已锁定；解锁后可查看或继续任务。",
+        "conflict" => "资料版本或索引已变化，请重新准备预览后继续。",
+        "integrity" => "资源或索引完整性检查未通过，请检查安装与资料状态。",
+        _ => {
+            if let Some(remote) = code.strip_prefix("remote:").or_else(|| code.strip_prefix("remote_")) {
+                return Some(answers::remote_message(&crate::sanitize_code(remote)));
+            }
+            if code.starts_with("worker:") || code.starts_with("worker_") {
+                return Some(format!("本机处理未完成（{}）；已保留进度和请求计数，可查看脱敏诊断定位原因。", crate::sanitize_code(stripped)));
+            }
+            return None;
+        }
+    };
+    Some(text.into())
+}
+
 pub fn failure(error: &Error) -> EnvelopeParts {
     let code = error.code();
     let (status, message) = match error {
@@ -127,11 +159,15 @@ pub fn failure(error: &Error) -> EnvelopeParts {
         Error::Worker(code) if code == "password_required" || code == "password_incorrect" => ("needs_input", "该文件已加密，需要正确的打开密码。"),
         Error::Worker(code) if code == "finance_loan_perspective_ambiguous" => ("needs_input", "金额记录里既有借出也有收到借款，无法判断你是出借人还是借款人；请在计算页选择视角后再算。"),
         Error::Worker(code) if code == "finance_loan_perspective_unknown" => ("needs_input", "金额记录里没有“借出”或“收到借款”，无法判断你是出借人还是借款人；请在计算页选择视角后再算。"),
+        Error::Worker(code) if code == "finance_invalid_period_range" => ("needs_input", "开始日期不能晚于结束日期，请调整计算期间。"),
+        Error::Worker(code) if code == "finance_no_inputs_in_period" => ("needs_input", "所选期间内没有已确认的金额记录，请调整日期或记录选择。"),
+        Error::Worker(reason) if matches!(reason.as_str(), "answer_attempt_budget" | "generation_request_budget" | "egress_passage_budget" | "native_media_budget") => return EnvelopeParts { status: "partial".into(), warnings: vec![(code.clone(), error_message(&code).unwrap_or_default())], ..Default::default() },
         Error::Integrity => ("failed", "完整性校验失败：资源、数据或索引与记录不一致。"),
         Error::Denied => ("failed", "无权访问该对象，或对象不在当前范围内。"),
         Error::Contract => ("failed", "请求不符合正式合同。"),
         Error::Budget => ("partial", "已达到根任务预算上限。"),
         Error::Remote(remote) => return EnvelopeParts { status: "failed".into(), warnings: vec![(code, answers::remote_message(remote))], ..Default::default() },
+        Error::Worker(_) if error_message(&code).is_some() => return EnvelopeParts { status: "failed".into(), warnings: vec![(code.clone(), error_message(&code).unwrap_or_default())], ..Default::default() },
         _ => ("failed", "处理失败；已保留已完成的部分。"),
     };
     EnvelopeParts { status: status.into(), warnings: vec![(code, message.into())], ..Default::default() }
@@ -140,7 +176,10 @@ pub fn failure(error: &Error) -> EnvelopeParts {
 /// Run a registered invocation and seal the result envelope in the core.
 pub fn execute(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Value> {
     let started = std::time::Instant::now();
-    let parts = run(ctx, invocation, input).unwrap_or_else(|error| failure(&error));
+    let parts = run(ctx, invocation, input).unwrap_or_else(|error| {
+        let _ = mediaflow::failed(ctx, invocation, input, &error);
+        failure(&error)
+    });
     ctx.services.log.event(
         "skill.finished",
         &[

@@ -42,6 +42,10 @@ def retrieve(core: Core, state: dict[str, Any], prefix: str = '') -> dict[str, A
             out['partial'] = True
     out['candidate_set'] = data(search)
     out['process'].append(step.done(status(search), queries=len(state['queries']), candidates=int(view.get('candidates', 0))))
+    if not out['candidate_set'] and status(search) != 'completed':
+        out.update(partial=True, stop='retrieval_failed')
+        out['warnings'].append('retrieval_failed')
+        return out
     if out['candidate_set'] and view.get('graph_enabled') is True:
         step = core.step('graph')
         expanded = core.skill(f'{prefix}graph', owner, 'graph-relations', {
@@ -62,6 +66,10 @@ def retrieve(core: Core, state: dict[str, Any], prefix: str = '') -> dict[str, A
             out['partial'] = True
             out['warnings'] += warnings(reranked)
         out['process'].append(step.done(status(reranked), evidence=len(out['evidence'])))
+        if not out['bundle'] and status(reranked) != 'completed':
+            out.update(partial=True, stop='retrieval_failed')
+            out['warnings'].append('retrieval_failed')
+            return out
         if out['evidence']:
             reading = core.skill(f'{prefix}read', owner, 'evidence-read', {'evidence_ids': out['evidence'], 'context_mode': 'exact'})['envelope']
             out['read'] = data(reading)
@@ -78,15 +86,18 @@ def compose(core: Core, state: Answering, prefix: str = '') -> dict[str, Any]:
         envelope = core.skill(f'{prefix}compose:{round_}', state['owner'], 'answer-compose', payload)['envelope']
     except Exception as error:
         code = getattr(error, 'code', 'failed')
-        if code in ('cancelled', 'channel_closed') or not state.get('draft'):
+        if code in ('cancelled', 'channel_closed', 'outcome_unknown'):
             raise
-        return {'stop': 'revision_stopped', 'process': [step.done('failed', code=code)], 'warnings': ['revision_stopped']}
+        stop = 'revision_stopped' if state.get('draft') else 'no_draft'
+        return {'stop': stop, 'partial': True, 'process': [step.done('failed', code=code)], 'warnings': [code, stop]}
     if status(envelope) == 'cancelled':
         raise CoreError('cancelled')
     next_draft = data(envelope) if status(envelope) == 'completed' else None
     if next_draft is None:
         out = {'process': [step.done(status(envelope))], 'warnings': warnings(envelope)}
         out['stop'] = 'no_draft' if not state.get('draft') else 'revision_stopped'
+        out['warnings'].append(out['stop'])
+        out['partial'] = True
         return out
     return {'draft': next_draft, 'revisions': state.get('revisions', 0) + (1 if round_ > 0 else 0), 'process': [step.done('completed')], 'stop': None}
 

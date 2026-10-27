@@ -1,4 +1,4 @@
-//! M0 storage feasibility boundary. Only trusted core code selects scope,
+//! 0.1.0 storage feasibility boundary. Only trusted core code selects scope,
 //! generation, embedding semantics and index precision; no SQL/path enters IPC.
 use crate::{Error,Result,crypto::SecretKey,ledger::Ledger};
 use jieba_rs::Jieba;
@@ -135,7 +135,7 @@ const DOMAIN_TERMS:&[&str]=&["押金","租金","违约金","借款人","出借�
 /// dictionary plus fixed domain terms; deterministic and offline.
 pub fn search_tokens(text:&str)->Vec<String> {
     static JIEBA:std::sync::OnceLock<Jieba>=std::sync::OnceLock::new();
-    let jieba=JIEBA.get_or_init(||{let mut jieba=Jieba::new();for term in DOMAIN_TERMS {jieba.add_word(term,Some(50000),None);}jieba});
+    let jieba=JIEBA.get_or_init(||{let mut jieba=dictionary();for term in DOMAIN_TERMS {jieba.add_word(term,Some(50000),None);}jieba});
     jieba.cut_for_search(text,false).into_iter().map(|token|token.word.trim().to_lowercase()).filter(|token|!token.is_empty() && token.chars().any(char::is_alphanumeric)).collect()
 }
 
@@ -148,10 +148,18 @@ pub fn fts_query(tokens:&[String])->Option<String> {
 /// FTS5 lives inside the same SQLCipher connection, including token text and
 /// its shadow tables. Jieba's embedded MIT dictionary is deterministic offline.
 pub struct KeywordIndex {jieba:Jieba}
+pub(crate) fn dictionary() -> Jieba {
+    let bytes = include_bytes!("../../resources/data/jieba-dict.txt");
+    Jieba::with_dict(&mut std::io::Cursor::new(bytes.as_slice())).expect("compiled Jieba dictionary is valid")
+}
 impl KeywordIndex {
     pub fn initialize(ledger:&Ledger)->Result<Self> {
-        ledger.db.execute_batch("CREATE TABLE IF NOT EXISTS indexed_sources(id INTEGER PRIMARY KEY,scope TEXT NOT NULL,generation INTEGER NOT NULL,version TEXT NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS m0_keywords USING fts5(tokens,tokenize='unicode61'); INSERT INTO m0_keywords(m0_keywords,rank) VALUES('secure-delete',1);")?;
-        Ok(Self{jieba:Jieba::new()})
+        let legacy: bool = ledger.db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='m0_keywords')", [], |row| row.get(0))?;
+        if legacy {
+            ledger.db.execute_batch("ALTER TABLE m0_keywords RENAME TO v0_1_0_keywords;")?;
+        }
+        ledger.db.execute_batch("CREATE TABLE IF NOT EXISTS indexed_sources(id INTEGER PRIMARY KEY,scope TEXT NOT NULL,generation INTEGER NOT NULL,version TEXT NOT NULL); CREATE VIRTUAL TABLE IF NOT EXISTS v0_1_0_keywords USING fts5(tokens,tokenize='unicode61'); INSERT INTO v0_1_0_keywords(v0_1_0_keywords,rank) VALUES('secure-delete',1);")?;
+        Ok(Self{jieba:dictionary()})
     }
     fn tokens(&self,text:&str)->Vec<String> {
         self.jieba.cut_for_search(text,false).into_iter().map(|token|token.word.trim().to_lowercase()).filter(|token|!token.is_empty() && token.chars().any(char::is_alphanumeric)).collect()
@@ -161,7 +169,7 @@ impl KeywordIndex {
         let tokens=self.tokens(text).join(" ");
         let tx=ledger.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO indexed_sources VALUES(?,?,?,?)",params![id,scope,generation,version])?;
-        tx.execute("INSERT INTO m0_keywords(rowid,tokens) VALUES(?,?)",params![id,tokens])?;
+        tx.execute("INSERT INTO v0_1_0_keywords(rowid,tokens) VALUES(?,?)",params![id,tokens])?;
         tx.commit()?;Ok(())
     }
     pub fn search(&self,ledger:&Ledger,scope:&str,generation:i64,query:&str)->Result<Vec<(i64,String,f64)>> {
@@ -170,7 +178,7 @@ impl KeywordIndex {
         if tokens.is_empty() {return Ok(vec![]);}
         // Literal quoted tokens prevent a user's query from becoming FTS syntax.
         let expression=tokens.iter().map(|word|format!("\"{}\"",word.replace('"',"\"\""))).collect::<Vec<_>>().join(" OR ");
-        let mut statement=ledger.db.prepare("SELECT s.id,s.version,bm25(m0_keywords) AS score FROM m0_keywords JOIN indexed_sources s ON s.id=m0_keywords.rowid WHERE m0_keywords MATCH ? AND s.scope=? AND s.generation=? ORDER BY score,s.id LIMIT 25")?;
+        let mut statement=ledger.db.prepare("SELECT s.id,s.version,bm25(v0_1_0_keywords) AS score FROM v0_1_0_keywords JOIN indexed_sources s ON s.id=v0_1_0_keywords.rowid WHERE v0_1_0_keywords MATCH ? AND s.scope=? AND s.generation=? ORDER BY score,s.id LIMIT 25")?;
         let rows=statement.query_map(params![expression,scope,generation],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         Ok(rows.collect::<std::result::Result<Vec<_>,_>>()?)
     }
@@ -178,7 +186,7 @@ impl KeywordIndex {
         let tx=ledger.db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM indexed_sources WHERE id=? AND scope=?)",params![id,scope],|r|r.get(0))?;
         if !valid {return Err(Error::Denied);}
-        tx.execute("DELETE FROM m0_keywords WHERE rowid=?",[id])?;
+        tx.execute("DELETE FROM v0_1_0_keywords WHERE rowid=?",[id])?;
         tx.execute("DELETE FROM indexed_sources WHERE id=?",[id])?;
         tx.commit()?;Ok(())
     }

@@ -1,7 +1,6 @@
 """Fixed-model CPU adapters. No provider client, downloads, credentials or SQL.
 
-Qwen pooling/scoring: official Qwen model cards. mmBERT: official KRLabsOrg
-plain-transformers input pair and answer-only offset mapping. Paddle: explicit
+Qwen pooling: official Qwen model card. HaS: fixed local NER. Paddle: explicit
 paddle_static engine configuration. Runtime artifacts are selected by the core.
 """
 from __future__ import annotations
@@ -23,17 +22,8 @@ class TextBatch(StrictModel):
     are_queries: bool = False
 
 
-class RerankBatch(StrictModel):
-    kind: Literal['reranker']
-    question: Text
-    documents: Annotated[list[Text], Field(min_length=1, max_length=20)]
 
 
-class GroundingRequest(StrictModel):
-    kind: Literal['grounding']
-    question: Text
-    evidence: Text
-    answer: Text
 
 
 class ImageRequest(StrictModel):
@@ -66,18 +56,18 @@ PREFIX = '<|im_start|>system\nJudge whether the Document meets the requirements 
 SUFFIX = '<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n'
 
 
-def utf16_offset(text: str, character: int) -> int:
-    if not 0 <= character <= len(text):
-        raise ValueError('Offset is outside the answer')
-    return len(text[:character].encode('utf-16-le')) // 2
 
 
 class CpuModel:
     """One instance owns one model. The trusted pool owns the worker lifetime."""
     def __init__(self, identity: str, artifact: Path, threads: int = 4):
-        if identity not in {*PADDLE_MODELS, 'embedding', 'reranker', 'grounding', 'asr'}:
+        if identity not in {*PADDLE_MODELS, 'embedding', 'asr', 'privacy-has'}:
             raise ValueError('Unregistered model')
         self.identity = identity
+        if identity == 'privacy-has':
+            from .privacy_has import HasModel
+            self.privacy_model = HasModel(artifact, threads)
+            return
         if identity=='uvdoc' and (artifact/'geometry.json').is_file():
             from .geometry import UVDocCpu
             self.geometry_model=UVDocCpu(artifact,threads)
@@ -92,27 +82,21 @@ class CpuModel:
             )
             return
         import torch
-        from transformers import AutoModel, AutoModelForCausalLM, AutoModelForTokenClassification, AutoTokenizer, AutoProcessor, AutoModelForMultimodalLM
+        from transformers import AutoModel, AutoTokenizer, AutoProcessor, AutoModelForMultimodalLM
         torch.set_num_threads(threads)
         common = {'local_files_only': True, 'trust_remote_code': False}
         if identity == 'asr':
             self.processor = AutoProcessor.from_pretrained(str(artifact), **common)
             self.model = AutoModelForMultimodalLM.from_pretrained(str(artifact), dtype=torch.float32, attn_implementation='eager', **common).eval()
         else:
-            self.tokenizer = AutoTokenizer.from_pretrained(str(artifact), padding_side='left' if identity != 'grounding' else 'right', **common)
-            cls = {'embedding': AutoModel, 'reranker': AutoModelForCausalLM, 'grounding': AutoModelForTokenClassification}[identity]
+            self.tokenizer = AutoTokenizer.from_pretrained(str(artifact), padding_side='left', **common)
+            cls = AutoModel
             self.model = cls.from_pretrained(str(artifact), dtype=torch.float32, attn_implementation='eager', **common).eval()
-        if identity == 'reranker':
-            self.prefix = self.tokenizer.encode(PREFIX, add_special_tokens=False)
-            self.suffix = self.tokenizer.encode(SUFFIX, add_special_tokens=False)
-            self.yes = self.tokenizer.convert_tokens_to_ids('yes')
-            self.no = self.tokenizer.convert_tokens_to_ids('no')
-            if self.yes == self.no or self.yes is None or self.no is None:
-                raise ValueError('Invalid yes/no token mapping')
-
     def predict(self, payload: dict) -> dict:
         if payload.get('kind') != self.identity:
             raise ValueError('Model/request identity mismatch')
+        if self.identity == 'privacy-has':
+            return self.privacy_model.predict(payload)
         if self.identity in PADDLE_MODELS:
             if 'images' in payload:
                 return self.image_batch(ImageBatchRequest.model_validate(payload))
@@ -137,33 +121,7 @@ class CpuModel:
                 if vectors.shape[-1] != 1024 or not torch.isfinite(vectors).all():
                     raise ValueError('Embedding numerical contract failed')
                 return {'vectors': vectors.tolist(), 'dimensions': 1024, 'normalized': True, 'dtype': 'float32', 'truncated': False}
-            if self.identity == 'reranker':
-                request = RerankBatch.model_validate(payload)
-                rows = []
-                for document in request.documents:
-                    text = f'<Instruct>: {INSTRUCTION}\n<Query>: {request.question}\n<Document>: {document}'
-                    row = self.prefix + self.tokenizer.encode(text, add_special_tokens=False) + self.suffix
-                    if len(row) > 2048:
-                        raise ValueError('Input exceeds bounded reranking stage')
-                    rows.append(row)
-                batch = self.tokenizer.pad({'input_ids': rows}, padding=True, return_tensors='pt')
-                logits = self.model(**batch, use_cache=False, logits_to_keep=1).logits[:, -1, :]
-                pair = torch.stack([logits[:, self.no], logits[:, self.yes]], dim=1).float()
-                return {'scores': pair.softmax(dim=-1)[:, 1].tolist(), 'logit_differences': (pair[:, 1] - pair[:, 0]).tolist(), 'yes_token_id': self.yes, 'no_token_id': self.no, 'truncated': False}
-            request = GroundingRequest.model_validate(payload)
-            context = request.evidence + '\n\n问题：' + request.question
-            batch = self.tokenizer(context, request.answer, truncation=False, return_offsets_mapping=True, return_tensors='pt')
-            if batch.input_ids.shape[1] > 4096:
-                raise ValueError('Coverage incomplete: grounding unit exceeds 4096 tokens')
-            sequence_ids = batch.sequence_ids(0)
-            offsets = batch.pop('offset_mapping')[0].tolist()
-            batch.pop('token_type_ids', None)
-            probabilities = self.model(**batch).logits.float().softmax(-1)[0, :, 1].tolist()
-            tokens = []
-            for segment, (start, end), risk in zip(sequence_ids, offsets, probabilities):
-                if segment == 1 and start != end:
-                    tokens.append({'start': start, 'end': end, 'utf16_start': utf16_offset(request.answer, start), 'utf16_end': utf16_offset(request.answer, end), 'unsupported_score': risk})
-            return {'answer_tokens': tokens, 'coverage_complete': True, 'max_position_embeddings': self.model.config.max_position_embeddings}
+            raise ValueError('Unregistered model')
 
     def image(self, request: ImageRequest) -> dict:
         import numpy as np

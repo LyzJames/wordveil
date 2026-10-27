@@ -2,7 +2,7 @@
 
 /// Application version (the validation programs report it).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const MILESTONE: &str = "M4";
+pub const RELEASE_VERSION: &str = VERSION;
 
 pub mod crypto;
 pub mod durable;
@@ -13,6 +13,8 @@ pub mod retrieval_scope;
 pub mod geometry;
 pub mod ledger;
 pub mod model_pool;
+pub mod privacy;
+pub mod personal_search;
 pub mod runtime;
 pub mod store;
 pub mod vault;
@@ -33,6 +35,7 @@ pub mod services;
 pub mod handlers;
 #[cfg(windows)]
 pub mod service;
+mod ephemeral;
 #[cfg(windows)]
 pub mod generation;
 #[cfg(windows)]

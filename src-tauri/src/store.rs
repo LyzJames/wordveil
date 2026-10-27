@@ -1,4 +1,4 @@
-//! Unlocked vault storage: SQLCipher schema (M1), object registry and AEAD blobs.
+//! Unlocked vault storage: SQLCipher schema (0.2.0), object registry and AEAD blobs.
 //!
 //! Disk objects use random names; original names, hashes and every derived
 //! artefact (pages, OCR, text, vectors, snapshots, exports) live encrypted in
@@ -20,9 +20,41 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 8;
 
-const M1_SCHEMA: &str = r#"
+const SCHEMA_8: &str = r#"
+ALTER TABLE sy_conversations ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sy_conversations ADD COLUMN title_custom INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sy_turns ADD COLUMN branch TEXT NOT NULL DEFAULT '';
+ALTER TABLE sy_turns ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sy_messages ADD COLUMN turn_id TEXT;
+CREATE TABLE sy_branches(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES sy_conversations(id),title TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE sy_branch_messages(branch TEXT NOT NULL REFERENCES sy_branches(id),message_id TEXT NOT NULL REFERENCES sy_messages(id),ordinal INTEGER NOT NULL,PRIMARY KEY(branch,message_id),UNIQUE(branch,ordinal));
+INSERT INTO sy_branches SELECT branch,id,'原始分支',created_at FROM sy_conversations;
+INSERT INTO sy_branch_messages SELECT c.branch,m.id,m.seq FROM sy_messages m JOIN sy_conversations c ON c.id=m.conversation_id;
+UPDATE sy_turns SET branch=(SELECT branch FROM sy_conversations WHERE id=conversation_id);
+CREATE TABLE sy_memories(id TEXT PRIMARY KEY,project_id TEXT REFERENCES matters(id),text TEXT NOT NULL,source_conversation TEXT,source_message TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX sy_memory_scope ON sy_memories(project_id,updated_at);
+CREATE TABLE sy_context(conversation_id TEXT NOT NULL REFERENCES sy_conversations(id),branch TEXT NOT NULL,recipient TEXT NOT NULL,policy TEXT NOT NULL,revision INTEGER NOT NULL,through_ordinal INTEGER NOT NULL,items TEXT NOT NULL,coverage TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(conversation_id,branch,recipient));
+ALTER TABLE sy_turns ADD COLUMN context_info TEXT;
+CREATE TABLE sy_request_archive(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL,recipient TEXT NOT NULL,purpose TEXT NOT NULL,status TEXT NOT NULL,reasoning TEXT NOT NULL,input_tokens INTEGER NOT NULL,output_tokens INTEGER NOT NULL,error TEXT,created_at TEXT NOT NULL,finished_at TEXT);
+CREATE TABLE sy_blob_gc(blob TEXT PRIMARY KEY);
+"#;
+
+// Additive migration: historical business objects and original encrypted blobs
+// remain readable. New chat rows never reuse an old flow's authorizations.
+const SCHEMA_7: &str = r#"
+CREATE TABLE IF NOT EXISTS sy_conversations(id TEXT PRIMARY KEY REFERENCES objects(id),title TEXT NOT NULL,project_id TEXT,connection_id TEXT,branch TEXT NOT NULL,media_mode TEXT NOT NULL DEFAULT 'local',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sy_messages(seq INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,conversation_id TEXT NOT NULL REFERENCES sy_conversations(id),role TEXT NOT NULL,original TEXT NOT NULL,wire TEXT,status TEXT NOT NULL,sources TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS sy_messages_conversation ON sy_messages(conversation_id,seq);
+CREATE TABLE IF NOT EXISTS sy_maps(conversation_id TEXT NOT NULL REFERENCES sy_conversations(id),branch TEXT NOT NULL,recipient TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(conversation_id,branch,recipient));
+CREATE TABLE IF NOT EXISTS sy_turns(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES sy_conversations(id),connection_id TEXT NOT NULL,recipient TEXT NOT NULL,state TEXT NOT NULL,input TEXT NOT NULL,prepared TEXT,preview TEXT,expires_at TEXT NOT NULL,llm_used INTEGER NOT NULL DEFAULT 0,tools_used INTEGER NOT NULL DEFAULT 0,search_used INTEGER NOT NULL DEFAULT 0,raw_media_approved INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS sy_turn_active ON sy_turns(conversation_id) WHERE state IN ('preparing','review','running');
+CREATE TABLE IF NOT EXISTS sy_requests(id TEXT PRIMARY KEY,turn_id TEXT NOT NULL REFERENCES sy_turns(id),recipient TEXT NOT NULL,purpose TEXT NOT NULL,status TEXT NOT NULL,reasoning TEXT NOT NULL,input_tokens INTEGER NOT NULL DEFAULT 0,output_tokens INTEGER NOT NULL DEFAULT 0,error TEXT,created_at TEXT NOT NULL,finished_at TEXT);
+CREATE TABLE IF NOT EXISTS sy_tool_audit(id INTEGER PRIMARY KEY,turn_id TEXT NOT NULL REFERENCES sy_turns(id),tool TEXT NOT NULL,scope TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
+"#;
+
+const SCHEMA_1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ALTER TABLE roots ADD COLUMN action TEXT NOT NULL DEFAULT 'ui';
 ALTER TABLE roots ADD COLUMN created_at TEXT;
@@ -74,9 +106,9 @@ CREATE TABLE IF NOT EXISTS ui_requests(id TEXT PRIMARY KEY REFERENCES objects(id
 CREATE TABLE IF NOT EXISTS ranges(id TEXT PRIMARY KEY REFERENCES objects(id), media_id TEXT NOT NULL, start_s REAL NOT NULL, end_s REAL, created_at TEXT NOT NULL);
 "#;
 
-/// M2: user-managed generation connections, capability records, request audit
+/// 0.3.0: user-managed generation connections, capability records, request audit
 /// and destination-bound egress grants. Keys are not stored here (DPAPI files).
-const M2_SCHEMA: &str = r#"
+const SCHEMA_2: &str = r#"
 CREATE TABLE IF NOT EXISTS connections(id TEXT PRIMARY KEY REFERENCES objects(id), name TEXT NOT NULL, provider TEXT NOT NULL, protocol TEXT NOT NULL, base_url TEXT NOT NULL, model_id TEXT NOT NULL, timeout_s INTEGER NOT NULL, max_output_tokens INTEGER NOT NULL, proxy TEXT NOT NULL, credential TEXT, status TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, revoked_at TEXT);
 CREATE TABLE IF NOT EXISTS connection_drafts(id TEXT PRIMARY KEY REFERENCES objects(id), connection_id TEXT, profile TEXT NOT NULL, credential TEXT, created_at TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS capabilities(connection_id TEXT NOT NULL, capability TEXT NOT NULL, binding TEXT NOT NULL, status TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, tested_at TEXT NOT NULL, PRIMARY KEY(connection_id, capability));
@@ -85,12 +117,12 @@ CREATE INDEX IF NOT EXISTS generation_requests_root ON generation_requests(root)
 CREATE TABLE IF NOT EXISTS egress_grants(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT, connection_id TEXT NOT NULL, host TEXT NOT NULL, purpose TEXT NOT NULL, scope_id TEXT NOT NULL, question_id TEXT NOT NULL, max_items INTEGER NOT NULL, max_requests INTEGER NOT NULL, preview TEXT NOT NULL, created_at TEXT NOT NULL, approved_at TEXT, revoked_at TEXT);
 "#;
 
-/// M2 (second segment): LangGraph flow runs. The orchestrator's checkpoints,
+/// 0.3.0 (second segment): LangGraph flow runs. The orchestrator's checkpoints,
 /// channel blobs and pending writes are opaque serialised bytes it alone
 /// reads back; receipts make every state-changing call idempotent across a
 /// continued run. Context packets, goals and native media payload records
 /// support the narrow roles.
-const M3_SCHEMA: &str = r#"
+const SCHEMA_3: &str = r#"
 CREATE TABLE IF NOT EXISTS flow_runs(id TEXT PRIMARY KEY, root TEXT NOT NULL, owner TEXT NOT NULL, owner_input TEXT NOT NULL, skill TEXT NOT NULL, flow TEXT NOT NULL, flow_version TEXT, inputs TEXT NOT NULL, snapshot_generation INTEGER NOT NULL, status TEXT NOT NULL, reason TEXT, attempts INTEGER NOT NULL DEFAULT 1, requests INTEGER NOT NULL DEFAULT 0, stored_bytes INTEGER NOT NULL DEFAULT 0, output TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS flow_runs_root ON flow_runs(root, status);
 CREATE TABLE IF NOT EXISTS flow_owners(run TEXT NOT NULL REFERENCES flow_runs(id), invocation TEXT NOT NULL, input TEXT NOT NULL, PRIMARY KEY(run, invocation));
@@ -104,16 +136,16 @@ CREATE TABLE IF NOT EXISTS context_packets(id TEXT PRIMARY KEY REFERENCES object
 CREATE TABLE IF NOT EXISTS native_media(id TEXT PRIMARY KEY REFERENCES objects(id), grant_id TEXT NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, blob TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
 "#;
 
-/// M2 fix round: the user's own "依据有误？" notes on a result (they stay in
+/// 0.3.0 fix round: the user's own "依据有误？" notes on a result (they stay in
 /// the vault, are never sent and go when the result is removed), and an owner
 /// index for blob lookups such as cached page thumbnails.
-const M4_SCHEMA: &str = r#"
+const SCHEMA_4: &str = r#"
 CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY REFERENCES objects(id), result_ref TEXT NOT NULL, claim_id TEXT, issue TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS feedback_result ON feedback(result_ref);
 CREATE INDEX IF NOT EXISTS blobs_owner ON blobs(owner, purpose);
 "#;
 
-const M5_SCHEMA: &str = r#"
+const SCHEMA_5: &str = r#"
 CREATE TABLE IF NOT EXISTS network_sources(id TEXT PRIMARY KEY REFERENCES objects(id), connection_id TEXT NOT NULL, domains TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS external_connections(id TEXT PRIMARY KEY REFERENCES objects(id), name TEXT NOT NULL, endpoint TEXT NOT NULL, credential TEXT, timeout_s INTEGER NOT NULL, proxy TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS external_bindings(id TEXT PRIMARY KEY REFERENCES objects(id), connection_id TEXT NOT NULL, name TEXT NOT NULL, descriptor TEXT NOT NULL, schema_hash TEXT NOT NULL, server_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
@@ -126,10 +158,10 @@ CREATE TABLE IF NOT EXISTS knowledge_packages(id TEXT PRIMARY KEY REFERENCES obj
 CREATE TABLE IF NOT EXISTS trusted_artifacts(id TEXT PRIMARY KEY REFERENCES objects(id), root TEXT NOT NULL, target TEXT NOT NULL, display_name TEXT NOT NULL, blob TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
 "#;
 
-/// M3: bounded ANN partitions, durable unpublished index batches, scoped
+/// 0.4.0: bounded ANN partitions, durable unpublished index batches, scoped
 /// graph provenance and the comparison batch ledger. All payloads stay in
 /// SQLCipher; no cleartext job or vector files are created.
-const M6_SCHEMA: &str = r#"
+const SCHEMA_6: &str = r#"
 ALTER TABLE chunks ADD COLUMN partition_id TEXT NOT NULL DEFAULT '';
 UPDATE chunks SET partition_id=matter_id||':'||CAST((rowid-1)/10000 AS TEXT);
 CREATE INDEX chunks_partition ON chunks(partition_id,rowid);
@@ -175,6 +207,9 @@ pub struct Vault {
     pub runtime: Runtime,
     /// In-memory ANN accelerator; the SQLCipher vectors remain the baseline.
     pub(crate) dense: Option<crate::partitioned_index::PartitionCache>,
+    // Last field: close the database and zeroize purpose keys before removing
+    // the temporary ciphertext directory. No wrapped key/header is persisted.
+    pub(crate) ephemeral: Option<crate::ephemeral::Area>,
 }
 
 pub fn new_ref() -> String {
@@ -184,8 +219,9 @@ pub fn new_ref() -> String {
 impl Vault {
     pub fn open(dir: &Path, header: VaultHeader, keys: VaultKeys, registry: Registry) -> Result<Self> {
         let ledger = Ledger::open(&dir.join(DB_FILE), &keys.db)?;
-        let vault = Self { id: header.vault_id.clone(), dir: dir.to_path_buf(), header, keys, runtime: Runtime { registry, ledger }, dense: None };
+        let vault = Self { id: header.vault_id.clone(), dir: dir.to_path_buf(), header, keys, runtime: Runtime { registry, ledger }, dense: None, ephemeral: None };
         vault.collect_orphan_files()?;
+        vault.collect_chat_garbage()?;
         Ok(vault)
     }
 
@@ -293,6 +329,11 @@ impl Vault {
         Ok(())
     }
 
+    pub(crate) fn collect_chat_garbage(&self)->Result<()> {
+        let blobs={let mut stmt=self.db().prepare("SELECT blob FROM sy_blob_gc")?;stmt.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?};
+        for blob in blobs {self.delete_blob(&blob)?;self.db().execute("DELETE FROM sy_blob_gc WHERE blob=?",[blob])?;}Ok(())
+    }
+
     pub fn blob_files(&self) -> Result<Vec<(String, PathBuf)>> {
         let mut statement = self.db().prepare("SELECT id,file FROM blobs ORDER BY id")?;
         let rows = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
@@ -336,7 +377,7 @@ impl Vault {
 
     /// Typed result payloads (encrypted in SQLCipher) referenced by SkillResult.data_ref.
     pub fn put_result(&self, skill: &str, invocation: &str, kind: &str, payload: &Value) -> Result<String> {
-        let id = self.register(kind, "m1", Some(invocation))?;
+        let id = self.register(kind, "0.2.0", Some(invocation))?;
         self.db().execute(
             "INSERT INTO results(id,skill,invocation,kind,payload,created_at) VALUES(?,?,?,?,?,?)",
             params![id, skill, invocation, kind, serde_json::to_string(payload)?, now_rfc3339()],
@@ -359,6 +400,12 @@ impl Vault {
         // Guard every consumer (UI, generation and export), while preserving
         // the original encrypted record for audit and explicit recalculation.
         if kind=="CalculationRef" {
+            if matches!(payload["calculation_type"].as_str(), Some("loan" | "annualized"))
+                && payload["engine"] != "lvjin-finance/3"
+                && ["period_start", "period_end"].iter().any(|key| payload["assumptions"][key].as_str().is_some_and(|v| !v.is_empty())) {
+                payload["requires_recalculation"] = Value::Bool(true);
+                payload["recalculation_reason"] = Value::String("旧版借款或年化计算未可靠执行日期筛选，请按原口径重新计算。".into());
+            }
             if let Some(irr)=payload.get_mut("result").and_then(|r|r.get_mut("irr")).and_then(Value::as_object_mut) {
                 if irr.get("status").and_then(Value::as_str)==Some("unique") && irr.get("sign_changes").and_then(Value::as_i64)!=Some(1) {
                     irr.remove("annual_rate");
@@ -385,7 +432,7 @@ impl Vault {
         if let Some(id) = self.db().query_row("SELECT id FROM matters WHERE is_root=1", [], |r| r.get(0)).optional()? {
             return Ok(id);
         }
-        let id = self.register("MatterRef", "m1", None)?;
+        let id = self.register("MatterRef", "0.2.0", None)?;
         let now = now_rfc3339();
         self.db().execute(
             "INSERT INTO matters(id,title,matter_type,region,status,is_root,notes,created_at,updated_at) VALUES(?,?,?,?,?,1,NULL,?,?)",
@@ -430,41 +477,60 @@ pub(crate) fn migrate(db: &Connection) -> Result<()> {
         return Err(Error::Integrity);
     }
     if version < 1 {
-        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M1_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m1-1');PRAGMA user_version=1;COMMIT;"));
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_1}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/v0.2.0-1');PRAGMA user_version=1;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());
         }
     }
     if version < 2 {
-        // Additive only: M1 data stays as it is; M2 tables start empty.
-        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M2_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=2;COMMIT;"));
+        // Additive only: 0.2.0 data stays as it is; 0.3.0 tables start empty.
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_2}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/v0.3.0-2') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=2;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());
         }
     }
     if version < 3 {
-        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M3_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-3') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=3;COMMIT;"));
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_3}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/v0.3.0-3') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=3;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());
         }
     }
     if version < 4 {
-        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M4_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-4') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=4;COMMIT;"));
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_4}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/v0.3.0-4') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=4;COMMIT;"));
         if let Err(error) = applied {
             let _ = db.execute_batch("ROLLBACK;");
             return Err(error.into());
         }
     }
     if version < 5 {
-        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M5_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m2-5') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=5;COMMIT;"));
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_5}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/v0.3.0-5') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=5;COMMIT;"));
         if let Err(error) = applied { let _ = db.execute_batch("ROLLBACK;"); return Err(error.into()); }
     }
     if version < 6 {
-        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{M6_SCHEMA}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/m3-6') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=6;COMMIT;"));
+        let applied = db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_6}INSERT INTO meta(key,value) VALUES('schema','lvjin.vault-db/v0.4.0-6') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=6;COMMIT;"));
         if let Err(error) = applied { let _ = db.execute_batch("ROLLBACK;"); return Err(error.into()); }
+    }
+    {
+        // Only object format labels change. Immutable result payloads, request
+        // ledgers and encrypted blobs retain their original audit identity.
+        // Immutable result payloads keep their original version labels.
+        let applied = (|| -> Result<()> {
+            db.execute_batch("BEGIN IMMEDIATE;")?;
+            db.execute_batch("UPDATE objects SET version=CASE substr(version,1,2) WHEN 'm0' THEN '0.1.0' WHEN 'm1' THEN '0.2.0' WHEN 'm2' THEN '0.3.0' WHEN 'm3' THEN '0.4.0' WHEN 'm4' THEN '0.5.0' END || substr(version,3) WHERE version GLOB 'm[0-4]' OR version GLOB 'm[0-4]-*';COMMIT;")?;
+            Ok(())
+        })();
+        if let Err(error) = applied { let _ = db.execute_batch("ROLLBACK;"); return Err(error); }
+    }
+    if version < 7 {
+        let applied=db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_7}INSERT INTO meta(key,value) VALUES('schema','shouyu.vault-db/0.6.0-7') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=7;COMMIT;"));
+        if let Err(error)=applied {let _=db.execute_batch("ROLLBACK;");return Err(error.into());}
+    }
+    if version < 8 {
+        let applied=db.execute_batch(&format!("BEGIN IMMEDIATE;{SCHEMA_8}INSERT INTO meta(key,value) VALUES('schema','shouyu.vault-db/0.7.0-8') ON CONFLICT(key) DO UPDATE SET value=excluded.value;PRAGMA user_version=8;COMMIT;"));
+        if let Err(error)=applied {let _=db.execute_batch("ROLLBACK;");return Err(error.into());}
     }
     // Idempotent for pre-release Schema 6 development vaults too. Both are
     // covering metadata indexes; original text and vectors remain unchanged.

@@ -65,6 +65,7 @@ pub fn decode(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
     if range_media != source {
         return Err(Error::Denied);
     }
+    ctx.lock()?.db().execute("UPDATE document_versions SET status='processing_media',error_code=NULL WHERE id=?", [&version])?;
     let scratch = ctx.services.media.scratch()?;
     let input_file = scratch.input_dir.join("input.media");
     {
@@ -113,7 +114,7 @@ pub fn decode(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
                 vault.delete_blob(&pcm)?;
             }
             for (seq, (from, to)) in audio_windows(samples.len(), 30.0, 1.0).into_iter().enumerate() {
-                let id = vault.register("AudioSegmentRef", "m1", Some(&source))?;
+                let id = vault.register("AudioSegmentRef", "0.2.0", Some(&source))?;
                 let bytes: Vec<u8> = samples[from..to].iter().flat_map(|v| v.to_le_bytes()).collect();
                 let pcm = vault.put_blob(&id, "audio_pcm_f32", &bytes)?;
                 let (start_s, end_s) = (start + from as f64 / SAMPLE_RATE as f64, start + to as f64 / SAMPLE_RATE as f64);
@@ -179,7 +180,7 @@ pub fn decode(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
             let page_id = match existing {
                 Some(id) => id,
                 None => {
-                    let id = vault.register("PageRef", "m1", Some(&version))?;
+                    let id = vault.register("PageRef", "0.2.0", Some(&version))?;
                     let image = vault.put_blob(&id, "page_image", &png)?;
                     vault.db().execute(
                         "INSERT INTO pages(id,version_id,page_no,source,width,height,image_blob,created_at) VALUES(?,?,?,'frame',?,?,?,?)",
@@ -188,7 +189,7 @@ pub fn decode(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
                     id
                 }
             };
-            let frame = vault.register("ImageRef", "m1", Some(&source))?;
+            let frame = vault.register("ImageRef", "0.2.0", Some(&source))?;
             vault.db().execute("INSERT OR REPLACE INTO frames(id,media_id,seq,pts,time_s,page_id,created_at) VALUES(?,?,?,NULL,?,?,?)", params![frame, source, seq as i64, pts, page_id, now_rfc3339()])?;
             frames_out.push(json!({"frame_id": frame, "page_id": page_id, "seq": seq, "pts_s": pts, "target_s": start + pick.target_s}));
         }
@@ -219,7 +220,7 @@ pub fn transcribe(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<E
     ctx.authorize(invocation, "vault.write")?;
     let segments = refs_of(input, "audio_segments")?;
     if !input["language_hint"].is_null() || !input["vocabulary_ref"].is_null() {
-        // No user-confirmed language hints or vocabularies exist in M1.
+        // No user-confirmed language hints or vocabularies exist in 0.2.0.
         return Err(Error::Denied);
     }
     if segments.is_empty() || segments.len() > ASR_SEGMENTS as usize {
@@ -300,6 +301,37 @@ fn question_exists(ctx: &Ctx, question: &str) -> Result<()> {
     ctx.lock()?.expect_kind(question, &["ImmutableQuestionRef"])
 }
 
+/// Failure bookkeeping uses the invocation's original capabilities and exact
+/// refs. It also runs after cancellation, before the result is sealed.
+pub(crate) fn failed(ctx: &Ctx, invocation: &Invocation, input: &Value, error: &Error) -> Result<()> {
+    let vault = ctx.lock()?;
+    let mut versions = vec![];
+    match invocation.skill() {
+        "media-decode" => {
+            vault.runtime.authorize(invocation, "vault.write")?;
+            let source = text_of(input, "source_ref")?;
+            let version: Option<String> = vault.db().query_row("SELECT version_id FROM media WHERE id=?", [&source], |r| r.get(0)).optional()?;
+            versions.extend(version);
+        }
+        "audio-transcribe" => {
+            vault.runtime.authorize(invocation, "vault.write")?;
+            for segment in refs_of(input, "audio_segments")? {
+                let version: Option<String> = vault.db().query_row("SELECT m.version_id FROM audio_segments a JOIN media m ON m.id=a.media_id WHERE a.id=?", [&segment], |r| r.get(0)).optional()?;
+                versions.extend(version);
+            }
+        }
+        "knowledge-index" if input["operation"] == "build" => {
+            vault.runtime.authorize(invocation, "index.write")?;
+            versions = refs_of(input, "document_versions")?;
+        }
+        _ => return Ok(()),
+    }
+    for version in versions {
+        vault.db().execute("UPDATE document_versions SET status=CASE WHEN EXISTS(SELECT 1 FROM chunks c JOIN objects o ON o.id=c.id WHERE c.version_id=? AND o.active=1) THEN 'partial' ELSE ? END,error_code=? WHERE id=? AND media_kind IN ('audio','video') AND status='processing_media'", params![version, if matches!(error, Error::Cancelled) { "interrupted" } else { "failed" }, error.code(), version])?;
+    }
+    Ok(())
+}
+
 /// The media review flow for an approved "analyze" task; the core checks the
 /// references it returns and builds the delivered answer.
 #[allow(clippy::too_many_arguments)]
@@ -334,7 +366,7 @@ fn native_review(ctx: &Ctx, invocation: &Invocation, input: &Value, question: &s
     for code in out["warnings"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
         if let Some(message) = super::flows::flow_warning(code) {
             if !parts.warnings.iter().any(|(c, _)| c == code) {
-                warn(parts, code, message);
+                warn(parts, code, &message);
             }
         }
     }
@@ -491,14 +523,18 @@ pub fn audio_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result
     let mut payload = json!({"media_id": source, "question_id": question, "analysis_goal": goal, "transcript": transcript, "coverage": bundle["coverage"],
         "direct_audio_check": "not_performed", "direct_audio_reason": "原音频复核需要通过音频输入自检的生成接口与授权"});
     let analyze = goal == "analyze" && super::answers::generation_available(ctx, invocation)?;
-    if analyze {
-        // The transcript becomes locatable evidence before the written analysis.
-        let version = bundle["version_id"].as_str().ok_or(Error::Integrity)?.to_owned();
+    let version = bundle["version_id"].as_str().ok_or(Error::Integrity)?.to_owned();
+    // Standalone transcription completes its index inside the durable task.
+    // Video's parent indexes both OCR and ASR together after this child.
+    if input["decoded_bundle_ref"].is_null() || analyze {
         let (_, index) = child(ctx, invocation, "knowledge-index", json!({"document_versions": [version], "operation": "build"}))?;
         if status_of(&index) != "completed" {
             parts.status = "partial".into();
             parts.warnings.extend(child_warnings(&index));
         }
+        if parts.status == "partial" { ctx.lock()?.db().execute("UPDATE document_versions SET status='partial' WHERE id=?", [&version])?; }
+    }
+    if analyze {
         let review = native_review(ctx, invocation, input, &question, std::slice::from_ref(&version), &[], &[], Some(&source), &mut parts)?;
         for (key, value) in review.as_object().cloned().unwrap_or_default() {
             payload[key] = value;
@@ -525,6 +561,7 @@ pub fn video_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result
     if !matches!(status_of(&decoded), "completed" | "partial") {
         return Err(Error::Worker("media_decode_failed".into()));
     }
+    if status_of(&decoded) == "partial" { parts.status = "partial".into(); parts.warnings.extend(child_warnings(&decoded)); }
     let bundle_ref = data_of(&decoded).ok_or(Error::Integrity)?;
     let bundle = ctx.lock()?.get_result(&bundle_ref)?.2;
     let frames: Vec<String> = bundle["frames"].as_array().cloned().unwrap_or_default().iter().filter_map(|f| f["page_id"].as_str().map(str::to_owned)).collect();
@@ -548,6 +585,7 @@ pub fn video_review(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result
         parts.status = "partial".into();
         parts.warnings.extend(child_warnings(&index));
     }
+    if parts.status == "partial" { ctx.lock()?.db().execute("UPDATE document_versions SET status='partial' WHERE id=?", [&version])?; }
     let mut payload = json!({"media_id": source, "question_id": question, "analysis_goal": goal, "frame_ocr": ocr_ref, "audio_review": data_of(&audio),
         "coverage": {"visual_samples": bundle["coverage"]["visual_samples"], "ocr_ranges": bundle["frames"], "asr_ranges": bundle["coverage"]["audio_ranges"],
             "direct_audio_ranges": [], "native_video_ranges": [], "omitted_ranges": bundle["coverage"]["omitted_ranges"]},

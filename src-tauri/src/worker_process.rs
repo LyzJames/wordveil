@@ -22,9 +22,7 @@ pub struct CpuArtifact {
 /// ready/result metadata records the actual device. Both paths share one owner
 /// and one artefact; the CPU numerical reference remains independently tested.
 pub fn qualified_reranker_policy(key:&ModelKey)->bool {
-    key.model=="reranker" && key.device=="cuda_or_cpu"
-        && key.engine=="transformers-5.20.0-torch-2.14.1-cu126"
-        && key.profile=="reranker-fp32-ieee-cuda86-or-cpu-v1"
+    let _=key;false
 }
 
 pub fn reranker_cpu_key(key:&ModelKey)->Option<ModelKey> {
@@ -95,7 +93,7 @@ impl WorkerInstallation {
         let work_root=work_root.canonicalize()?;
         let mut selected=BTreeMap::new();
         for artifact in artifacts {
-            if (artifact.key.device!="cpu" && !qualified_reranker_policy(&artifact.key)) || artifact.key.profile.is_empty() || artifact.files.is_empty() || !matches!(artifact.key.model.as_str(),"embedding"|"reranker"|"grounding"|"asr"|"ocr-det"|"ocr-rec"|"uvdoc"|"textline-ori"|"doc-ori") { return Err(Error::Integrity); }
+            if artifact.key.device!="cpu" || artifact.key.profile.is_empty() || artifact.files.is_empty() || !matches!(artifact.key.model.as_str(),"privacy-has"|"embedding"|"asr"|"ocr-det"|"ocr-rec"|"uvdoc"|"textline-ori"|"doc-ori") { return Err(Error::Integrity); }
             let directory=root.join(&artifact.directory).canonicalize()?;
             if !directory.starts_with(&root) { return Err(Error::Integrity); }
             if let Some(key)=reranker_cpu_key(&artifact.key) {
@@ -141,14 +139,6 @@ impl WorkerInstallation {
         let argument=strip(&directory)?;
         let mut arguments=vec!["--model".into(),key.model.clone(),"--artifact".into(),argument];
         let mut runtime=vec![directory];
-        if qualified_reranker_policy(key) || reranker_cpu_policy(key) {
-            let profile=self.root.join("resources/models/reranker-backend.json").canonicalize()?;
-            if !profile.starts_with(&self.root) {return Err(Error::Integrity);}
-            let actual=std::fs::read(&profile)?;
-            if Sha256::digest(&actual)!=Sha256::digest(include_bytes!("../../resources/models/reranker-backend.json")) {return Err(Error::Integrity);}
-            arguments.extend(["--backend".into(),if qualified_reranker_policy(key){"cuda_or_cpu".into()}else{"cpu_fallback".into()},"--backend-profile".into(),strip(&profile)?]);
-            runtime.push(profile);
-        }
         let policy=self.launcher.policy(arguments,runtime,scratch.clone(),8usize*1024*1024*1024)?;
         let mut process=IsolatedProcess::spawn(policy)?;
         // A worker that exits before reporting ready (memory pressure, broken

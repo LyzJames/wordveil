@@ -151,7 +151,7 @@ pub struct IsolatedProcess {
     writer:Option<thread::JoinHandle<()>>,
     _profile:Profile,stopped:bool,
     error_reader:Option<thread::JoinHandle<()>>,
-    #[cfg(feature="m0-harness")] diagnostics:std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    #[cfg(feature="test-harness")] diagnostics:std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
 }
 unsafe impl Send for IsolatedProcess {}
 
@@ -168,13 +168,13 @@ impl IsolatedProcess {
         // private workdir before applying the inherited SID and Low label.
         let profile_name=String::from_utf16(&profile.name[..profile.name.len()-1]).map_err(|_|Error::Integrity)?;
         std::fs::create_dir_all(scratch.join("Packages").join(profile_name).join("AC/Temp"))?;
-        #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: profile created");
+        #[cfg(feature="test-harness")] eprintln!("isolation diagnostic: profile created");
         for path in &policy.runtime { grant_runtime(path)?; }
         let capability=if policy.runtime.is_empty() { std::ptr::null_mut() } else { runtime_capability()? };
         for path in &policy.read_only { profile.grant(path,false)?; }
-        #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: resources granted");
+        #[cfg(feature="test-harness")] eprintln!("isolation diagnostic: resources granted");
         profile.grant(&scratch,true)?;
-        #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: scratch granted");
+        #[cfg(feature="test-harness")] eprintln!("isolation diagnostic: scratch granted");
         let (child_input,parent_input)=pipe(false)?;
         let (parent_output,child_output)=pipe(true)?;
         let (parent_error,child_error)=pipe(true)?;
@@ -198,7 +198,7 @@ impl IsolatedProcess {
         let mut block:Vec<u16>=environment.iter().flat_map(|(key,value)|wide(format!("{key}={value}"))).collect(); block.push(0);
         let mut process=std::ptr::null_mut(); let mut job=std::ptr::null_mut(); let mut pid=0;
         check(unsafe { lvjin_spawn_container(wide(&executable).as_ptr(),command.as_mut_ptr(),wide(&scratch).as_ptr(),block.as_mut_ptr(),profile.sid,capability,child_input.as_raw_handle() as HANDLE,child_output.as_raw_handle() as HANDLE,child_error.as_raw_handle() as HANDLE,policy.memory_limit,&mut process,&mut job,&mut pid) })?;
-        #[cfg(feature="m0-harness")] eprintln!("isolation diagnostic: process launched");
+        #[cfg(feature="test-harness")] eprintln!("isolation diagnostic: process launched");
         drop(child_input); drop(child_output); drop(child_error);
         // A hostile child can stop reading stdin. The coordinator must keep
         // polling cancellation while a dedicated thread performs WriteFile.
@@ -212,14 +212,14 @@ impl IsolatedProcess {
             }
         });
         // Errors are intentionally discarded, never copied into ordinary product logs.
-        #[cfg(feature="m0-harness")] let diagnostics=std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        #[cfg(feature="m0-harness")] let reader_diagnostics=diagnostics.clone();
+        #[cfg(feature="test-harness")] let diagnostics=std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        #[cfg(feature="test-harness")] let reader_diagnostics=diagnostics.clone();
         let error_reader=thread::spawn(move || {
-            #[cfg(feature="m0-harness")] {
+            #[cfg(feature="test-harness")] {
                 let mut data=Vec::new(); let _=parent_error.take(64*1024).read_to_end(&mut data);
                 if let Ok(mut target)=reader_diagnostics.lock() { *target=data; }
             }
-            #[cfg(not(feature="m0-harness"))] { let _=std::io::copy(&mut {parent_error},&mut std::io::sink()); }
+            #[cfg(not(feature="test-harness"))] { let _=std::io::copy(&mut {parent_error},&mut std::io::sink()); }
         });
         let (sender,receiver)=mpsc::sync_channel(2);
         let reader=thread::spawn(move || {
@@ -234,10 +234,10 @@ impl IsolatedProcess {
                 if sender.send(result.map(|_|line)).is_err() || failed { break; }
             }
         });
-        Ok(Self { process,job,pid,input:Some(input),receiver:Some(receiver),reader:Some(reader),writer:Some(writer),error_reader:Some(error_reader),_profile:profile,stopped:false,#[cfg(feature="m0-harness")] diagnostics })
+        Ok(Self { process,job,pid,input:Some(input),receiver:Some(receiver),reader:Some(reader),writer:Some(writer),error_reader:Some(error_reader),_profile:profile,stopped:false,#[cfg(feature="test-harness")] diagnostics })
     }
 
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     pub fn synthetic_diagnostics(&mut self)->String {
         let mut code=0; unsafe { windows_sys::Win32::System::Threading::GetExitCodeProcess(self.process,&mut code); }
         if code!=259 { if let Some(reader)=self.error_reader.take() { let _=reader.join(); } }
@@ -275,7 +275,7 @@ impl IsolatedProcess {
         }
     }
 
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     pub fn receive_synthetic_probe_line(&mut self,cancellation:&AtomicBool,deadline:Instant)->Result<Vec<u8>> {
         self.receive_line(cancellation,deadline)
     }

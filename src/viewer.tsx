@@ -386,11 +386,12 @@ function BlocksPane({ blocks, highlight }: { blocks: VersionPages['blocks']; hig
 function MediaPane({ target }: { target: ViewerTarget }) {
   const media = useLoad(() => api.view<MediaView>('media', target.version), [target.version]);
   const [audio, setAudio] = useState<{ segment: string; url: string } | null>(null);
-  const [frame, setFrame] = useState<string | null>(null);
+  const [frame, setFrame] = useState<string | null>(target.page ?? null);
+  useEffect(() => { setFrame(target.page ?? null); setAudio(null); }, [target.version, target.page]);
   const list = useRef<HTMLOListElement>(null);
   useEffect(() => {
     list.current?.querySelector('li.on')?.scrollIntoView({ block: 'nearest' });
-  }, [media.data]);
+  }, [media.data, target.highlight]);
   if (media.error) return <ErrorLine text={media.error} />;
   if (!media.data) return <Busy />;
   const m = media.data;
@@ -431,7 +432,7 @@ function MediaPane({ target }: { target: ViewerTarget }) {
               </button>
             ))}
           </div>
-          {frame && <PagePane pageId={frame} />}
+          {frame && <PagePane pageId={frame} highlight={target.highlight} />}
         </>
       )}
     </div>

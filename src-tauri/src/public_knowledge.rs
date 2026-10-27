@@ -98,7 +98,7 @@ impl Package {
     }
     pub fn search(&self, query: &str, limit: usize) -> Result<Value> {
         if query.trim().is_empty() || query.chars().count() > 128 || !(1..=10).contains(&limit) { return Err(Error::Contract); }
-        let jieba = jieba_rs::Jieba::new();
+        let jieba = crate::index::dictionary();
         let words: BTreeSet<String> = jieba.cut(query, false).into_iter().filter(|t| t.word.chars().count() > 1).map(|t|t.word.to_owned()).collect();
         let mut rows = vec![];
         for doc in &self.documents {

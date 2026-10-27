@@ -12,11 +12,271 @@ from collections import defaultdict
 from datetime import date
 from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 import re
+import ast
 
-ENGINE_VERSION = 'lvjin-finance/2'
+ENGINE_VERSION = 'lvjin-finance/3'
 _ROUNDING = {'half_up': ROUND_HALF_UP, 'half_even': ROUND_HALF_EVEN}
 _BASIS = {'act/365': 365, 'act/365.25': 365.25, 'act/360': 360}
 _DEFAULT_PRECISION = {'CNY': 2, 'USD': 2, 'EUR': 2, 'HKD': 2, 'JPY': 0}
+
+# Grounding checks explicit arithmetic, never infers a transaction or a legal
+# rule. Leaves must come from the claim's cited sources (or an earlier verified
+# expression whose source dependencies are also cited). No Python is executed.
+_CN_SCALAR = '零〇一二两三四五六七八九十百千万亿壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬億'
+_SCALAR = rf'(?:\d{{1,3}}(?:[,，]\d{{3}})+(?:\.\d{{1,6}})?|\d+(?:\.\d{{1,6}})?)(?:万|亿)?|[{_CN_SCALAR}]+(?:点[{_CN_SCALAR}]+)?'
+_SCALAR_RE = re.compile(rf'(?<![A-Za-z0-9.])(?:{_SCALAR})(?![\d.])')
+_MATH_UNIT = r'(?:元(?:/月)?|个月|月|节|次|人|%|％)?'
+# A bounded character window, rather than nested repetitions of number
+# tokens: ordinary account numbers without an equation must stay linear.
+_MATH_CHARS = frozenset(f'0123456789{_CN_SCALAR}点.,，元个月节次人%％()（）+＋-−－*＊×÷/／加上减去乘以除负分之')
+_RELATION = re.compile(r'约等于|约为|等于|=|＝|≈')
+
+
+def _equations(text: str) -> tuple[list[dict], bool]:
+    """Read both complete sides of each link, including overlapping chains.
+
+    A right-hand expression must never be truncated to its first number.
+    Character windows and link count remain bounded independently of input.
+    """
+    out, incomplete = [], False
+    def math_char(index):
+        char = text[index]
+        if char in ',，':
+            # Keep numeric thousands separators, not clause separators.
+            prefix = re.search(r'[\d.,，]+$', text[max(0, index - 256):index])
+            digits = text[index + 1:index + 4]
+            return bool(prefix and '.' not in prefix[0] and text[index - 1].isascii()
+                        and text[index - 1].isdigit() and len(digits) == 3
+                        and digits.isascii() and digits.isdigit()
+                        and (index + 4 >= len(text) or not text[index + 4].isdigit()))
+        return char in _MATH_CHARS or char in ' \t\u3000'
+    for relation in _RELATION.finditer(text):
+        start, right = relation.start(), relation.end()
+        while start > 0 and relation.start() - start < 256 and math_char(start - 1):
+            start -= 1
+        while right < len(text) and text[right].isspace():
+            right += 1
+        approx = right < len(text) and text[right] == '约'
+        right += int(approx)
+        end = right
+        while end < len(text) and end - right < 256 and math_char(end):
+            end += 1
+        left, result = text[start:relation.start()].strip(' \t\r\n,，'), text[right:end].strip(' \t\r\n,，')
+        if not left or not result:
+            continue
+        if len(out) >= 8 or start > 0 and math_char(start - 1) or end < len(text) and math_char(end):
+            incomplete = True
+            if len(out) >= 8:
+                break
+            continue
+        out.append(dict(expression=left, result=result, relation=relation.group(), approx=approx, start=start, end=end))
+    return out, incomplete
+
+
+def _scalar(raw: str) -> Decimal:
+    from .extract import chinese_integer
+    raw = raw.strip().replace(',', '').replace('，', '')
+    negative = raw.startswith(('-', '−', '－', '负'))
+    if negative:
+        raw = raw[1:]
+    percent = raw.endswith(('%', '％'))
+    raw = re.sub(r'(?:元(?:/月)?|个月|月|节|次|人|%|％)$', '', raw).strip()
+    if re.fullmatch(r'\d+(?:\.\d+)?[万亿]?', raw):
+        factor = Decimal(10_000 if raw.endswith('万') else 100_000_000 if raw.endswith('亿') else 1)
+        value = Decimal(raw.rstrip('万亿')) * factor
+    else:
+        whole, dot, fraction = raw.partition('点')
+        value = Decimal(chinese_integer(whole))
+        if dot:
+            digits = ''.join(str(chinese_integer(c)) for c in fraction)
+            value += Decimal('0.' + digits)
+    if percent:
+        value = value.scaleb(-2)
+    if negative:
+        value = -value
+    if not value.is_finite() or abs(value) > Decimal('1e18'):
+        raise ValueError('arithmetic_bound')
+    return value
+
+
+def _source_scalars(text: str) -> set[Decimal]:
+    # Dates and reference labels cannot supply arithmetic operands.
+    dates = [(m.start(), m.end()) for m in re.finditer(
+        rf'(?:\d{{4}}|[{_CN_SCALAR}]{{4}})\s*(?:年|[-/.])\s*(?:\d{{1,2}}|[{_CN_SCALAR}]+)\s*(?:月|[-/.])\s*(?:\d{{1,2}}|[{_CN_SCALAR}]+)日?', text)]
+    out = set()
+    for match in _SCALAR_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in dates):
+            continue
+        if text[match.end():].lstrip().startswith(('年', '月', '日', '号')):
+            continue
+        if match.start() > 0 and text[match.start() - 1] == '第' and text[match.end():].lstrip().startswith(('条', '页', '项', '款', '章', '节', '秒')):
+            continue
+        suffix = text[match.end():].lstrip()
+        if match.group() == '百' and suffix.startswith('分之'):
+            continue
+        try:
+            sign = '-' if match.start() > 0 and text[match.start() - 1] in '-−－负' else ''
+            percent = suffix.startswith(('%', '％')) or text[max(0, match.start() - 3):match.start()] == '百分之'
+            value = _scalar(sign + match.group() + ('%' if percent else ''))
+            out.add(value)
+        except (ValueError, InvalidOperation):
+            continue
+    return out
+
+
+def _arithmetic(expression: str) -> tuple[Decimal, list[frozenset[Decimal]], str]:
+    expression = expression.strip().replace('负', '-')
+    expression = re.sub(rf'(?<=[\d{_CN_SCALAR}])\s*[(（]\s*(元(?:/月)?|个月|月|节|次|人|%|％)\s*[)）]', r'\1', expression)
+    expression = re.sub(rf'百分之([{_CN_SCALAR}]+(?:点[{_CN_SCALAR}]+)?)', lambda m: format(_scalar(m[1] + '%'), 'f'), expression)
+    for word, operator in [('加上', '+'), ('减去', '-'), ('乘以', '*'), ('除以', '/'), ('加', '+'), ('减', '-'), ('乘', '*'), ('除', '/')]:
+        expression = expression.replace(word, operator)
+    expression = expression.translate(str.maketrans({'（': '(', '）': ')', '＋': '+', '＊': '*', '／': '/', '×': '*', '÷': '/', '−': '-', '－': '-'}))
+    atom = re.compile(rf'(?:{_SCALAR})\s*{_MATH_UNIT}')
+    expression = atom.sub(lambda m: format(_scalar(m.group()), 'f'), expression)
+    if len(expression) > 256 or not re.fullmatch(r'[\d.\s()+*/-]+', expression):
+        raise ValueError('arithmetic_syntax')
+    tree = ast.parse(expression, mode='eval')
+    if sum(isinstance(n, ast.BinOp) for n in ast.walk(tree)) not in range(13):
+        raise ValueError('arithmetic_bound')
+    leaves = []
+
+    def visit(node, depth=0, subtrahend=False):
+        if depth > 12:
+            raise ValueError('arithmetic_bound')
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            value = Decimal(ast.get_source_segment(expression, node))
+            leaves.append(frozenset((value, -value)) if subtrahend else frozenset((value,)))
+            return value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            if isinstance(node.operand, ast.Constant):
+                value = Decimal(ast.get_source_segment(expression, node.operand))
+                if isinstance(node.op, ast.USub): value = -value
+                leaves.append(frozenset((value, -value)) if subtrahend else frozenset((value,)))
+                return value
+            value = visit(node.operand, depth + 1)
+            return -value if isinstance(node.op, ast.USub) else value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
+            left, right = visit(node.left, depth + 1), visit(node.right, depth + 1, isinstance(node.op, ast.Sub))
+            if isinstance(node.op, ast.Add): value = left + right
+            elif isinstance(node.op, ast.Sub): value = left - right
+            elif isinstance(node.op, ast.Mult): value = left * right
+            elif right: value = left / right
+            else: raise ValueError('division_by_zero')
+            if not value.is_finite() or abs(value) > Decimal('1e18'):
+                raise ValueError('arithmetic_bound')
+            return value
+        raise ValueError('arithmetic_syntax')
+
+    with localcontext() as context:
+        context.prec = 48
+        return visit(tree.body), leaves, expression
+
+
+def verify_arithmetic(claims: list[dict]) -> dict:
+    """Source-bound, Decimal proofs for explicit + - * / equations only.
+
+    Proofs support numeric derivation, not the factual meaning of the operands.
+    Missing operands, unshown computations and unsupported syntax remain subject
+    to the normal grounding checks; a wrong equation is never excused by NLI.
+    """
+    sources = {source['id']: _source_scalars(source['text']) for claim in claims for source in claim['sources']}
+    parsed = {claim['id']: _equations(claim['text']) for claim in claims}
+    equations = [(claim, match) for claim in claims for match in parsed[claim['id']][0]]
+    proofs, accepted, wrong = [], set(), {}
+    for _ in range(4):
+        changed = False
+        for claim, match in equations:
+            identity = (claim['id'], match['start'], match['end'])
+            if identity in accepted:
+                continue
+            try:
+                value, leaves, expression = _arithmetic(match['expression'])
+                claimed, right_leaves, _ = _arithmetic(match['result'])
+                if len(leaves) == len(right_leaves) == 1:
+                    def unit(raw):
+                        raw = raw.strip().strip('()（）').strip()
+                        if raw.endswith(('%', '％')) or raw.startswith('百分之'):
+                            return 'percent'
+                        found = re.search(r'(元(?:/月)?|个月|月|节|次|人)$', raw)
+                        return found[0] if found else ''
+                    left_unit, right_unit = unit(match['expression']), unit(match['result'])
+                    if left_unit != right_unit and (left_unit not in ('', 'percent') or right_unit not in ('', 'percent')):
+                        continue
+                # A result atom is derived; operands of a displayed RHS
+                # expression must themselves have cited/verified premises.
+                if len(right_leaves) > 1:
+                    leaves += right_leaves
+            except (ValueError, SyntaxError, InvalidOperation, ArithmeticError) as error:
+                if str(error) == 'division_by_zero':
+                    wrong.setdefault(claim['id'], []).append(claim['text'][match['start']:match['end']].strip())
+                continue
+            allowed = {source['id'] for source in claim['sources']}
+            dependencies, parents = set(), []
+            for leaf in leaves:
+                direct = next((ref for ref in sorted(allowed) if leaf & sources[ref]), None)
+                previous = next((p for p in proofs if p['value'] in leaf and p['dependencies'] <= allowed), None)
+                if direct is not None:
+                    dependencies.add(direct)
+                elif previous is not None:
+                    dependencies |= previous['dependencies']
+                    parents.append(previous)
+                else:
+                    break
+            else:
+                # Exact equality; rounded results require an explicit rounding
+                # qualification and keep its precision in the recorded proof.
+                prefix = re.split(r'[;；。\n]', claim['text'][:match['start']])[-1][-32:]
+                suffix = re.split(r'[;；。\n]', claim['text'][match['end']:], maxsplit=1)[0][:48]
+                rounded = match['relation'] in ('≈', '约为', '约等于') or bool(match['approx']) or any(word in prefix + suffix for word in ('四舍五入', '约为', '约等于'))
+                scale = claimed.as_tuple().exponent
+                equal = value == claimed or (rounded and len(right_leaves) == 1 and -8 <= scale <= 0 and value.quantize(Decimal(1).scaleb(scale), rounding=ROUND_HALF_UP) == claimed)
+                if not equal:
+                    wrong.setdefault(claim['id'], []).append(claim['text'][match['start']:match['end']].strip())
+                    continue
+                canonical = f'{expression} {"=" if value == claimed else "≈"} {match["result"].strip()}'
+                if value != claimed:
+                    canonical += '（按原结果精度四舍五入）'
+                proof = {'value': claimed, 'dependencies': dependencies, 'parents': parents, 'equation': canonical, 'claim': claim['id']}
+                proofs.append(proof)
+                accepted.add(identity)
+                changed = True
+        if not changed:
+            break
+    rows = {}
+    for claim in claims:
+        allowed = {source['id'] for source in claim['sources']}
+        mentioned = _source_scalars(claim['text'])
+        relevant = [p for p in proofs if p['dependencies'] <= allowed and p['claim'] == claim['id']]
+        selected = []
+        visited = set()
+        incomplete = parsed[claim['id']][1]
+        def include(proof):
+            nonlocal incomplete
+            if proof['equation'] in visited:
+                return
+            if len(selected) >= 24:
+                incomplete = True
+                return
+            visited.add(proof['equation'])
+            for parent in proof['parents']:
+                include(parent)
+            if proof['equation'] not in [p['equation'] for p in selected] and len(selected) < 24:
+                selected.append(proof)
+            elif len(selected) >= 24:
+                incomplete = True
+        for proof in relevant:
+            include(proof)
+        for value in sorted(mentioned):
+            if any(p['value'] == value for p in selected):
+                continue
+            proof = next((p for p in proofs if p['value'] == value and p['dependencies'] <= allowed), None)
+            if proof is not None:
+                include(proof)
+        if wrong.get(claim['id']):
+            selected = []
+        rows[claim['id']] = {'verified': [{'equation': p['equation'], 'evidence_refs': sorted(p['dependencies'])} for p in selected],
+                             'invalid': list(dict.fromkeys(wrong.get(claim['id'], []))), 'coverage_incomplete': incomplete}
+    return {'engine': 'lvjin-arithmetic/1', 'claims': rows, 'limits': '每句最多24个依赖步骤，超出标为未完整核验；仅核验显式算式、原文操作数及运算结果，不确认交易事实、扣款顺序或法律适用。'}
 
 
 class InputError(ValueError):
@@ -47,7 +307,7 @@ def _date(value, field: str) -> date:
 
 class Context:
     def __init__(self, assumptions: dict):
-        self.assumptions = assumptions or {}
+        self.assumptions = dict(assumptions or {})
         self.rounding = _ROUNDING.get(self.assumptions.get('rounding', 'half_up'))
         if self.rounding is None:
             raise InputError('invalid_rounding')
@@ -59,6 +319,12 @@ class Context:
         self.precision = dict(_DEFAULT_PRECISION)
         self.precision.update({k: int(v) for k, v in (self.assumptions.get('currency_precision') or {}).items()})
         self.used = {'rounding': self.assumptions.get('rounding', 'half_up'), 'day_count': basis}
+        for key in ('period_start', 'period_end'):
+            if self.assumptions.get(key):
+                self.assumptions[key] = _date(self.assumptions[key], key).isoformat()
+                self.used[key] = self.assumptions[key]
+        if self.assumptions.get('period_start') and self.assumptions.get('period_end') and self.assumptions['period_start'] > self.assumptions['period_end']:
+            raise InputError('invalid_period_range')
 
     def money(self, value: Decimal, currency: str) -> str:
         places = self.precision.get(currency, 2)
@@ -427,6 +693,12 @@ def calculate(request: dict) -> dict:
         records = _records(request.get('records') or [])
         if not records:
             raise InputError('no_confirmed_inputs')
+        excluded = []
+        if kind in ('loan', 'annualized'):
+            excluded = [{'id': r.get('id'), 'reason': 'outside_period'} for r in records if not _in_period(r, ctx.assumptions)]
+            records = [r for r in records if _in_period(r, ctx.assumptions)]
+            if not records:
+                raise InputError('no_inputs_in_period')
         if kind == 'sum':
             result = calc_sum(records, ctx)
         elif kind == 'budget':
@@ -437,4 +709,7 @@ def calculate(request: dict) -> dict:
             result = calc_loan(records, ctx)
         else:
             raise InputError('unregistered_calculation')
+        if kind in ('loan', 'annualized'):
+            result['trace'] = {'included_ids': [r.get('id') for r in records], 'excluded': excluded,
+                               'period_start': ctx.assumptions.get('period_start'), 'period_end': ctx.assumptions.get('period_end')}
     return {'engine': ENGINE_VERSION, 'calculation_type': kind, 'assumptions_used': ctx.used, 'result': result}

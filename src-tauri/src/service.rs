@@ -32,6 +32,10 @@ mod external;
 pub(crate) mod comparison;
 #[path = "history_service.rs"]
 pub mod history;
+#[path = "conversation_service.rs"]
+pub mod conversation;
+#[path = "conversation_management.rs"]
+mod conversation_management;
 
 /// Capabilities any user action may receive (local only). Generation and
 /// probing are conditional and granted only to confirmed/protected roots.
@@ -115,6 +119,7 @@ struct Session {
     handle_name: String,
     vault: VaultHandle,
     cancel: Arc<AtomicBool>,
+    temporary: Option<(VaultHandle,Arc<AtomicBool>)>,
 }
 
 pub struct Config {
@@ -147,6 +152,7 @@ pub struct CoreService {
     /// Serialize explicit index continuation registration, including the
     /// interval before its worker updates the durable job's last root.
     index_resume_gate: Mutex<()>,
+    chat_gate: Mutex<()>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -164,6 +170,7 @@ pub enum Secret {
 
 impl CoreService {
     pub fn new(layout: Layout, config: Config, sink: Sink) -> Result<Arc<Self>> {
+        crate::ephemeral::sweep(&layout.data_root.join("ephemeral"))?;
         let services = Arc::new(Services::new(layout)?);
         services.log.event("core.started", &[("production", crate::logging::Field::Flag(services.layout.production))]);
         Ok(Arc::new(Self {
@@ -180,6 +187,7 @@ impl CoreService {
             auto_lock_minutes: AtomicU64::new(15),
             system_lock: AtomicBool::new(true),
             index_resume_gate: Mutex::new(()),
+            chat_gate: Mutex::new(()),
         }))
     }
 
@@ -195,13 +203,14 @@ impl CoreService {
     }
 
     fn vault(&self) -> Result<VaultHandle> {
-        self.session.lock().map_err(|_| Error::Integrity)?.as_ref().map(|s| s.vault.clone()).ok_or(Error::Locked)
+        self.session.lock().map_err(|_| Error::Integrity)?.as_ref().map(|s| s.temporary.as_ref().map(|(v,_)|v.clone()).unwrap_or_else(||s.vault.clone())).ok_or(Error::Locked)
     }
 
     fn session_cancel(&self, handle: &VaultHandle) -> Result<Arc<AtomicBool>> {
         let session = self.session.lock().map_err(|_| Error::Integrity)?;
-        let session = session.as_ref().filter(|s| Arc::ptr_eq(&s.vault, handle)).ok_or(Error::Locked)?;
-        Ok(session.cancel.clone())
+        let session = session.as_ref().ok_or(Error::Locked)?;
+        if let Some((vault,cancel))=&session.temporary {if Arc::ptr_eq(vault,handle){return Ok(cancel.clone());}}
+        if session.temporary.is_none()&&Arc::ptr_eq(&session.vault,handle){Ok(session.cancel.clone())}else{Err(Error::Locked)}
     }
 
     /// A reader that waited behind an index write must recheck the session
@@ -306,13 +315,15 @@ impl CoreService {
         let info = UnlockInfo { handle: handle.into(), vault_id: opened.id.clone(), root_matter, name };
         // Imports interrupted by a crash are marked for resumption, never duplicated.
         opened.db().execute("UPDATE jobs SET status='interrupted' WHERE status='running'", [])?;
-        opened.db().execute("UPDATE document_versions SET status='interrupted' WHERE status IN ('parsing','ocr','indexing','stored')", [])?;
+        opened.db().execute("UPDATE document_versions SET status='interrupted' WHERE status IN ('parsing','ocr','indexing','stored','processing_media')", [])?;
         // Flow runs cut off by an exit continue only after a new confirmation;
         // a request that left without a recorded reply has an unknown outcome.
         opened.db().execute("UPDATE flow_runs SET status='interrupted',reason='app_exit',updated_at=? WHERE status IN ('running','resuming')", [now_rfc3339()])?;
         opened.db().execute("UPDATE generation_requests SET status='unknown',finished_at=? WHERE status='sent'", [now_rfc3339()])?;
         opened.db().execute("UPDATE network_requests SET status='unknown',finished_at=? WHERE status='sent'",[now_rfc3339()])?;
         opened.db().execute("UPDATE network_actions SET state='unknown' WHERE state IN ('approved','running')",[])?;
+        opened.db().execute("UPDATE sy_turns SET state='interrupted',prepared=NULL,preview=NULL WHERE state IN ('preparing','running','review')",[])?;
+        opened.db().execute("UPDATE sy_requests SET status='unknown',finished_at=? WHERE status='sent'",[now_rfc3339()])?;
         comparison::recover(&opened)?;
         let managed:Vec<(String,Option<String>)>={
             let mut statement=opened.db().prepare("SELECT c.id,c.credential FROM external_connections c JOIN settings s ON s.key='managed-mcp:'||c.id WHERE c.enabled=1")?;
@@ -341,7 +352,7 @@ impl CoreService {
         self.auto_lock_minutes.store(opened.setting("auto_lock_minutes")?.and_then(|v| v.parse().ok()).unwrap_or(15).max(1), Ordering::Release);
         self.system_lock.store(opened.setting("lock_on_system_lock")?.map(|v| v != "0").unwrap_or(true), Ordering::Release);
         let mut session = self.session.lock().map_err(|_| Error::Integrity)?;
-        *session = Some(Session { handle_name, vault: Arc::new(Mutex::new(opened)), cancel: Arc::new(AtomicBool::new(false)) });
+        *session = Some(Session { handle_name, vault: Arc::new(Mutex::new(opened)), cancel: Arc::new(AtomicBool::new(false)), temporary:None });
         self.touch();
         Ok(())
     }
@@ -361,6 +372,7 @@ impl CoreService {
             let Some(session) = current.take() else { return Ok(()) };
             self.closing.store(true, Ordering::Release);
             session.cancel.store(true, Ordering::Release);
+            if let Some((_,cancel))=&session.temporary {cancel.store(true,Ordering::Release);}
             self.tokens.lock().map_err(|_| Error::Integrity)?.clear();
             let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
             for task in tasks.values() { task.cancel.store(true, Ordering::Release); }
@@ -374,6 +386,7 @@ impl CoreService {
         let (sent, done) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             services.stop_sensitive();
+            if let Some((temporary,_))=&session.temporary {if let (Ok(temp),Ok(primary))=(temporary.lock(),session.vault.lock()){let _=Self::archive_requests(&temp,&primary,None);}}
             if let Ok(mut vault) = session.vault.lock() {
                 // Flows keep their roots for confirmed continuation. Other
                 // tasks are cancelled once the database becomes available.
@@ -384,6 +397,8 @@ impl CoreService {
                 }
                 let _ = vault.db().execute("UPDATE flow_runs SET status='interrupted',reason='locked',updated_at=? WHERE status IN ('running','resuming')", [now_rfc3339()]);
                 let _ = vault.db().execute("UPDATE generation_requests SET status='unknown',finished_at=? WHERE status='sent'", [now_rfc3339()]);
+                let _ = vault.db().execute("UPDATE sy_turns SET state='interrupted',prepared=NULL,preview=NULL WHERE state IN ('preparing','running','review')",[]);
+                let _ = vault.db().execute("UPDATE sy_requests SET status='unknown',finished_at=? WHERE status='sent'",[now_rfc3339()]);
                 let _ = comparison::recover(&vault);
                 let scope = vault.id.clone();
                 if let Ok(root) = vault.runtime.begin_root(UserAction::trusted(&scope, &["settings.privacy"], "protected")) {
@@ -479,7 +494,7 @@ impl CoreService {
     fn ui_request(&self, operation: &str, payload: &Value) -> Result<String> {
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
-        let id = vault.register("TrustedUiRequestRef", "m1", None)?;
+        let id = vault.register("TrustedUiRequestRef", "0.2.0", None)?;
         vault.db().execute("INSERT INTO ui_requests(id,operation,payload,created_at) VALUES(?,?,?,?)", params![id, operation, payload.to_string(), now_rfc3339()])?;
         Ok(id)
     }
@@ -512,7 +527,7 @@ impl CoreService {
         };
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
-        let id = vault.register(kind, "m1", None)?;
+        let id = vault.register(kind, "0.2.0", None)?;
         vault.db().execute(
             "INSERT INTO selections(id,kind,path,display_name,bytes,sha256,purpose,created_at) VALUES(?,?,?,?,?,?,?,?)",
             params![id, kind, path.to_string_lossy(), display, bytes, digest, purpose, now_rfc3339()],
@@ -527,7 +542,7 @@ impl CoreService {
         }
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
-        let id = vault.register("ImmutableQuestionRef", "m1", None)?;
+        let id = vault.register("ImmutableQuestionRef", "0.2.0", None)?;
         vault.db().execute("INSERT INTO questions(id,text,created_at) VALUES(?,?,?)", params![id, text, now_rfc3339()])?;
         Ok(id)
     }
@@ -550,7 +565,7 @@ impl CoreService {
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
         vault.expect_kind(media, &["MediaVersionRef"])?;
-        let id = vault.register("ApprovedTimeRangeRef", "m1", Some(media))?;
+        let id = vault.register("ApprovedTimeRangeRef", "0.2.0", Some(media))?;
         vault.db().execute("INSERT INTO ranges(id,media_id,start_s,end_s,created_at) VALUES(?,?,?,?,?)", params![id, media, start_s, end_s, now_rfc3339()])?;
         Ok(id)
     }
@@ -564,7 +579,7 @@ impl CoreService {
         for id in ids {
             vault.expect_kind(id, if kind == "matter" { &["MatterRef"] } else { &["DocumentVersionRef"] })?;
         }
-        let filter = vault.register("KnownFilterRef", "m1", None)?;
+        let filter = vault.register("KnownFilterRef", "0.2.0", None)?;
         vault.db().execute("INSERT INTO filters(id,kind,value) VALUES(?,?,?)", params![filter, kind, serde_json::to_string(ids)?])?;
         Ok(filter)
     }
@@ -577,7 +592,7 @@ impl CoreService {
         if change.to_string().len() > 2 * 1024 * 1024 || !change["type"].is_string() {
             return Err(Error::Contract);
         }
-        let id = vault.register("PreparedChangeRef", "m1", Some(matter))?;
+        let id = vault.register("PreparedChangeRef", "0.2.0", Some(matter))?;
         vault.db().execute("INSERT INTO changes(id,matter_id,change,impact,status,created_at) VALUES(?,?,?,'{}','draft',?)", params![id, matter, change.to_string(), now_rfc3339()])?;
         Ok(id)
     }
@@ -592,7 +607,7 @@ impl CoreService {
         if let Some(id) = vault.setting(&key)? {
             return Ok(id);
         }
-        let id = vault.register("ComponentRef", "m1", None)?;
+        let id = vault.register("ComponentRef", "0.2.0", None)?;
         vault.set_setting(&key, &id)?;
         Ok(id)
     }
@@ -631,6 +646,11 @@ impl CoreService {
     /// `grant`: an approved egress grant to bind to the new root before the
     /// first invocation runs (one grant, one root, never reused).
     fn begin_with(&self, skill: &str, input: &Value, action: &str, grant: Option<&str>) -> Result<(VaultHandle, crate::runtime::Invocation)> {
+        if self.is_temporary() && matches!(skill,"vault-maintenance"|"privacy-settings"|"connection-settings"|"report-export") {return Err(Error::Denied);}
+        // Legacy generators and specialist workflows are retired. Even a
+        // caller retaining an old preview cannot start them after upgrading.
+        if !matches!(skill,"document-import"|"document-ocr"|"knowledge-index"|"evidence-read"|"media-decode"|"audio-transcribe"|"connection-settings"|"privacy-settings"|"vault-maintenance"|"diagnostics"|"report-export"|"matter-manage") {return Err(Error::Denied);}
+        if skill=="matter-manage" && input["operation"]!="read" {return Err(Error::Denied);}
         if !matches!(action, "ui" | "confirm" | "protected") {
             return Err(Error::Contract);
         }
@@ -710,7 +730,7 @@ impl CoreService {
             // Serialize task registration with session revocation. A task
             // prepared before a lock must not start after its task map drained.
             let session = self.session.lock().map_err(|_| Error::Integrity)?;
-            if !session.as_ref().is_some_and(|s| Arc::ptr_eq(&s.vault, &handle)) { return Err(Error::Locked); }
+            if !session.as_ref().is_some_and(|s| s.temporary.as_ref().map(|(v,_)|Arc::ptr_eq(v,&handle)).unwrap_or_else(||Arc::ptr_eq(&s.vault,&handle))) { return Err(Error::Locked); }
             let mut tasks = self.tasks.lock().map_err(|_| Error::Integrity)?;
             // Keep the most recent finished tasks only; running ones always stay.
             let mut finished: Vec<(String, String)> = tasks.iter().filter(|(_, t)| t.state.status != "running").map(|(id, t)| (t.state.started_at.clone(), id.clone())).collect();
@@ -933,7 +953,7 @@ impl CoreService {
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
         vault.get_result(result)?;
-        let id = vault.register("FeedbackRef", "m2", Some(result))?;
+        let id = vault.register("FeedbackRef", "0.3.0", Some(result))?;
         vault.db().execute(
             "INSERT INTO feedback(id,result_ref,claim_id,issue,note,created_at) VALUES(?,?,?,?,?,?)",
             params![id, result, claim, issue, (!note.is_empty()).then_some(note), now_rfc3339()],
@@ -1121,7 +1141,7 @@ impl CoreService {
             "SELECT json_extract(j.state,'$.selection'),j.id,d.matter_id,d.display_name,j.updated_at FROM jobs j JOIN document_versions v ON v.id=j.id JOIN documents d ON d.id=v.document_id WHERE j.status='interrupted' ORDER BY j.updated_at DESC",
         )?;
         let rows = statement.query_map([], |r| Ok(json!({"selection_id": r.get::<_, Option<String>>(0)?, "version_id": r.get::<_, String>(1)?, "matter_id": r.get::<_, String>(2)?, "display_name": r.get::<_, String>(3)?, "updated_at": r.get::<_, String>(4)?})))?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        Ok(rows.collect::<std::result::Result<_,_>>()?)
     }
 
     pub fn index_jobs(&self)->Result<Vec<Value>> {
@@ -1196,14 +1216,18 @@ impl CoreService {
     // ------------------------------------------------- generation connections
 
     fn credential_store(&self) -> Result<crate::generation::credentials::CredentialStore> {
-        let handle = self.vault()?;
-        let vault = self.lock_vault(&handle)?;
+        // Temporary chats borrow the unlocked primary credential boundary;
+        // no second DPAPI copy or recoverable temporary key is created.
+        let handle = self.session.lock().map_err(|_|Error::Integrity)?.as_ref().map(|s|s.vault.clone()).ok_or(Error::Locked)?;
+        let vault = handle.lock().map_err(|_|Error::Integrity)?;
+        if !self.session.lock().map_err(|_|Error::Integrity)?.as_ref().is_some_and(|s|Arc::ptr_eq(&s.vault,&handle)){return Err(Error::Locked);}
         crate::generation::credentials::CredentialStore::for_vault(&self.services.layout.data_root, &vault.id, &vault.keys.credential)
     }
 
     /// Secure input channel: the key is sealed with DPAPI immediately and only
     /// its credential reference reaches the draft (never Skill input or logs).
     pub fn connection_draft(&self, input: &Value, key: Option<Zeroizing<String>>) -> Result<String> {
+        if self.is_temporary(){return Err(Error::Denied);}
         let draft: crate::generation::connections::DraftInput = serde_json::from_value(input.clone()).map_err(|_| Error::Contract)?;
         let profile = draft.validate()?;
         let credential = match key.filter(|k| !k.trim().is_empty()) {
@@ -1314,7 +1338,33 @@ impl CoreService {
             "budget_analysis" => json!(["金融口径分析者", "声明证据检查者", "结果综合者"]),
             _ => json!(["法律适用分析者", "金融口径分析者", "声明证据检查者", "结果综合者"]),
         };
-        self.grant_preview(purpose, text, &question, &scope, matters.len().max(1), request["connection"].as_str(), input, Excerpts::Retrieval, json!({"roles": roles}))
+        let mut calculations = vec![];
+        if matches!(kind, "loan-analysis" | "budget-analysis") {
+            // Local-only preparation freezes the exact result before consent.
+            let prepared = self.run_skill(kind, input.clone(), "ui")?;
+            if let Some(review) = prepared["data_ref"].as_str() {
+                if let Some(id) = self.result(review)?["payload"]["calculation"].as_str() {
+                    let payload = self.result(id)?["payload"].clone();
+                    let value = handlers::answers::calculation_value(&payload);
+                    let mut dependencies = std::collections::BTreeSet::new();
+                    let mut displays = std::collections::BTreeSet::new();
+                    let handle = self.vault()?;
+                    let vault = self.lock_vault(&handle)?;
+                    for source in payload["input_sources"].as_array().cloned().unwrap_or_default() {
+                        if let Some(version) = source["version_id"].as_str() {
+                            let name: String = vault.db().query_row("SELECT d.display_name FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?", [version], |r| r.get(0))?;
+                            displays.insert(name);
+                            let mut statement = vault.db().prepare("SELECT id FROM chunks WHERE version_id=?")?;
+                            dependencies.extend(statement.query_map([version], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);
+                        }
+                    }
+                    calculations.push(json!({"calculation_id": id, "calculation_type": payload["calculation_type"], "text": value,
+                        "sha256": crate::store::sha256_hex(value.as_bytes()), "input_count": payload["inputs"].as_array().map(Vec::len).unwrap_or(0),
+                        "source_documents": displays, "evidence_ids": dependencies}));
+                }
+            }
+        }
+        self.grant_preview(purpose, text, &question, &scope, matters.len().max(1), request["connection"].as_str(), input, Excerpts::Retrieval, json!({"roles": roles, "calculations": calculations}))
     }
 
     /// Preview of a media review: approved images are prepared now (JPEG,
@@ -1463,14 +1513,27 @@ impl CoreService {
             let loaded = crate::generation::connections::load(&vault, &connection_id)?;
             (loaded.name, loaded.profile.endpoint.display_host(), loaded.profile.model_id, loaded.profile.max_output_tokens)
         };
+        let mut preparation_warnings = vec![];
         let items = match &excerpts {
             // Local-only retrieval for the preview (plain UI root, no generation).
             Excerpts::Retrieval => {
                 let envelope = self.run_skill("lvjin-retrieval", json!({"question_id": question, "scope_id": scope, "known_constraint_ids": [], "requested_output": "evidence_only"}), "ui")?;
-                match envelope["data_ref"].as_str() {
+                let items = match envelope["data_ref"].as_str() {
                     Some(id) => self.result(id)?["payload"]["items"].clone(),
                     None => json!([]),
+                };
+                if envelope["status"] != "completed" {
+                    if items.as_array().is_none_or(Vec::is_empty) {
+                        if envelope["status"] == "cancelled" { return Err(Error::Cancelled); }
+                        let code = envelope["warnings"].as_array().and_then(|ws| ws.first()).and_then(|w| w["code"].as_str()).unwrap_or("preview_retrieval_failed");
+                        return Err(match code {
+                            "budget" => Error::Budget, "locked" => Error::Locked, "integrity" => Error::Integrity,
+                            _ => Error::Worker(crate::sanitize_code(code.strip_prefix("worker:").unwrap_or(code))),
+                        });
+                    }
+                    preparation_warnings = envelope["warnings"].as_array().cloned().unwrap_or_default();
                 }
+                items
             }
             Excerpts::Pages(pages) => json!(self.page_excerpts(pages)?),
             Excerpts::Later => json!([]),
@@ -1478,18 +1541,18 @@ impl CoreService {
         };
         let excerpts: Vec<Value> = items.as_array().cloned().unwrap_or_default().iter().take(EGRESS_MAX_ITEMS as usize).map(|item| json!({
             "evidence_id": item["evidence_id"], "display_name": item["document"]["display_name"], "unit_title": item["unit_title"],
-            "pages": item["pages"], "locators": item["locators"], "excerpt": item["exact_text"].as_str().unwrap_or("").chars().take(240).collect::<String>(),
+            "pages": item["pages"], "locators": item["locators"], "excerpt": item["exact_text"].as_str().unwrap_or("").chars().take(240).collect::<String>(), "source_parts": item["source_parts"],
         })).collect();
         let mut preview = json!({"question": text.trim(), "connection": {"id": connection_id, "name": name, "host": host, "model_id": model},
             "purpose": purpose, "excerpts": excerpts, "max_items": EGRESS_MAX_ITEMS, "max_requests": EGRESS_MAX_REQUESTS, "max_output_tokens": max_tokens,
-            "validity": "this_task", "matters": matters, "skill_input": input, "native_media": []});
+            "validity": "this_task", "matters": matters, "skill_input": input, "native_media": [], "preparation_warnings": preparation_warnings});
         for (key, value) in extra.as_object().cloned().unwrap_or_default() {
             preview[key] = value;
         }
         let handle = self.vault()?;
         let vault = self.lock_vault(&handle)?;
         preview["retrieval_policy"]=serde_json::from_str::<Value>(&vault.db().query_row("SELECT policy FROM scopes WHERE id=?",[scope],|r|r.get::<_,String>(0))?)?;
-        let grant = vault.register("EgressGrantRef", "m2", Some(question))?;
+        let grant = vault.register("EgressGrantRef", "0.3.0", Some(question))?;
         vault.db().execute(
             "INSERT INTO egress_grants(id,connection_id,host,purpose,scope_id,question_id,max_items,max_requests,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
             params![grant, connection_id, host, purpose, scope, question, EGRESS_MAX_ITEMS, EGRESS_MAX_REQUESTS, preview.to_string(), now_rfc3339()],
@@ -1555,6 +1618,9 @@ impl CoreService {
             let batch:Option<(String,Option<String>,String)>=vault.db().query_row("SELECT b.state,b.approved_at,c.state FROM comparison_cells c JOIN comparisons b ON b.id=c.comparison_id WHERE c.grant_id=?",[grant],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
             if batch.as_ref().is_some_and(|(state,approved,cell)|state!="running"||approved.is_none()||cell!="running"){return Err(Error::Denied);}
             let mut preview: Value = serde_json::from_str(&preview)?;
+            let permitted: std::collections::BTreeSet<&str> = preview["excerpts"].as_array().into_iter().flatten().filter_map(|e| e["evidence_id"].as_str())
+                .chain(preview["calculations"].as_array().into_iter().flatten().filter_map(|c| c["calculation_id"].as_str())).collect();
+            if excluded.iter().any(|id| !permitted.contains(id.as_str())) { return Err(Error::Denied); }
             if !excluded.is_empty() || !excluded_media.is_empty() {
                 // Excluded excerpts and media cannot be sent in this task.
                 preview["excluded"] = json!(excluded);
@@ -1598,7 +1664,14 @@ impl CoreService {
         let rows = statement.query_map([limit.min(500)], |r| Ok(json!({"purpose": r.get::<_, String>(0)?, "host": r.get::<_, String>(1)?, "model_id": r.get::<_, String>(2)?, "status": r.get::<_, String>(3)?,
             "error": r.get::<_, Option<String>>(4)?, "input_tokens": r.get::<_, Option<i64>>(5)?, "output_tokens": r.get::<_, Option<i64>>(6)?,
             "materials": serde_json::from_str::<Value>(&r.get::<_, String>(7)?).unwrap_or(Value::Null), "started_at": r.get::<_, String>(8)?, "connection": r.get::<_, Option<String>>(9)?})))?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let mut result=rows.collect::<std::result::Result<Vec<_>,_>>()?;
+        let mut stmt=vault.db().prepare("SELECT recipient,purpose,status,error,input_tokens,output_tokens,created_at,reasoning FROM (SELECT * FROM sy_requests UNION ALL SELECT * FROM sy_request_archive) ORDER BY created_at DESC LIMIT ?")?;
+        let additional=stmt.query_map([limit.min(500)],|r|{
+            let recipient:Value=serde_json::from_str(&r.get::<_,String>(0)?).unwrap_or(Value::Null);
+            let status:String=r.get(2)?;
+            Ok(json!({"purpose":r.get::<_,String>(1)?,"host":recipient["host"],"model_id":recipient["model_id"],"connection":recipient["name"],"recipient_binding":recipient["binding"],"status":if status=="complete"{"completed"}else{&status},"error":r.get::<_,Option<String>>(3)?,"input_tokens":r.get::<_,i64>(4)?,"output_tokens":r.get::<_,i64>(5)?,"started_at":r.get::<_,String>(6)?,"reasoning":r.get::<_,String>(7)?,"materials":null}))
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        result.extend(additional);result.sort_by(|a,b|b["started_at"].as_str().cmp(&a["started_at"].as_str()));result.truncate(limit.min(500) as usize);Ok(result)
     }
 
     pub fn describe_change(&self, change_ref: &str) -> Result<Value> {
@@ -1632,7 +1705,7 @@ impl CoreService {
         Ok(description)
     }
 
-    /// Registered Skills and their M1 status for the "功能与Skill" page.
+    /// Registered Skills and their 0.2.0 status for the "功能与Skill" page.
     pub fn skills(&self) -> Result<Vec<Value>> {
         let registry = self.registry()?;
         Ok(registry
@@ -1665,9 +1738,9 @@ impl CoreService {
 }
 
 /// Inspection (and simulated crash states) for the synthetic tests and
-/// benchmarks. Compiled only with `m0-harness`; production builds have no raw
+/// benchmarks. Compiled only with `test-harness`; production builds have no raw
 /// SQL entry point.
-#[cfg(feature = "m0-harness")]
+#[cfg(feature = "test-harness")]
 impl CoreService {
     pub fn harness_rows(&self, sql: &str, args: &[&str]) -> Result<Vec<Vec<Value>>> {
         let handle = self.vault()?;

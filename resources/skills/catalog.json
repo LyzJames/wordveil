@@ -1,6 +1,6 @@
 {
   "schema_version": "lvjin.catalog/1",
-  "version": "0.5.0-m4",
+  "version": "0.6.0",
   "skills": [
     {
       "id": "document-import",
@@ -14,13 +14,11 @@
       ],
       "direct_capabilities": [
         "vault.write",
-        "public_knowledge.write",
         "file.selection.read",
         "vault.read"
       ],
       "conditional_capabilities": [
         "vault.write",
-        "public_knowledge.write",
         "file.selection.read",
         "vault.read"
       ],
@@ -49,7 +47,7 @@
           "rule": "显式新增副本或新版本"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -93,7 +91,7 @@
           "rule": "不扩大原有材料用途"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -114,9 +112,7 @@
         "index.write",
         "local.embedding"
       ],
-      "conditional_capabilities": [
-        "graph.write"
-      ],
+      "conditional_capabilities": [],
       "children": [],
       "handler_binding": "builtin.knowledge.index.v1",
       "input_fields": [
@@ -133,94 +129,7 @@
           "rule": "remove 需已确认删除事件或明确用户动作"
         }
       ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "knowledge-search",
-      "title": "本地混合检索",
-      "kind": "capability",
-      "description": "在当前私密空间、事务及公共知识范围内执行 BM25 与向量混合召回，融合排名并返回来源候选。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "index.read",
-        "local.embedding"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.knowledge.search.v1",
-      "input_fields": [
-        {
-          "name": "queries",
-          "type": "ScopedQuery[1..4]",
-          "required": true,
-          "rule": "q0 原始查询不可替换，最多三条有效改写"
-        },
-        {
-          "name": "filter_ids",
-          "type": "KnownFilterRef[]",
-          "required": true,
-          "rule": "由核心目录提供，不接受任意 SQL"
-        },
-        {
-          "name": "snapshot_id",
-          "type": "RetrievalSnapshotRef",
-          "required": true,
-          "rule": "固定资料/索引 generation"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "evidence-rerank",
-      "title": "候选证据重排",
-      "kind": "capability",
-      "description": "对有权限的查询和候选原文做联合相关性评分，保留反证和子问题覆盖，精炼为答案上下文。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "local.rerank"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.evidence.rerank.v1",
-      "input_fields": [
-        {
-          "name": "query_ref",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "核心持有原始问题"
-        },
-        {
-          "name": "candidate_set_id",
-          "type": "CandidateSetRef",
-          "required": true,
-          "rule": "与当前任务范围和快照一致"
-        },
-        {
-          "name": "facet_ids",
-          "type": "FacetRef[]",
-          "required": true,
-          "rule": "只能引用已登记问题维度"
-        }
-      ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -256,338 +165,7 @@
           "rule": "扩展仍在同版本与读取预算内"
         }
       ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "graph-relations",
-      "title": "资料关系与图路径",
-      "kind": "capability",
-      "description": "沿已记录且有原文的法规、解释、案例、合同和凭证关系做有限图扩展，解释路径来源与适用范围。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "graph.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.graph.relations.v1",
-      "input_fields": [
-        {
-          "name": "seed_ids",
-          "type": "EvidenceOrNodeRef[]",
-          "required": true,
-          "rule": "当前检索种子"
-        },
-        {
-          "name": "relation_types",
-          "type": "AllowedRelationType[]",
-          "required": true,
-          "rule": "仅注册的引用/解释/支持/版本关系"
-        },
-        {
-          "name": "max_hops",
-          "type": "integer[0..2]",
-          "required": true,
-          "rule": "受根任务候选预算二次约束"
-        },
-        {
-          "name": "candidate_set_id",
-          "type": "CandidateSetRef|null",
-          "required": false,
-          "rule": "与 snapshot_id 同时提供；属于同一根的本轮候选，种子与剩余额度由核心确定"
-        },
-        {
-          "name": "snapshot_id",
-          "type": "RetrievalSnapshotRef|null",
-          "required": false,
-          "rule": "本轮原始范围、版本和策略；不能扩大范围"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "query-plan",
-      "title": "查询理解与多步策略",
-      "kind": "capability",
-      "description": "依据原始法律金融问题和已知事实生成有限搜索策略，列出缺失事实、精确词和来源范围。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "generation.request"
-      ],
-      "conditional_capabilities": [
-        "generation.request"
-      ],
-      "children": [],
-      "handler_binding": "builtin.query.plan.v1",
-      "input_fields": [
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "原始问题由核心保存"
-        },
-        {
-          "name": "scope_id",
-          "type": "ScopeRef",
-          "required": true,
-          "rule": "已选资料范围"
-        },
-        {
-          "name": "constraint_ids",
-          "type": "KnownConstraintRef[]",
-          "required": true,
-          "rule": "不得编造地区/日期/身份"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "generation",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "answer-compose",
-      "title": "依据整理与答案生成",
-      "kind": "capability",
-      "description": "根据已登记的证据、计算结果和用户问题生成或修订答案，明确事实、前提、冲突和引用。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "generation.request"
-      ],
-      "conditional_capabilities": [
-        "generation.request"
-      ],
-      "children": [],
-      "handler_binding": "builtin.answer.compose.v1",
-      "input_fields": [
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "原始问题"
-        },
-        {
-          "name": "evidence_bundle_id",
-          "type": "EvidenceBundleRef",
-          "required": true,
-          "rule": "只含本次获准材料"
-        },
-        {
-          "name": "calculation_ids",
-          "type": "CalculationRef[]",
-          "required": true,
-          "rule": "核心计算结果，可为空数组"
-        },
-        {
-          "name": "draft_ref",
-          "type": "DraftRef|null",
-          "required": false,
-          "rule": "修订时使用固定草稿版本及验证报告"
-        },
-        {
-          "name": "validation_report_ref",
-          "type": "ValidationReportRef|null",
-          "required": false,
-          "rule": "首答为空；修订必须指向与draft_ref同版本的验证报告"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "generation",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "answer-grounding",
-      "title": "答案证据核验",
-      "kind": "capability",
-      "description": "核对答案引用、版本、金额和适用前提，并以固定 mmBERT 检测器辅助标记疑似不受证据支持的答案片段。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "local.grounding"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.answer.grounding.v1",
-      "input_fields": [
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "完整原始问题"
-        },
-        {
-          "name": "draft_ref",
-          "type": "DraftRef",
-          "required": true,
-          "rule": "固定草稿正文与声明范围"
-        },
-        {
-          "name": "evidence_bundle_id",
-          "type": "EvidenceBundleRef",
-          "required": true,
-          "rule": "实际已登记联合证据"
-        },
-        {
-          "name": "calculation_ids",
-          "type": "CalculationRef[]",
-          "required": true,
-          "rule": "数字对照依据"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "generation",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "web-research",
-      "title": "授权联网研究",
-      "kind": "capability",
-      "description": "在用户许可的查询、目的地和预算内搜索并读取公共网页，记录来源、时间、原文快照和证据位置。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "network.search",
-        "network.fetch"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.web.research.v1",
-      "input_fields": [
-        {
-          "name": "query",
-          "type": "string[1..512]",
-          "required": true,
-          "rule": "核对真实搜索词中的敏感字段"
-        },
-        {
-          "name": "source_ids",
-          "type": "ApprovedSourceRef[]",
-          "required": true,
-          "rule": "获准来源/检索连接"
-        },
-        {
-          "name": "research_purpose",
-          "type": "string",
-          "required": true,
-          "rule": "本次用途，不新增权限"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "authorized-external",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "knowledge-update",
-      "title": "公共知识包导入与更新",
-      "kind": "workflow",
-      "description": "验证并导入用户选定或已授权获取的法律金融公共知识，保存权利、来源、版本和更新差异。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "public_knowledge.write"
-      ],
-      "conditional_capabilities": [
-        "network.update"
-      ],
-      "children": [
-        "document-import"
-      ],
-      "handler_binding": "builtin.knowledge.update.v1",
-      "input_fields": [
-        {
-          "name": "source_selection_id",
-          "type": "KnowledgeSourceRef",
-          "required": true,
-          "rule": "本地选择凭证或已授权来源 ID"
-        },
-        {
-          "name": "update_mode",
-          "type": "enum(preview,apply)",
-          "required": true,
-          "rule": "应用更新需明确用户动作或仍有效更新授权"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "authorized-external",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "finance-calculate",
-      "title": "确定性金融计算",
-      "kind": "capability",
-      "description": "对已确认金额、费用、日期和现金流执行可复算的收支、借款成本、还款和预算计算。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "local.calc"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.finance.calculate.v1",
-      "input_fields": [
-        {
-          "name": "calculation_type",
-          "type": "enum(sum,cashflow,loan,annualized,budget)",
-          "required": true,
-          "rule": "仅注册的计算方法"
-        },
-        {
-          "name": "confirmed_inputs",
-          "type": "FinancialInputRef[]",
-          "required": true,
-          "rule": "数值/币种/日期/方向及凭证须可追溯"
-        },
-        {
-          "name": "assumption_ids",
-          "type": "AssumptionRef[]",
-          "required": true,
-          "rule": "不可缺省编造计息口径"
-        }
-      ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -608,7 +186,6 @@
       ],
       "conditional_capabilities": [
         "vault.write",
-        "graph.write",
         "reminder.local"
       ],
       "children": [],
@@ -633,7 +210,7 @@
           "rule": "含来源/版本和待变更项"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -689,45 +266,9 @@
           "rule": "commit 时必填；核心签发目标/覆盖确认凭证"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "external-tools",
-      "title": "受限外部工具连接",
-      "kind": "capability",
-      "description": "通过已配置且获准的 MCP 连接调用明确登记的工具，限制实际目的地、资料范围、参数和返回内容。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "connector.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.external.tools.v1",
-      "input_fields": [
-        {
-          "name": "binding_id",
-          "type": "ApprovedToolBindingRef",
-          "required": true,
-          "rule": "连接 ID + 工具名 + Schema 哈希，非任意命令/URL"
-        },
-        {
-          "name": "arguments_ref",
-          "type": "ValidatedTypedArgumentsRef",
-          "required": true,
-          "rule": "按该 binding 专用 JSON Schema 校验"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "authorized-external",
       "input_schema": "input.schema.json",
       "output_schema": "output.schema.json"
     },
@@ -762,7 +303,7 @@
           "rule": "核心签发目标/来源选择，不含口令"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -799,7 +340,7 @@
           "rule": "核心安全 UI 中的配置引用，不包含原始 Key"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "protected-connection",
       "input_schema": "input.schema.json",
@@ -833,7 +374,7 @@
           "rule": "不可由生成模型自行构造"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -869,232 +410,9 @@
           "rule": "不含正文、凭证或原始路径"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "lvjin-retrieval",
-      "title": "法律金融检索与问答",
-      "kind": "workflow",
-      "description": "为个人法律金融问题组织四阶段证据流程，按范围调用本地/获准公共检索、重排、生成与有限核查修订。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "query-plan",
-        "knowledge-search",
-        "graph-relations",
-        "evidence-rerank",
-        "evidence-read",
-        "web-research",
-        "finance-calculate",
-        "answer-compose",
-        "answer-grounding"
-      ],
-      "handler_binding": "builtin.lvjin.retrieval.v1",
-      "input_fields": [
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "保留原始问题"
-        },
-        {
-          "name": "scope_id",
-          "type": "ScopeRef",
-          "required": true,
-          "rule": "已授权资料/来源"
-        },
-        {
-          "name": "known_constraint_ids",
-          "type": "KnownConstraintRef[]",
-          "required": true,
-          "rule": "地区、事实日期和身份"
-        },
-        {
-          "name": "requested_output",
-          "type": "enum(answer,evidence_only)",
-          "required": true,
-          "rule": "无生成连接时仍可证据检索"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-generation",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "contract-review",
-      "title": "合同与金融条款阅读",
-      "kind": "workflow",
-      "description": "阅读合同、保险或金融产品说明，定位具体条款、解释费用与风险并整理需要核实或协商的问题。",
-      "actors": [
-        "ui",
-        "agent"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "document-import",
-        "lvjin-retrieval",
-        "matter-manage",
-        "report-export",
-        "image-review",
-        "audio-review",
-        "video-review"
-      ],
-      "handler_binding": "builtin.contract.review.v1",
-      "input_fields": [
-        {
-          "name": "document_versions",
-          "type": "DocumentVersionRef[]",
-          "required": false,
-          "rule": "默认空；与media_refs至少一项非空，必须是获准合同/说明材料"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "用户阅读目标"
-        },
-        {
-          "name": "known_constraint_ids",
-          "type": "KnownConstraintRef[]",
-          "required": true,
-          "rule": "地区、身份、签署日期等已知事实"
-        },
-        {
-          "name": "media_refs",
-          "type": "MediaVersionRef[]",
-          "required": false,
-          "rule": "默认空；获准合同录音/视频及时间范围由核心解析"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-analysis",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "loan-analysis",
-      "title": "借款与还款分析",
-      "kind": "workflow",
-      "description": "整理借条、转账和聊天材料中的借还款事实，计算情景并结合有依据的规则形成问题清单。",
-      "actors": [
-        "ui",
-        "agent"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "document-import",
-        "matter-manage",
-        "finance-calculate",
-        "lvjin-retrieval",
-        "report-export",
-        "image-review",
-        "audio-review",
-        "video-review"
-      ],
-      "handler_binding": "builtin.loan.analysis.v1",
-      "input_fields": [
-        {
-          "name": "matter_id",
-          "type": "MatterRef",
-          "required": true,
-          "rule": "借款事务"
-        },
-        {
-          "name": "document_versions",
-          "type": "DocumentVersionRef[]",
-          "required": false,
-          "rule": "默认空；获准借条/凭证版本，与media_refs/事务已确认事实至少一项非空"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "分析目标与口径"
-        },
-        {
-          "name": "media_refs",
-          "type": "MediaVersionRef[]",
-          "required": false,
-          "rule": "默认空；获准录音/视频版本及时间范围由核心解析，不能传任意路径"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-analysis",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "budget-analysis",
-      "title": "账单与个人预算分析",
-      "kind": "workflow",
-      "description": "导入个人账单，校对账户和月份，去重分类并进行收支、现金流和预算情景分析。",
-      "actors": [
-        "ui",
-        "agent"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "document-import",
-        "matter-manage",
-        "finance-calculate",
-        "lvjin-retrieval",
-        "report-export",
-        "image-review"
-      ],
-      "handler_binding": "builtin.budget.analysis.v1",
-      "input_fields": [
-        {
-          "name": "document_versions",
-          "type": "DocumentVersionRef[]",
-          "required": true,
-          "rule": "已选择账单版本"
-        },
-        {
-          "name": "period",
-          "type": "DateRange",
-          "required": true,
-          "rule": "明确月份/日期范围"
-        },
-        {
-          "name": "account_ids",
-          "type": "AccountRef[]",
-          "required": true,
-          "rule": "明确账户与币种范围"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "预算分析目标"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-analysis",
       "input_schema": "input.schema.json",
       "output_schema": "output.schema.json"
     },
@@ -1137,7 +455,7 @@
           "rule": "frames/audio/metadata的受限枚举"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
       "input_schema": "input.schema.json",
@@ -1181,225 +499,9 @@
           "rule": "仅用户确认的领域词，不含期待答案"
         }
       ],
-      "version": "0.5.0-m4",
+      "version": "0.6.0",
       "schema_version": "lvjin.skill/1",
       "implementation_status": "local",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "media-observe",
-      "title": "生成模型原生媒体读取",
-      "kind": "capability",
-      "description": "在端点实际支持且资料已获准时，向生成模型提供真实图片/音频/视频进行独立读取或有目标复核，记录实际覆盖。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read",
-        "generation.request"
-      ],
-      "conditional_capabilities": [],
-      "children": [],
-      "handler_binding": "builtin.media.observe.v1",
-      "input_fields": [
-        {
-          "name": "media_refs",
-          "type": "NativeMediaRef[]",
-          "required": true,
-          "rule": "核心登记的图片/音频/视频版本及允许区间"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "原问题/窄观察目标"
-        },
-        {
-          "name": "observation_mode",
-          "type": "enum(first_read,targeted_compare)",
-          "required": true,
-          "rule": "first_read禁止传OCR/ASR答案以减少锚定"
-        },
-        {
-          "name": "comparison_ref",
-          "type": "ExtractionAndObservationRef",
-          "required": false,
-          "rule": "targeted_compare时需有效来源/版本"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "generation",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "image-review",
-      "title": "图片文字与视觉交叉检查",
-      "kind": "workflow",
-      "description": "对图片/扫描页保留OCR文字兜底；生成模型支持视觉且获准时必须读取真实图片，再比较关键字段和场景观察。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "document-ocr",
-        "media-observe",
-        "evidence-read",
-        "answer-compose",
-        "answer-grounding"
-      ],
-      "handler_binding": "builtin.image.review.v1",
-      "input_fields": [
-        {
-          "name": "image_refs",
-          "type": "ImageOrPageRef[]",
-          "required": true,
-          "rule": "已导入图片/页/视频帧，含原件/派生坐标关系"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "用户查看图片的目的"
-        },
-        {
-          "name": "mode",
-          "type": "enum(extract_text,analyze)",
-          "required": true,
-          "rule": "仅提取不自动请求生成；analyze按能力/授权执行复核"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-media",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "audio-review",
-      "title": "音频转写与原音频复核",
-      "kind": "workflow",
-      "description": "对纯音频或视频音轨使用固定ASR文字兜底；生成接口支持原音频且获准时再直接听音频核对转写与可支持的声音信息。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "media-decode",
-        "audio-transcribe",
-        "media-observe",
-        "knowledge-index",
-        "evidence-read",
-        "answer-compose",
-        "answer-grounding"
-      ],
-      "handler_binding": "builtin.audio.review.v1",
-      "input_fields": [
-        {
-          "name": "source_ref",
-          "type": "MediaOrSelectionRef",
-          "required": true,
-          "rule": "音频原件/视频音轨的版本或选择凭证"
-        },
-        {
-          "name": "range_ref",
-          "type": "ApprovedTimeRangeRef",
-          "required": true,
-          "rule": "实际音轨/声道及时段"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "用户分析目的"
-        },
-        {
-          "name": "decoded_bundle_ref",
-          "type": "DecodedMediaBundleRef",
-          "required": false,
-          "rule": "视频流程已有解码时复用，须版本/范围相同"
-        },
-        {
-          "name": "analysis_goal",
-          "type": "enum(text_only,analyze)",
-          "required": true,
-          "rule": "仅转写不外发；独立analyze执行相应原生首读与最终文字分析，视频子任务固定text_only"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-media",
-      "input_schema": "input.schema.json",
-      "output_schema": "output.schema.json"
-    },
-    {
-      "id": "video-review",
-      "title": "视频画面与音轨联合分析",
-      "kind": "workflow",
-      "description": "按原时间轴抽帧OCR并转写视频音轨；有对应原生媒体能力且获准时读取实际帧/音频或视频，保留覆盖与分歧。",
-      "actors": [
-        "ui",
-        "agent",
-        "system"
-      ],
-      "direct_capabilities": [
-        "vault.read"
-      ],
-      "conditional_capabilities": [],
-      "children": [
-        "media-decode",
-        "image-review",
-        "audio-review",
-        "media-observe",
-        "knowledge-index",
-        "evidence-read",
-        "answer-compose",
-        "answer-grounding"
-      ],
-      "handler_binding": "builtin.video.review.v1",
-      "input_fields": [
-        {
-          "name": "source_ref",
-          "type": "MediaOrSelectionRef",
-          "required": true,
-          "rule": "原视频版本/用户选择凭证"
-        },
-        {
-          "name": "range_ref",
-          "type": "ApprovedTimeRangeRef",
-          "required": true,
-          "rule": "选定时间/音轨范围"
-        },
-        {
-          "name": "question_id",
-          "type": "ImmutableQuestionRef",
-          "required": true,
-          "rule": "用户的具体问题"
-        },
-        {
-          "name": "analysis_goal",
-          "type": "enum(text_only,analyze)",
-          "required": true,
-          "rule": "text_only不请求原生媒体，analyze按实际能力复核"
-        }
-      ],
-      "version": "0.5.0-m4",
-      "schema_version": "lvjin.skill/1",
-      "implementation_status": "local-media",
       "input_schema": "input.schema.json",
       "output_schema": "output.schema.json"
     }

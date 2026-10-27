@@ -298,31 +298,16 @@ function VersionChip({ status }: { status: string }) {
 // ---------------------------------------------------------------- documents
 
 function DocumentsTab({ matter, snapshot: s, onImport, importing }: { matter: string; snapshot: Snapshot; onImport: () => void; importing: boolean }) {
-  const { open, refresh, tasks } = useSession();
+  const { open, refresh } = useSession();
   const { busy, run } = useAction();
   const [deleting, setDeleting] = useState<{ doc: DocumentRow; ref: string; impact: Record<string, unknown> } | null>(null);
-  const pendingIndex = useRef(new Map<string, string>());
-
-  // A finished transcription is followed by indexing so the text becomes searchable.
-  useEffect(() => {
-    for (const [task, version] of [...pendingIndex.current]) {
-      const state = tasks.find((t) => t.task_id === task);
-      if (state && state.status !== 'running') {
-        pendingIndex.current.delete(task);
-        if (state.status === 'completed' || state.status === 'partial') {
-          run(() => api.start('knowledge-index', { document_versions: [version], operation: 'build' }), '转写完成，正在建立索引');
-        }
-      }
-    }
-  }, [tasks, run]);
 
   async function transcribe(doc: DocumentRow) {
     await run(async () => {
       const range = await api.object('range', { media: doc.media_id, start_s: 0 });
       const question = await api.object('question', { text: `识别《${doc.display_name}》中的语音与画面文字` });
       const skill = doc.media_kind === 'video' ? 'video-review' : 'audio-review';
-      const task = await api.start(skill, { source_ref: doc.media_id, range_ref: range, question_id: question, analysis_goal: 'text_only' });
-      if (skill === 'audio-review') pendingIndex.current.set(task, doc.version_id);
+      await api.start(skill, { source_ref: doc.media_id, range_ref: range, question_id: question, analysis_goal: 'text_only' });
     }, doc.media_kind === 'video' ? '已开始抽帧识别与转写' : '已开始转写');
   }
 
@@ -372,9 +357,9 @@ function DocumentsTab({ matter, snapshot: s, onImport, importing }: { matter: st
                   <td className="num text-secondary" title={doc.created_at}>{relative(doc.created_at)}</td>
                   <td className="row-actions">
                     <button className="btn btn-xs" onClick={() => open({ version: doc.version_id, title: doc.display_name, media: doc.media_kind !== 'document' })}>查看</button>
-                    {doc.media_id && <button className="btn btn-xs" disabled={busy} onClick={() => transcribe(doc)}>{doc.media_kind === 'video' ? '识别画面与语音' : '转写'}</button>}
+                    {doc.media_id && <button className="btn btn-xs" disabled={busy || doc.status === 'processing_media'} onClick={() => transcribe(doc)}>{doc.media_kind === 'video' ? '识别画面与语音' : '转写'}</button>}
                     <MediaAnalysisButton doc={doc} matter={matter} />
-                    {doc.media_kind === 'audio' && <button className="btn btn-xs" disabled={busy} onClick={() => run(() => api.start('knowledge-index', { document_versions: [doc.version_id], operation: 'build' }), '已开始建立索引')} title="把转写文字加入检索索引">建立索引</button>}
+                    {doc.media_kind === 'audio' && <button className="btn btn-xs" disabled={busy || doc.status === 'processing_media'} onClick={() => run(() => api.start('knowledge-index', { document_versions: [doc.version_id], operation: 'build' }), '已开始建立索引')} title="把转写文字加入检索索引">建立索引</button>}
                     {doc.media_kind === 'document' && doc.pages > 0 && <button className="btn btn-xs" disabled={busy} onClick={() => correct(doc)} title="对扫描页或照片做弯曲矫正后重新识别">矫正重识别</button>}
                     <button className="btn btn-xs btn-danger" disabled={busy} onClick={() => askDelete(doc)}>删除…</button>
                   </td>

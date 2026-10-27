@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-pub const PACKAGE_BYTES: &[u8] = include_bytes!("../../resources/knowledge/cn-personal-basics.json");
+// Retained type compatibility for old encrypted metadata only. The specialist
+// server and its corpus are not shipped or startable through the desktop.
+pub const PACKAGE_BYTES: &[u8] = b"{\"schema\":\"shouyu.retired-public-package/1\",\"documents\":[]}";
 pub const SERVER_NAME: &str = "lvjin-public-law-finance";
 
 pub struct Managed {

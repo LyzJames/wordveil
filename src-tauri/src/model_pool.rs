@@ -16,10 +16,9 @@ impl ModelKey {
 }
 
 /// Large-model residency (active plus idle). Default: one large owner. With at
-/// least 16 GiB installed memory the embedding/reranker pair may stay resident
-/// together (user decision 2026-10-17) and, while a generation flow runs, the
-/// grounding model joins them: it is preloaded in the background so its load
-/// overlaps retrieval (user decision 2026-10-20). Inference stays serialized.
+/// least 16 GiB installed memory the privacy and embedding models may stay
+/// resident together. OCR/ASR use the same bounded owner pool; heavy inference
+/// remains serialized, including when several conversations are open.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResidencyPolicy { pub max_large: usize, pub coresident: Vec<String> }
 impl Default for ResidencyPolicy {
@@ -29,7 +28,7 @@ impl ResidencyPolicy {
     pub const TIER_BYTES: u64 = 16 * 1024 * 1024 * 1024;
     pub fn for_installed_memory(bytes: Option<u64>) -> Self {
         match bytes {
-            Some(value) if value >= Self::TIER_BYTES => Self { max_large: 3, coresident: vec!["embedding".into(), "reranker".into(), "grounding".into()] },
+            Some(value) if value >= Self::TIER_BYTES => Self { max_large: 2, coresident: vec!["embedding".into(), "privacy-has".into()] },
             _ => Self::default(),
         }
     }
@@ -83,11 +82,11 @@ pub struct ModelLease { inner:Arc<Inner>, key:ModelKey }
 
 impl ModelPool {
     /// Test-only policy pools never create production owners.
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     pub fn new(allowed:Vec<AllowedArtifact>, factory:Box<Factory>) -> Self {
         Self::new_inner(allowed,factory,ResidencyPolicy::default())
     }
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     pub fn new_with(allowed:Vec<AllowedArtifact>, factory:Box<Factory>, residency:ResidencyPolicy) -> Self {
         Self::new_inner(allowed,factory,residency)
     }
@@ -121,7 +120,7 @@ impl ModelPool {
         if !self.inner.allowed.iter().any(|artifact| artifact.model==key.model && artifact.revision==key.revision && artifact.artifact==key.artifact && artifact.verified_keys.contains(key)) { return Err(Error::Denied); }
         let mut state=lock_cancellable(&self.inner.state,cancellation,deadline)?;
         loop {
-            if cancellation.load(Ordering::Acquire) || Instant::now()>=deadline { return Err(Error::Cancelled); }
+            check_wait(cancellation, deadline)?;
             if state.faulted { return Err(Error::Integrity); }
             let stale:Vec<_>=state.residents.iter().filter(|(_,resident)| resident.leases==0 && resident.idle_since.is_some_and(|idle|idle.elapsed()>=self.inner.idle_ttl)).map(|(owner,_)|owner.clone()).collect();
             for owner in stale { evict(&mut state,&owner)?; }
@@ -161,9 +160,9 @@ impl ModelPool {
                     // heavy inference/load. No second serving owner can escape the gate.
                     let _heavy=lock_cancellable(&self.inner.heavy,cancellation,deadline)?;
                     let mut model=(self.inner.factory)(key,cancellation,deadline)?;
-                    if cancellation.load(Ordering::Acquire) || Instant::now()>=deadline {
+                    if let Err(error) = check_wait(cancellation, deadline) {
                         model.shutdown()?;
-                        return Err(Error::Cancelled);
+                        return Err(error);
                     }
                     state.residents.insert(owner,Resident { key:key.clone(),leases:1,idle_since:None,model:Arc::new(Mutex::new(model)),failed:false });
                     return Ok(ModelLease { inner:self.inner.clone(),key:key.clone() });
@@ -198,7 +197,7 @@ impl ModelPool {
         let outcome=match loaded {
             Ok(mut model) if cancellation.load(Ordering::Acquire) || Instant::now()>=deadline => {
                 let _=model.shutdown();
-                Err(Error::Cancelled)
+                check_wait(cancellation, deadline).map(|_| false)
             }
             Ok(model) => {
                 state.residents.insert(owner,Resident { key:key.clone(),leases:0,idle_since:Some(Instant::now()),model:Arc::new(Mutex::new(model)),failed:false });
@@ -219,7 +218,7 @@ impl ModelPool {
 
     pub fn resident_count(&self) -> Result<usize> { Ok(self.inner.state.lock().map_err(|_|Error::Integrity)?.residents.len()) }
 
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     pub fn resident_processes(&self)->Result<Vec<u32>> {
         let state=self.inner.state.lock().map_err(|_|Error::Integrity)?;
         let mut output=vec![];
@@ -237,9 +236,15 @@ fn evict(state:&mut State,owner:&Owner) -> Result<()> {
     Ok(())
 }
 
+fn check_wait(cancellation: &AtomicBool, deadline: Instant) -> Result<()> {
+    if cancellation.load(Ordering::Acquire) { return Err(Error::Cancelled); }
+    if Instant::now() >= deadline { return Err(Error::Worker("model_queue_timeout".into())); }
+    Ok(())
+}
+
 fn lock_cancellable<'a,T>(mutex:&'a Mutex<T>,cancellation:&AtomicBool,deadline:Instant)->Result<MutexGuard<'a,T>> {
     loop {
-        if cancellation.load(Ordering::Acquire) || Instant::now()>=deadline { return Err(Error::Cancelled); }
+        check_wait(cancellation, deadline)?;
         match mutex.try_lock() {
             Ok(guard)=>return Ok(guard),
             Err(TryLockError::Poisoned(_))=>return Err(Error::Integrity),
@@ -257,7 +262,7 @@ impl ModelLease {
     }
     pub fn predict(&self,input:&Value,cancellation:&AtomicBool) -> Result<Value> {
         if cancellation.load(Ordering::Acquire) { return Err(Error::Cancelled); }
-        let deadline=Instant::now()+Duration::from_secs(120);
+        let deadline=Instant::now()+Duration::from_secs(600);
         let state=lock_cancellable(&self.inner.state,cancellation,deadline)?;
         if state.faulted { return Err(Error::Integrity); }
         let resident=state.residents.get(&self.key.owner()).ok_or(Error::Integrity)?;

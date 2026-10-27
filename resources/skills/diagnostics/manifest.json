@@ -28,7 +28,7 @@
       "rule": "不含正文、凭证或原始路径"
     }
   ],
-  "version": "0.5.0-m4",
+  "version": "0.6.0",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "local",
   "input_schema": "input.schema.json",

@@ -29,7 +29,7 @@
       "rule": "核心安全 UI 中的配置引用，不包含原始 Key"
     }
   ],
-  "version": "0.5.0-m4",
+  "version": "0.6.0",
   "schema_version": "lvjin.skill/1",
   "implementation_status": "protected-connection",
   "input_schema": "input.schema.json",

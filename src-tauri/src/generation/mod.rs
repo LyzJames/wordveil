@@ -11,6 +11,7 @@ pub mod connections;
 pub mod credentials;
 pub mod probe;
 pub mod transport;
+pub mod options;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,7 +27,7 @@ use zeroize::Zeroizing;
 
 /// Bumped whenever request building or response parsing changes; capability
 /// results recorded with an older adapter version must be re-tested.
-pub const ADAPTER_VERSION: &str = "1.0";
+pub const ADAPTER_VERSION: &str = "2.0";
 
 /// One request the caller can stop waiting for at once (cancel, lock, exit).
 /// The blocking HTTP exchange runs on its own thread; when the caller gives

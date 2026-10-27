@@ -245,7 +245,7 @@ fn agent(endpoint: &Endpoint, options: &HttpOptions) -> Result<ureq::Agent> {
 
 /// POST a JSON body. `headers` never appear in logs or errors.
 pub fn post_json(endpoint: &Endpoint, operation: &str, headers: &[(&str, &str)], body: &[u8], options: &HttpOptions, accept_stream: bool) -> Result<HttpResponse> {
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     crate::network::charge_live(&endpoint.display_host(),operation)?;
     let agent = agent(endpoint, options)?;
     let mut request = agent.post(endpoint.url(operation)).header("Content-Type", "application/json");
@@ -265,7 +265,7 @@ pub fn post_json(endpoint: &Endpoint, operation: &str, headers: &[(&str, &str)],
 
 /// GET (used for optional model listing by the capability self-test).
 pub fn get(endpoint: &Endpoint, operation: &str, headers: &[(&str, &str)], options: &HttpOptions) -> Result<HttpResponse> {
-    #[cfg(feature="m0-harness")]
+    #[cfg(feature="test-harness")]
     crate::network::charge_live(&endpoint.display_host(),operation)?;
     let agent = agent(endpoint, options)?;
     let mut request = agent.get(endpoint.url(operation)).header("Accept", "application/json");

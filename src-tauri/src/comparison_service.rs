@@ -8,6 +8,13 @@ pub const MAX_DOCUMENTS:usize=8;
 pub const MAX_QUESTIONS:usize=4;
 pub const CELL_REQUESTS:i64=7;
 
+fn no_evidence(payload: &Value) -> bool {
+    let steps = payload["process"].as_array().cloned().unwrap_or_default();
+    payload["items"].as_array().is_some_and(Vec::is_empty)
+        && steps.iter().any(|p| p["step"] == "search" && p["status"] == "completed")
+        && !steps.iter().any(|p| matches!(p["step"].as_str(), Some("search" | "rerank")) && p["status"] != "completed")
+}
+
 fn check_cell(vault:&Vault,root:&str,current_reserved:bool)->Result<Option<(String,String)>> {
     let cell:Option<(String,String)>=vault.db().query_row("SELECT c.id,c.comparison_id FROM comparison_roots r JOIN comparison_cells c ON c.id=r.cell_id WHERE r.root=?",[root],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let Some((cell,batch))=cell else{return Ok(None)};
@@ -41,7 +48,7 @@ pub(crate) fn recover(vault:&Vault)->Result<()> {
         let result:Option<String>=match root.as_deref(){Some(root)=>vault.db().query_row("SELECT r.id FROM results r JOIN invocations i ON i.id=r.invocation JOIN objects o ON o.id=r.id WHERE i.root=? AND r.kind='RetrievalResultRef' AND o.active=1 ORDER BY r.rowid DESC LIMIT 1",[root],|r|r.get(0)).optional()?,None=>None};
         if let Some(id)=result {
             let p=vault.get_result(&id)?.2;
-            let state=if !p["answer"].is_null(){"done"}else if p["items"].as_array().is_some_and(Vec::is_empty){"no_evidence"}else{"failed"};
+            let state=if !p["answer"].is_null(){"done"}else if no_evidence(&p){"no_evidence"}else{"failed"};
             vault.db().execute("UPDATE comparison_cells SET state=?,result_ref=?,reason='recovered_after_exit',updated_at=? WHERE id=?",params![state,id,now_rfc3339(),cell])?;
         }else{
             vault.db().execute("UPDATE comparison_cells SET state=?,reason='interrupted',updated_at=? WHERE id=?",params![if root.is_some(){"interrupted"}else{"pending"},now_rfc3339(),cell])?;
@@ -114,11 +121,11 @@ impl CoreService {
         let mut question_refs=vec![];
         for question in questions {question_refs.push(self.create_question(question)?);}
         let vault=self.lock_vault(&handle)?;let now=now_rfc3339();
-        let id=vault.register("ComparisonRef","m3",None)?;
+        let id=vault.register("ComparisonRef", "0.4.0",None)?;
         let spec=json!({"documents":documents,"questions":questions,"question_refs":question_refs,"per_cell_max_requests":CELL_REQUESTS,"order":"row_then_column","space":self.services.layout.space.id,"connection_fingerprint":connection_fingerprint});
         vault.db().execute("INSERT INTO comparisons(id,title,spec,connection_id,state,max_requests,created_at,updated_at) VALUES(?,?,?,?,'draft',?,?,?)",params![id,title.trim(),spec.to_string(),connection,max_requests,now,now])?;
         for (row,version) in versions.iter().enumerate() {for (col,question) in question_refs.iter().enumerate(){
-            let cell=vault.register("ComparisonCellRef","m3",Some(&id))?;
+            let cell=vault.register("ComparisonCellRef", "0.4.0",Some(&id))?;
             vault.db().execute("INSERT INTO comparison_cells(id,comparison_id,row_no,col_no,version_id,question_id,scope_id,state,updated_at) VALUES(?,?,?,?,?,?,?,'pending',?)",params![cell,id,row as i64,col as i64,version,question,scopes[row],now])?;
         }}
         Ok(id)
@@ -135,7 +142,16 @@ impl CoreService {
         let mut cells=s.query_map([id],|r|{let attempts=r.get::<_,i64>(10)?;Ok(json!({"id":r.get::<_,String>(0)?,"row":r.get::<_,i64>(1)?,"col":r.get::<_,i64>(2)?,"state":r.get::<_,String>(3)?,"reason":r.get::<_,Option<String>>(4)?,"result_ref":r.get::<_,Option<String>>(5)?,"task_id":r.get::<_,Option<String>>(6)?,"run_id":r.get::<_,Option<String>>(7)?,"attempts":r.get::<_,i64>(8)?,"used_requests":r.get::<_,i64>(9)?,"used_attempts":attempts,"remaining_requests":CELL_REQUESTS.saturating_sub(attempts)}))})?.collect::<std::result::Result<Vec<_>,_>>()?;
         drop(s);drop(vault);
         let tasks=self.tasks()?;
-        for cell in &mut cells {if let Some(task)=tasks.iter().find(|t|cell["task_id"]==json!(t.task_id)){cell["progress"]=serde_json::to_value(&task.progress)?;if task.status=="running" && matches!(cell["state"].as_str(),Some("interrupted"|"failed")){cell["state"]=json!("stopping");}}}
+        for cell in &mut cells {
+            if let Some(code) = cell["reason"].as_str().filter(|s| !s.is_empty()) {
+                cell["reason_message"] = json!(crate::handlers::error_message(code).unwrap_or_else(|| match code {
+                    "interrupted" => "任务已中断；恢复时沿用现有计数。".into(),
+                    "recovered_after_exit" => "已从上次退出前保留的结果恢复。".into(),
+                    _ => format!("处理未完成（{}）；请查看原文和任务处理过程。", crate::sanitize_code(&code.replace(':', "_"))),
+                }));
+            }
+            if let Some(task)=tasks.iter().find(|t|cell["task_id"]==json!(t.task_id)){cell["progress"]=serde_json::to_value(&task.progress)?;if task.status=="running" && matches!(cell["state"].as_str(),Some("interrupted"|"failed")){cell["state"]=json!("stopping");}}
+        }
         Ok(json!({"id":id,"title":title,"spec":serde_json::from_str::<Value>(&spec)?,"state":state,"max_requests":maximum,"used_requests":used,"remaining_requests":maximum.saturating_sub(used),"cells":cells}))
     }
     /// Prepare previews locally. The DB records which cell is being prepared,
@@ -274,7 +290,7 @@ impl CoreService {
                         if used>=CELL_REQUESTS{return Err(Error::Budget);}
                         let (connection,host,purpose,scope,question,items,preview):(String,String,String,String,String,i64,String)=vault.db().query_row("SELECT connection_id,host,purpose,scope_id,question_id,max_items,preview FROM egress_grants WHERE id=?",[&grant],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)))?;
                         let mut preview:Value=serde_json::from_str(&preview)?;preview["continuation_of"]=json!(root);preview["max_requests"]=json!(CELL_REQUESTS-used);
-                        let next=vault.register("EgressGrantRef","m3-cell-continuation",Some(&question))?;
+                        let next=vault.register("EgressGrantRef", "0.4.0-cell-continuation",Some(&question))?;
                         vault.db().execute("INSERT INTO egress_grants(id,connection_id,host,purpose,scope_id,question_id,max_items,max_requests,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",params![next,connection,host,purpose,scope,question,items,CELL_REQUESTS-used,preview.to_string(),now_rfc3339()])?;
                         vault.db().execute("UPDATE comparison_cells SET grant_id=? WHERE id=?",params![next,cell])?;next
                     };
@@ -296,8 +312,9 @@ impl CoreService {
                 let vault=self.lock_vault(handle)?;
                 let payload=match result {Some(result)=>vault.get_result(result).ok().map(|r|r.2),None=>None};
                 let budget=envelope["warnings"].as_array().is_some_and(|ws|ws.iter().any(|w|w["code"]=="budget"));
-                let cell_state=if state.status=="interrupted"{"interrupted"}else if payload.as_ref().is_some_and(|p|!p["answer"].is_null()){"done"}else if payload.as_ref().is_some_and(|p|p["items"].as_array().is_some_and(Vec::is_empty)){"no_evidence"}else if budget{"budget"}else{"failed"};
-                let reason=envelope["warnings"].as_array().and_then(|w|w.first()).and_then(|w|w["code"].as_str()).unwrap_or("");
+                let cell_state=if state.status=="interrupted"{"interrupted"}else if payload.as_ref().is_some_and(|p|!p["answer"].is_null()){"done"}else if payload.as_ref().is_some_and(no_evidence){"no_evidence"}else if budget{"budget"}else{"failed"};
+                let warning_codes: Vec<&str> = envelope["warnings"].as_array().map(|ws| ws.iter().filter_map(|w| w["code"].as_str()).collect()).unwrap_or_default();
+                let reason=warning_codes.iter().copied().find(|code| crate::handlers::error_message(code).is_some()).or_else(|| warning_codes.last().copied()).unwrap_or("");
                 vault.db().execute("UPDATE comparison_cells SET state=?,reason=?,run_id=?,result_ref=?,updated_at=? WHERE id=?",params![cell_state,reason,envelope["flow_run"].as_str(),result,now_rfc3339(),cell])?;
                 // Unknown outcomes need a new explicit cell continuation;
                 // subsequent independent cells can still proceed in budget.

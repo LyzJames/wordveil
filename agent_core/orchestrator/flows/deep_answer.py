@@ -43,6 +43,8 @@ def build(core: Core) -> StateGraph:
         return 'plan' if state.get('bundle') and state.get('evidence') else 'insufficient'
 
     def insufficient(state: State) -> dict[str, Any]:
+        if state.get('stop') == 'retrieval_failed':
+            return {'partial': True}
         return {'warnings': ['insufficient_evidence'], 'partial': True}
 
     def plan(state: State) -> dict[str, Any]:

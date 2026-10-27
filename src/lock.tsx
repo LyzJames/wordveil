@@ -46,7 +46,7 @@ export function LockScreen({ status, onUnlocked, onRefresh }: { status: AppStatu
         </nav>
         <p className="lock-note">
           <Icon name="shield" />
-          <span>资料只保存在这台电脑上并已加密。应用不保存口令；连续输错会逐步延长等待时间。{status.version ? `版本 ${status.version}` : ''}</span>
+          <span>历史与资料加密保存在本机。连接模型 API 时会发送获准的必要内容。应用不保存口令；连续输错会逐步延长等待时间。{status.version ? `版本 ${status.version}` : ''}</span>
         </p>
       </main>
     </div>
@@ -56,10 +56,10 @@ export function LockScreen({ status, onUnlocked, onRefresh }: { status: AppStatu
 function Brand() {
   return (
     <div className="brand-block">
-      <span className="mark lg" aria-hidden="true">律</span>
+      <span className="mark lg" aria-hidden="true">守</span>
       <div>
-        <div className="t-caption text-secondary">本地法律与金融工作台</div>
-        <div className="t-title brand-title">律金智库</div>
+        <div className="t-caption text-secondary">私密的个人 AI 助手</div>
+        <div className="t-title brand-title">守语</div>
       </div>
     </div>
   );

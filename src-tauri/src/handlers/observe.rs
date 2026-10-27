@@ -158,7 +158,7 @@ pub fn media_observe(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
             user.push_str(&format!("- {label} {}：你上次读到“{}”，本机识别文字中没有找到这个值\n", row["name"].as_str().unwrap_or(""), row["observed"].as_str().unwrap_or("")));
         }
     }
-    user.push_str("\n返回 JSON：{\"observations\": [{\"media\": \"M1\", \"text\": \"…\"}], \"fields\": [{\"media\": \"M1\", \"name\": \"amount|date|name|account|id_number\", \"value\": \"原样照录\"}], \"limitations\": [\"…\"]}");
+    user.push_str("\n返回 JSON：{\"observations\": [{\"media\": \"0.2.0\", \"text\": \"…\"}], \"fields\": [{\"media\": \"0.2.0\", \"name\": \"amount|date|name|account|id_number\", \"value\": \"原样照录\"}], \"limitations\": [\"…\"]}");
     let mut parts_out = vec![];
     for (_, item) in &labels {
         let bytes = ctx.lock()?.get_blob(&item.blob)?;
@@ -168,7 +168,7 @@ pub fn media_observe(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
             _ => Part::ImagePng(format!("data:{};base64,{encoded}", item.mime)),
         });
     }
-    let call = Call { purpose: "direct_media", prompt, prompt_sha, question: question.clone(), evidence: vec![], media: ids.clone() };
+    let call = Call { calculations: vec![], purpose: "direct_media", prompt, prompt_sha, question: question.clone(), evidence: vec![], media: ids.clone() };
     let (wire, request_id, response) = generate_json(ctx, invocation, &call, &system, &user, parts_out, 1500)?;
     let by_label: BTreeMap<String, String> = labels.iter().map(|(l, m)| (l.clone(), m.id.clone())).collect();
     let resolve = |label: &Value| by_label.get(&label.as_str().unwrap_or("").trim().to_ascii_uppercase()).cloned();
@@ -284,7 +284,7 @@ pub(crate) fn sweep_native(vault: &crate::store::Vault) -> Result<usize> {
 
 /// Remember the approved native media of a grant (prepared at preview).
 pub(crate) fn register_native(vault: &crate::store::Vault, grant: &str, source: &str, kind: &str, mime: &str, bytes: &[u8], detail: &Value) -> Result<String> {
-    let id = vault.register("NativeMediaRef", "m2", Some(source))?;
+    let id = vault.register("NativeMediaRef", "0.3.0", Some(source))?;
     let blob = vault.put_blob(&id, "native_media", bytes)?;
     vault.db().execute(
         "INSERT INTO native_media(id,grant_id,source,kind,mime,bytes,sha256,blob,detail,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",

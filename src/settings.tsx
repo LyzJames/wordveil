@@ -2,7 +2,7 @@
 // status and the bundled models. Appearance preferences are display-only and
 // live in local storage (not private data).
 import React, { useEffect, useState } from 'react';
-import { api, bytes, ensure, relative, SKILL_STATUS, type Envelope, type LockPolicy } from './api';
+import { api, bytes, ensure, relative, SKILL_STATUS, type Envelope, type LockPolicy, type GenerationRequestRow } from './api';
 import { Icon } from './icons';
 import { useSession } from './session';
 import { Busy, Callout, Chip, ErrorLine, Field, FieldGroup, Segmented, Skeleton, Tabs, useAction, useLoad, type Tone } from './ui';
@@ -87,7 +87,7 @@ export function SettingsPage({ initialTab }: { initialTab?: string }) {
         label="设置分类"
         value={tab}
         onChange={setTab}
-        items={[['security', '安全'], ['appearance', '界面'], ['backup', '备份与恢复'], ['diagnostics', '诊断'], ['skills', '功能与Skill'], ['about', '关于']]}
+        items={[['security', '安全'], ['appearance', '界面'], ['backup', '备份与恢复'], ['about', '关于']]}
       />
       <div className="tab-body">
         {tab === 'security' && <Security />}
@@ -108,6 +108,7 @@ function Security() {
   const { busy, run } = useAction();
   const [form, setForm] = useState({ current: '', next: '', again: '' });
   const [error, setError] = useState('');
+  const [requests,setRequests]=useState<GenerationRequestRow[]|null>(null);
   const [minutes, setMinutes] = useState('15');
   const [system, setSystem] = useState(true);
   const [shortcut, setShortcut] = useState<LockKey>(lockKey);
@@ -158,7 +159,7 @@ function Security() {
           <FieldGroup label="锁定快捷键" hint="只在本应用窗口内有效；偏好保存在这台电脑上。">
             <Segmented label="锁定快捷键" value={shortcut} onChange={(v) => { setShortcut(v); savePreference('lvjin-lock-key', v === 'ctrl+l' ? null : v); applyPreferences(); }} items={LOCK_KEYS} />
           </FieldGroup>
-          <p className="t-caption text-tertiary">锁定{lockKeyLabel(shortcut) ? `（${lockKeyLabel(shortcut)}）` : ''}会立即停止进行中的任务、关闭本机处理进程并清除页面图像的临时访问令牌，不必等任务结束；中断的导入和分析可在解锁后继续。</p>
+          <p className="t-caption text-tertiary">锁定{lockKeyLabel(shortcut) ? `（${lockKeyLabel(shortcut)}）` : ''}会立即停止进行中的任务、关闭本机处理进程并清除页面图像的临时访问令牌，不必等任务结束；中断的导入可在解锁后明确继续；已停止的模型请求不会自动重发。</p>
         </div>
       </section>
       <section className="section">
@@ -169,8 +170,10 @@ function Security() {
           </button>
         </div>
         <p className="t-caption text-secondary reading" style={{ marginBottom: 8 }}>
-          每次操作都只授予完成它所需的本机能力；发送资料给生成接口必须经过系统对话框确认，并且只对那一次任务有效。联网与外部工具目前全部关闭。
+          模型连接首次使用时由系统窗口确认。此后普通文字请求先通过本机保护；高风险内容和原始媒体仍需逐次批准。联网搜索需在本轮主动开启。停用模型连接会阻止后续请求。
         </p>
+        <button className="btn btn-sm" disabled={busy} onClick={()=>run(async()=>{setRequests(await api.generationRequests());})}>查看外发记录</button>
+        {requests&&<div className="table-wrap table-scroll"><table className="table compact"><thead><tr><th>时间</th><th>接收方</th><th>用途</th><th>结果</th></tr></thead><tbody>{requests.map((r,i)=><tr key={i}><td>{relative(r.started_at)}</td><td>{r.host} · {r.model_id}</td><td>{({answer:'回答',search_plan:'搜索子任务',media_read:'媒体子任务',web_search:'联网搜索'} as Record<string,string>)[r.purpose]??r.purpose}</td><td>{r.status}{r.error?` · ${r.error}`:''}</td></tr>)}</tbody></table></div>}
         {grants && (
           <div className="table-wrap table-scroll">
             <table className="table compact">
@@ -239,7 +242,7 @@ function Backup() {
       <div className="form">
         <h2 className="t-subtitle">在另一台电脑恢复</h2>
         <ol className="plain numbered">
-          <li>在新电脑安装同一版本的律金智库（完整离线介质）。</li>
+          <li>在新电脑安装同一版本的守语（完整离线介质）。</li>
           <li>在锁屏页选择“从加密备份恢复”，输入主口令或恢复码。</li>
           <li>选择备份文件夹。应用先校验全部文件，再恢复到新的空间目录，不覆盖已有空间。</li>
           <li>恢复后在“生成接口”重新填写 API Key（密钥不随备份迁移）。</li>
@@ -301,7 +304,7 @@ function Skills() {
 
 type Models = { models: { model_id: string; source_model_id: string; revision: string; license: string; installed_bytes: number; compute: string }[]; residency: { max_large: number; coresident: string[] } };
 const MODEL_ROLE: Record<string, string> = {
-  embedding: '语义检索向量', reranker: '检索结果重排', grounding: '回答逐句核查', 'ocr-det': '文字检测', 'ocr-rec': '文字识别', uvdoc: '弯曲矫正', 'textline-ori': '文字行方向', 'doc-ori': '整页方向', asr: '语音转写',
+  embedding: '本机语义检索', 'privacy-has':'本机隐私实体识别', 'ocr-det': '文字检测', 'ocr-rec': '文字识别', uvdoc: '弯曲矫正', 'textline-ori': '文字行方向', 'doc-ori': '整页方向', asr: '语音转写',
 };
 
 function About() {
@@ -312,11 +315,10 @@ function About() {
     <section className="stack">
       <dl className="figures">
         <div className="figure"><dt>版本</dt><dd>{status.data?.version}</dd></div>
-        <div className="figure"><dt>阶段</dt><dd>{status.data?.milestone}<small>内部版</small></dd></div>
         <div className="figure"><dt>运行</dt><dd>{gpu ? 'CPU / 可用 GPU' : 'CPU'}<small>{gpu ? '重排通过设备自检后使用 GPU' : '本机模型断网可用'}</small></dd></div>
-        <div className="figure"><dt>大模型常驻</dt><dd>{models.data ? `最多 ${models.data.residency.max_large} 个` : '—'}<small>{models.data && models.data.residency.max_large > 1 ? '≥16 GB 内存；回答核查模型提前加载' : '按需加载'}</small></dd></div>
+        <div className="figure"><dt>本机模型常驻</dt><dd>{models.data ? `最多 ${models.data.residency.max_large} 个` : '—'}<small>{models.data && models.data.residency.max_large > 1 ? '≥16 GB；隐私与向量模型共享受限模型池' : '按需加载'}</small></dd></div>
       </dl>
-      <h2 className="t-subtitle">随软件安装的九个辅助模型</h2>
+      <h2 className="t-subtitle">随软件安装的八个辅助模型</h2>
       <p className="t-caption text-tertiary">内置模型随完整安装介质提供并在本机运行；应用不提供下载、导入、切换或卸载。安装文件损坏时请使用同版本完整介质修复。</p>
       {gpu && <p className="t-caption text-secondary">重排加速已验证 RTX 3060 Laptop GPU；设备、显存或自检不满足要求时使用 CPU。其余辅助阶段继续使用 CPU，模型权重只有一份。</p>}
       {models.data ? (

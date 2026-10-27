@@ -13,7 +13,7 @@ TARGET_TOKENS = 600
 MAX_TOKENS = 800
 HARD_LIMIT = 2048            # embedding initial working budget (design 9.6)
 OVERLAP_TOKENS = 60
-CHUNKER_VERSION = 'lvjin-chunker/1'
+CHUNKER_VERSION = 'lvjin-chunker/2'
 
 _HEADING_PATTERNS = [
     (1, re.compile(r'^第[一二三四五六七八九十百千零〇两0-9]+[编章]')),
@@ -71,6 +71,8 @@ def _split_long(text: str, counter: TokenCounter, limit: int) -> list[tuple[int,
     windows, current = [], None
     for piece in pieces:
         if counter.count(text[piece[0]:piece[1]]) > limit:
+            if current is not None:
+                windows.append(current)
             # A single sentence above the limit: cut by characters.
             step = max(32, limit)
             for offset in range(piece[0], piece[1], step):
@@ -157,7 +159,7 @@ def _chunk_rows(blocks: list[dict], counter: TokenCounter) -> dict:
         nonlocal spans, tokens
         if not spans:
             return
-        body = '\n'.join(blocks[s['block']]['text'] for s in spans)
+        body = '\n'.join(blocks[s['block']]['text'][s['start']:s['end']] for s in spans)
         text = (header + '\n' + body) if header else body
         chunks.append({'ordinal': len(chunks), 'unit': 0, 'text': text, 'body': body,
                        'token_count': counter.count(text), 'spans': spans})

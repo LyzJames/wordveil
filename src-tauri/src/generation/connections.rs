@@ -89,7 +89,7 @@ pub fn create_draft(vault: &Vault, input: &DraftInput, credential: Option<&str>)
     if let Some(existing) = &input.connection_id {
         vault.expect_kind(existing, &["ConnectionRef"])?;
     }
-    let id = vault.register("ConnectionDraftRef", "m2", input.connection_id.as_deref())?;
+    let id = vault.register("ConnectionDraftRef", "0.3.0", input.connection_id.as_deref())?;
     let stored = json!({"connection_id": input.connection_id, "name": input.name.trim(), "provider": profile.provider.as_str(), "protocol": profile.protocol.as_str(),
         "base_url": profile.endpoint.base_url(), "model_id": profile.model_id, "timeout_s": profile.timeout_s, "max_output_tokens": profile.max_output_tokens, "proxy": proxy_text(&profile.proxy)});
     vault.db().execute("INSERT INTO connection_drafts(id,connection_id,profile,credential,created_at) VALUES(?,?,?,?,?)", params![id, input.connection_id, stored.to_string(), credential, now_rfc3339()])?;
@@ -140,10 +140,11 @@ pub fn apply_draft(vault: &Vault, draft: &Draft) -> Result<(String, Option<Strin
                 params![draft.input.name.trim(), profile.provider.as_str(), profile.protocol.as_str(), profile.endpoint.base_url(), profile.model_id, profile.timeout_s as i64, profile.max_output_tokens as i64, proxy_text(&profile.proxy), credential, now, id],
             )?;
             let replaced = if draft.credential.is_some() { previous.filter(|p| Some(p) != draft.credential.as_ref()) } else { None };
+            if replaced.is_some() {vault.db().execute("DELETE FROM capabilities WHERE connection_id=?",[id])?;}
             (id.clone(), replaced)
         }
         None => {
-            let id = vault.register("ConnectionRef", "m2", None)?;
+            let id = vault.register("ConnectionRef", "0.3.0", None)?;
             vault.db().execute(
                 "INSERT INTO connections(id,name,provider,protocol,base_url,model_id,timeout_s,max_output_tokens,proxy,credential,status,is_default,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'active',?,?,?)",
                 params![id, draft.input.name.trim(), profile.provider.as_str(), profile.protocol.as_str(), profile.endpoint.base_url(), profile.model_id, profile.timeout_s as i64, profile.max_output_tokens as i64, proxy_text(&profile.proxy), draft.credential, first, now, now],

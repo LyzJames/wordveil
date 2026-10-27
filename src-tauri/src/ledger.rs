@@ -26,7 +26,7 @@ pub struct Ledger {
 
 impl Ledger {
     pub fn open(path: &Path, key: &SecretKey) -> Result<Self> {
-        #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic: connection");
+        #[cfg(feature="test-harness")] eprintln!("ledger diagnostic: connection");
         let db = Connection::open(path)?;
         let mut key_hex = key
             .0
@@ -35,11 +35,11 @@ impl Ledger {
             .collect::<String>();
         let mut pragma = format!("PRAGMA key=\"x'{key_hex}'\";");
         let keyed = db.execute_batch(&pragma);
-        #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic: keyed");
+        #[cfg(feature="test-harness")] eprintln!("ledger diagnostic: keyed");
         pragma.zeroize();
         key_hex.zeroize();
         keyed?;
-        #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic: key buffer cleared");
+        #[cfg(feature="test-harness")] eprintln!("ledger diagnostic: key buffer cleared");
         let cipher: String = db.query_row("PRAGMA cipher_version", [], |row| row.get(0))?;
         if cipher.is_empty() {
             return Err(Error::Integrity);
@@ -49,7 +49,7 @@ impl Ledger {
         // flaws CVE-2026-11822/11824 until the bundled SQLCipher is 4.17+.
         db.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
         db.busy_timeout(std::time::Duration::from_secs(10))?;
-        #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic: schema");
+        #[cfg(feature="test-harness")] eprintln!("ledger diagnostic: schema");
         let schema = "PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA temp_store=MEMORY; PRAGMA secure_delete=ON; PRAGMA cipher_memory_security=ON;
             CREATE TABLE IF NOT EXISTS roots(id TEXT PRIMARY KEY, scope TEXT NOT NULL, revision INTEGER NOT NULL, cancelled INTEGER NOT NULL DEFAULT 0, generation INTEGER NOT NULL DEFAULT 0, native_media INTEGER NOT NULL DEFAULT 0, answer_versions INTEGER NOT NULL DEFAULT 0, grounding INTEGER NOT NULL DEFAULT 0, retrieval INTEGER NOT NULL DEFAULT 0, finalizer TEXT, finalized INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS requests(root TEXT NOT NULL REFERENCES roots(id), request_id TEXT NOT NULL, invocation TEXT NOT NULL, native INTEGER NOT NULL, state TEXT NOT NULL, answer_version INTEGER, PRIMARY KEY(root,request_id));
@@ -62,10 +62,10 @@ impl Ledger {
             CREATE TABLE IF NOT EXISTS answer_drafts(root TEXT NOT NULL REFERENCES roots(id),draft TEXT NOT NULL REFERENCES objects(id),version INTEGER NOT NULL,PRIMARY KEY(root,draft),UNIQUE(root,version));
             CREATE TABLE IF NOT EXISTS local_requests(root TEXT NOT NULL REFERENCES roots(id),request_id TEXT NOT NULL,invocation TEXT NOT NULL,kind TEXT NOT NULL,draft TEXT NOT NULL,PRIMARY KEY(root,request_id));";
         for statement in schema.split(';').filter(|part| !part.trim().is_empty()) {
-            #[cfg(feature="m0-harness")] eprintln!("ledger diagnostic SQL: {}",statement.trim().chars().take(65).collect::<String>());
+            #[cfg(feature="test-harness")] eprintln!("ledger diagnostic SQL: {}",statement.trim().chars().take(65).collect::<String>());
             db.execute_batch(statement)?;
         }
-        // Every ledger database carries the current (M1) vault schema.
+        // Every ledger database carries the current (0.2.0) vault schema.
         crate::store::migrate(&db)?;
         Ok(Self { db })
     }

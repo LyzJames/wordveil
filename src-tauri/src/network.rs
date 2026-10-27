@@ -59,7 +59,7 @@ impl RateLimits {
 pub struct JsonReply { pub value: Value }
 
 /// Opt-in live acceptance counter, compiled out of production. No key/body.
-#[cfg(feature="m0-harness")]
+#[cfg(feature="test-harness")]
 pub fn charge_live(host:&str,operation:&str)->Result<()>{
     static GUARD:std::sync::Mutex<()>=std::sync::Mutex::new(());
     let Some(path)=std::env::var_os("LVJIN_REAL_BUDGET") else{return Ok(())};
@@ -69,14 +69,29 @@ pub fn charge_live(host:&str,operation:&str)->Result<()>{
     let _guard=GUARD.lock().map_err(|_|Error::Integrity)?;
     let path=std::path::PathBuf::from(path);
     let mut report:Value=if path.exists(){serde_json::from_slice(&std::fs::read(&path)?)?}else{serde_json::json!({"limit":30,"requests":[]})};
-    // M3 and M4 each have a separately authorized 50-request allowance. Older stage
+    // 0.4.0 and 0.5.0 each have a separately authorized 50-request allowance. Older stage
     // records retain their original 30-request hard ceiling.
-    let ceiling=if matches!(report["stage"].as_str(),Some("M3"|"M4")){50}else{30};
+    let ceiling=if matches!(report["stage"].as_str(),Some("0.4.0"|"0.5.0")){50}else{30};
     let limit=report["limit"].as_u64().unwrap_or(0).min(ceiling);
     let rows=report["requests"].as_array_mut().ok_or(Error::Contract)?;
     if rows.len() as u64>=limit{return Err(Error::Budget);}
+    // A separately authorized run can impose a smaller ceiling while still
+    // charging the original cumulative ledger. Its baseline never changes;
+    // even a crash between the two durable writes cannot grant extra calls.
+    let run_budget=std::env::var_os("LVJIN_REAL_RUN_BUDGET").map(std::path::PathBuf::from);
+    let mut run_report=if let Some(run)=&run_budget {
+        let value:Value=serde_json::from_slice(&std::fs::read(run)?)?;
+        let baseline=value["cumulative_baseline"].as_u64().ok_or(Error::Contract)?;
+        let allowance=value["authorized_requests"].as_u64().filter(|n|*n>0&&*n<=8).ok_or(Error::Contract)?;
+        if (rows.len() as u64)<baseline||(rows.len() as u64)-baseline>=allowance{return Err(Error::Budget);}
+        Some(value)
+    }else{None};
     rows.push(serde_json::json!({"host":host,"operation":operation,"at":crate::vault::now_rfc3339()}));
     crate::durable::write(&path,&serde_json::to_vec_pretty(&report)?)?;
+    if let (Some(run),Some(value))=(&run_budget,run_report.as_mut()) {
+        value["cumulative_used_after_last_dispatch"]=serde_json::json!(report["requests"].as_array().ok_or(Error::Contract)?.len());
+        crate::durable::write(run,&serde_json::to_vec_pretty(value)?)?;
+    }
     Ok(())
 }
 

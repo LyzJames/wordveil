@@ -90,6 +90,22 @@ class FinanceOp(StrictModel):
     request: dict
 
 
+class ArithmeticSource(StrictModel):
+    id: Annotated[str, StringConstraints(min_length=1, max_length=160)]
+    text: Annotated[str, StringConstraints(max_length=40000)]
+
+
+class ArithmeticClaim(StrictModel):
+    id: Annotated[str, StringConstraints(min_length=1, max_length=160)]
+    text: Annotated[str, StringConstraints(max_length=8000)]
+    sources: Annotated[list[ArithmeticSource], Field(max_length=20)]
+
+
+class ArithmeticOp(StrictModel):
+    op: Literal['verify_arithmetic']
+    claims: Annotated[list[ArithmeticClaim], Field(max_length=64)]
+
+
 class OriOp(StrictModel):
     op: Literal['doc_ori_turns']
     label: Annotated[str, StringConstraints(max_length=8)]
@@ -153,17 +169,6 @@ class LocalService:
             from .chunking import chunk_blocks
             item = ChunkOp.model_validate(request)
             return chunk_blocks([b.model_dump() for b in item.blocks], self.tokenizer_path, item.mode)
-        if op == 'extract_candidates':
-            from .extract import extract_candidates
-            item = ExtractOp.model_validate(request)
-            return extract_candidates([b.model_dump() for b in item.blocks])
-        if op == 'finance':
-            from .finance import calculate, InputError
-            item = FinanceOp.model_validate(request)
-            try:
-                return calculate(item.request)
-            except InputError as error:
-                raise ServiceError('finance_' + error.code) from error
         if op == 'health':
             return {'service': 'local', 'uploads': len(self.uploads)}
         raise ServiceError('unknown_operation')

@@ -128,7 +128,7 @@ struct GoalFile {
 pub const WIRE_PURPOSES: &[&str] = &["search_plan", "draft_answer", "task_plan", "role_analysis", "role_check", "context_brief", "direct_media"];
 
 impl Registry {
-    /// M0 prototype loading is explicit. Normal installation must require complete=true.
+    /// 0.1.0 prototype loading is explicit. Normal installation must require complete=true.
     pub fn load(resources: &Path, require_complete: bool) -> Result<Self> {
         let resources = resources.canonicalize()?;
         let lock_bytes=std::fs::read(resources.join("resource-lock.json"))?;
@@ -198,7 +198,8 @@ impl Registry {
             .into_iter()
             .map(|role| (role.id.clone(), role))
             .collect();
-        if skills.len() != 30 || roles.len() != 7 {
+        let expected:BTreeSet<&str>=["document-import","document-ocr","knowledge-index","evidence-read","media-decode","audio-transcribe","connection-settings","privacy-settings","vault-maintenance","diagnostics","report-export","matter-manage"].into_iter().collect();
+        if skills.keys().map(String::as_str).collect::<BTreeSet<_>>()!=expected || !roles.is_empty() {
             return Err(Error::Integrity);
         }
         let mut wire = BTreeMap::new();
@@ -1062,7 +1063,7 @@ pub struct EnvelopeParts {
     pub limitations: Vec<String>,
 }
 
-#[cfg(feature = "m0-harness")]
+#[cfg(feature = "test-harness")]
 pub mod harness {
     use super::*;
     /// Compiled only for synthetic tests. Not in production builds or worker IPC.

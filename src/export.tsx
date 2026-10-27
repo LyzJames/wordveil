@@ -66,7 +66,7 @@ function ExportModal({ refs, name, onClose }: { refs: string[]; name: string; on
         <>
           <pre className="preview" aria-label="导出内容预览">{draft.preview.replace(/^﻿/, '')}</pre>
           <p className="t-caption text-tertiary">
-            共 {draft.bytes.toLocaleString('zh-CN')} 字节{draft.preview.length < draft.bytes ? '，预览只显示开头部分' : ''}。CSV 中以 = + − @ 等开头的文字会加前导撇号，防止表格软件执行公式。候选内容未经确认，不构成法律或财务结论。
+            共 {draft.bytes.toLocaleString('zh-CN')} 字节{draft.preview.length < draft.bytes ? '，预览只显示开头部分' : ''}。CSV 中以 = + − @ 等开头的文字会加前导撇号，防止表格软件执行公式。人工智能生成的内容可能有误，请核对重要信息。
           </p>
         </>
       )}

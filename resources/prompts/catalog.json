@@ -1,62 +1,6 @@
 {
   "schema_version": "lvjin.prompts/1",
-  "version": "0.5.0-m4",
-  "prompts": [
-    {
-      "id": "context_brief",
-      "file": "context_brief.md",
-      "sha256": "c318987c5655d391f1d84236a732a0200b5cf1310f38f72041b022c2c5bda712"
-    },
-    {
-      "id": "direct_media.compare",
-      "file": "direct_media.compare.md",
-      "sha256": "415ab81b1411264aff5db68b9fa5e2f8d5e4071dd44016aa2873f873b5029440"
-    },
-    {
-      "id": "direct_media.first_read",
-      "file": "direct_media.first_read.md",
-      "sha256": "00f00d9895e378c2bd6f5bcc5cda771685167ba416924ac6bce3b61b52858cc9"
-    },
-    {
-      "id": "draft_answer",
-      "file": "draft_answer.md",
-      "sha256": "f9f68fd457964700e5faa92fc710ae90d112a5899614e6bcf211b45121b90afd"
-    },
-    {
-      "id": "role_analysis",
-      "file": "role_analysis.md",
-      "sha256": "3484fe73661bd69c0d18fd65c2f4cbafff62b36c0642a6ca98169667e4d3e305"
-    },
-    {
-      "id": "role_check",
-      "file": "role_check.md",
-      "sha256": "f878bee7362cb030768bc0aa37087de6bb8ced9c431eef917794f1b5578d3ba1"
-    },
-    {
-      "id": "role.evidence-researcher",
-      "file": "roles/evidence-researcher.md",
-      "sha256": "c6b70f5a54894ad4c9db84d195621de8e41d9f7370b93bbeaba5c900ed75e1ca"
-    },
-    {
-      "id": "role.finance-analyst",
-      "file": "roles/finance-analyst.md",
-      "sha256": "453e3aa71a3181c99861b2a42ca2eba72580139c1fb0fa570306e1710770d423"
-    },
-    {
-      "id": "role.legal-analyst",
-      "file": "roles/legal-analyst.md",
-      "sha256": "504757adeca30003f6f71441b21339a1903d163eec6be667dcca546327c0245c"
-    },
-    {
-      "id": "search_plan",
-      "file": "search_plan.md",
-      "sha256": "f853d78e8b8a797941b8013027e3c9f77d0d33070c3e03a80916f9964c759b92"
-    },
-    {
-      "id": "task_plan",
-      "file": "task_plan.md",
-      "sha256": "29c9db2577eb01a1fca4ff7c1f7a38ae67667ed38b19daaf8162dba4ca48e322"
-    }
-  ],
+  "version": "0.6.0",
+  "prompts": [],
   "goals": "goals.json"
 }

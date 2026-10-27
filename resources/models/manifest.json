@@ -1,6 +1,6 @@
 {
   "schema_version": "lvjin.models/1",
-  "selection_sha256": "1be50d763a75f75f8a8cb2cb2d7fa36bbef1707433573b36a401e31526698126",
+  "selection_sha256": "a32a20ecf84be58db3b5c9ee1f73f0b629f68b5b47e16ead8383818cadafe938",
   "models": [
     {
       "model_id": "embedding",
@@ -99,180 +99,6 @@
         ]
       },
       "installed_bytes": 1207487471,
-      "license": "Apache-2.0",
-      "gpu_enabled": false
-    },
-    {
-      "model_id": "reranker",
-      "source_model_id": "Qwen/Qwen3-Reranker-0.6B",
-      "source_revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
-      "selected_directory": "model-work/source/reranker/e61197ed45024b0ed8a2d74b80b4d909f1255473",
-      "selected_variant": "original",
-      "storage_tensor_dtypes": {
-        "BF16": 310
-      },
-      "compute_profile": "CPU FP32；已验证 RTX 3060 Laptop GPU 可用时使用 CUDA 12.6 FP32，失败回退 CPU；同一份权重",
-      "development_evidence": "quality-reranker-original-development.json",
-      "development_evidence_sha256": "c122741b7e3a3638d4576a62bd2bc4945bb3ec867cd3a446b437bb44a18fe4f9",
-      "candidate_decisions": [
-        {
-          "evidence": "reranker-w4-pilot.json",
-          "sha256": "a257c8cefe3d4f8a1565fa225451f79419bb0bbac61a96e4ec287a13ff268352",
-          "decision": "rejected",
-          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
-        },
-        {
-          "evidence": "reranker-w8-pilot.json",
-          "sha256": "1ff8fa86e38760b2b700a91851aad3cce719bae34dc9059225f252e3ec3cf077",
-          "decision": "rejected",
-          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
-        }
-      ],
-      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
-      "storage_dtype_evidence": "safetensors tensor header, without loading or converting weights",
-      "selected_artifact": {
-        "key": {
-          "model": "reranker",
-          "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
-          "artifact": "1f01bc45e74ea67ebadcb57181caad5410783a811ef986956902417cf2b8d495",
-          "engine": "transformers-5.20.0-torch-2.14.1-cpu",
-          "device": "cpu",
-          "profile": "source-storage-cpu-fp32-threads4"
-        },
-        "directory": "resources/models/reranker",
-        "files": [
-          {
-            "path": "1_LogitScore/config.json",
-            "bytes": 57,
-            "sha256": "73e3156450564d8a98b7e47bcf5aace0f29600828b51937da545571e84db3ff3"
-          },
-          {
-            "path": "chat_template.jinja",
-            "bytes": 741,
-            "sha256": "6f682162495ec5b39fd9005c01b6aa2a74669379fe967039f1e2cbbe8752369d"
-          },
-          {
-            "path": "config.json",
-            "bytes": 727,
-            "sha256": "d479c427a9ca5295218063d4f9aca4f297ab4ac27487cca7af42c84643d51ef0"
-          },
-          {
-            "path": "config_sentence_transformers.json",
-            "bytes": 325,
-            "sha256": "6a153d6696f78fd588c1c728967f0b773ea869d3c6028f151ce71ebe49140762"
-          },
-          {
-            "path": "generation_config.json",
-            "bytes": 214,
-            "sha256": "81051cd3f6e77013827148d0b8a6ead93f8ac390d5ab805f849199f0af6a08db"
-          },
-          {
-            "path": "merges.txt",
-            "bytes": 1671853,
-            "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
-          },
-          {
-            "path": "model.safetensors",
-            "bytes": 1191588280,
-            "sha256": "27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b"
-          },
-          {
-            "path": "modules.json",
-            "bytes": 280,
-            "sha256": "6f13b6b4a89e577b591b2077bca40c67c26541a6740a8809267cb474f90806a9"
-          },
-          {
-            "path": "README.md",
-            "bytes": 14742,
-            "sha256": "5bba8c734f6dd3ae48317b4139317e45a7fce48fc55e15670b23a0dd15492ab6"
-          },
-          {
-            "path": "sentence_bert_config.json",
-            "bytes": 362,
-            "sha256": "3234ebd224d492cbe8d55d5ec80a3f408451c4db3005bafb64fe1c51c763e01e"
-          },
-          {
-            "path": "tokenizer.json",
-            "bytes": 11422654,
-            "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
-          },
-          {
-            "path": "tokenizer_config.json",
-            "bytes": 9706,
-            "sha256": "253153d0738ceb4c668d2eff957714dd2bea0b56de772a9fdccd96cbf517e6a0"
-          },
-          {
-            "path": "vocab.json",
-            "bytes": 2776833,
-            "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
-          }
-        ]
-      },
-      "installed_bytes": 1207486774,
-      "license": "Apache-2.0",
-      "gpu_enabled": false
-    },
-    {
-      "model_id": "grounding",
-      "source_model_id": "KRLabsOrg/lettucedect-v2-mmbert-base",
-      "source_revision": "8831ce063dff760b01efe4519b4188f5ee2456f2",
-      "selected_directory": "model-work/source/grounding/8831ce063dff760b01efe4519b4188f5ee2456f2",
-      "selected_variant": "original",
-      "storage_tensor_dtypes": {
-        "F32": 138
-      },
-      "compute_profile": "CPU float32; no GPU provider",
-      "development_evidence": "quality-grounding-original-development.json",
-      "development_evidence_sha256": "d22f88a1a188caaeb54ecee9123a3d7da008017fff8dc1195fa8fb79fde6394e",
-      "candidate_decisions": [
-        {
-          "evidence": "grounding-w8-pilot.json",
-          "sha256": "4828b1e1c8f5e729e81a85fecf22892ba7eb69c49d0e1145e98485bad6c4efd4",
-          "decision": "rejected",
-          "reason": "CPU warm P95 exceeds high-precision reference by more than 5%; pilot is an early resource screen, not final quality approval"
-        }
-      ],
-      "selection_reason": "Original high-precision CPU artifact retained; no aggressive compression approved",
-      "storage_dtype_evidence": "safetensors tensor header, without loading or converting weights",
-      "selected_artifact": {
-        "key": {
-          "model": "grounding",
-          "revision": "8831ce063dff760b01efe4519b4188f5ee2456f2",
-          "artifact": "6bf79630f8e1e3c38fc251cf8925b9597fb5bd3660970c5455b2b5d04749bd57",
-          "engine": "transformers-5.20.0-torch-2.14.1-cpu",
-          "device": "cpu",
-          "profile": "source-storage-cpu-fp32-threads4"
-        },
-        "directory": "resources/models/grounding",
-        "files": [
-          {
-            "path": "config.json",
-            "bytes": 2067,
-            "sha256": "34ac1320dcb3a5a214a7d6239d5c0332a61b553f357e93ca02eb31ad0b49991e"
-          },
-          {
-            "path": "model.safetensors",
-            "bytes": 1230141424,
-            "sha256": "63db14018d08db0fb42924cad5f9b0f5afdb79e130fc246158419e0c492b697d"
-          },
-          {
-            "path": "README.md",
-            "bytes": 7870,
-            "sha256": "7cca06c000984fa5a8bd3d984c98e70a21776fcac50e0447ec4106ad1c451424"
-          },
-          {
-            "path": "tokenizer.json",
-            "bytes": 34363188,
-            "sha256": "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"
-          },
-          {
-            "path": "tokenizer_config.json",
-            "bytes": 46440,
-            "sha256": "1d2f82c1341a79748e00efe82e67690f99d00b3c2a894f2b23128fd9d3519da3"
-          }
-        ]
-      },
-      "installed_bytes": 1264560989,
       "license": "Apache-2.0",
       "gpu_enabled": false
     },
@@ -665,8 +491,207 @@
       "installed_bytes": 1576379761,
       "license": "Apache-2.0",
       "gpu_enabled": false
+    },
+    {
+      "model_id": "privacy-has",
+      "source_model_id": "xuanwulab/HaS_Text_0209_0.6B_Q8",
+      "source_revision": "507d9cfa85bbd67401b043d45c9f36a18c6a2f93",
+      "license": "Apache-2.0",
+      "source": "https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q8",
+      "selected_variant": "Q8_0 GGUF; official vendor artifact",
+      "compute_profile": "CPU; llama.cpp b11901; local entity recognition only",
+      "selected_artifact": {
+        "key": {
+          "model": "privacy-has",
+          "revision": "507d9cfa85bbd67401b043d45c9f36a18c6a2f93",
+          "artifact": "7cc2f56d4b72340e95200ca7b9a19e58020ba7b37f54637b7ec257cd21711f6e",
+          "engine": "llama.cpp-b11901-5320c87",
+          "device": "cpu",
+          "profile": "has-ner-q8-chatml-cpu-v1"
+        },
+        "directory": "resources/models/privacy-has",
+        "files": [
+          {
+            "path": "has_text_model.gguf",
+            "bytes": 639446592,
+            "sha256": "c530e55f22d233d9838558b701a41c1860d344957e813d013246c7f6b350e939"
+          },
+          {
+            "path": "LLAMA-LICENSE.txt",
+            "bytes": 1078,
+            "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+          },
+          {
+            "path": "MODEL-LICENSE.txt",
+            "bytes": 11358,
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "runtime/concrt140.dll",
+            "bytes": 324208,
+            "sha256": "2405355f0a58067b258f8df33c327e3a3d716eaac5a3a5aebb757842d85bd376"
+          },
+          {
+            "path": "runtime/ggml-base.dll",
+            "bytes": 805888,
+            "sha256": "b0c431047931186182381e5c9414775c935c5ee5d548e826b2ea62c7175c683c"
+          },
+          {
+            "path": "runtime/ggml-cpu-alderlake.dll",
+            "bytes": 1421824,
+            "sha256": "e834bb2fc401c4c88b6439b901a29e437f1daeb8670c855123477fb482fdcda9"
+          },
+          {
+            "path": "runtime/ggml-cpu-cannonlake.dll",
+            "bytes": 1616896,
+            "sha256": "363c3b9f6232d605f8cb6720474e7b165b6fd0baeeaf9f682de1d0eeb7b8401d"
+          },
+          {
+            "path": "runtime/ggml-cpu-cascadelake.dll",
+            "bytes": 1589760,
+            "sha256": "3f9ca61e05223e3ede6652996c27fd1901a8c3ab0cac8c1e26a974240a78ce94"
+          },
+          {
+            "path": "runtime/ggml-cpu-cooperlake.dll",
+            "bytes": 1599488,
+            "sha256": "82a6fdcaa0844d76e1fbef339efab0b89cd9c771ac8550ee15f64673133f83a5"
+          },
+          {
+            "path": "runtime/ggml-cpu-haswell.dll",
+            "bytes": 1426944,
+            "sha256": "803d937b5cc5872c65e46c27c86fefa58ffaa1345ad5dbaf88e6a7af308e9deb"
+          },
+          {
+            "path": "runtime/ggml-cpu-icelake.dll",
+            "bytes": 1596416,
+            "sha256": "f07a760f5de72e31efc4a1cd298729af588a5d3992e2672414670ee2eb29478a"
+          },
+          {
+            "path": "runtime/ggml-cpu-ivybridge.dll",
+            "bytes": 1308160,
+            "sha256": "f289ada524c110c47f0df6ae02a7e2ac7cec3a07177c5060079158c81a4fb8e9"
+          },
+          {
+            "path": "runtime/ggml-cpu-piledriver.dll",
+            "bytes": 1300992,
+            "sha256": "dfbd1c04508399700e509cb00d200253719e6a3cb63a90fee6c76d76277d0484"
+          },
+          {
+            "path": "runtime/ggml-cpu-sandybridge.dll",
+            "bytes": 1297408,
+            "sha256": "7796697dbda5222d0f784f6d1834d3bd3e4b1725cfcace365a2e483e4bb3d183"
+          },
+          {
+            "path": "runtime/ggml-cpu-sapphirerapids.dll",
+            "bytes": 1875968,
+            "sha256": "55ca8135c29c83fa1a455e3a717657aa7e185021622aae08461a534cdc6d20e7"
+          },
+          {
+            "path": "runtime/ggml-cpu-skylakex.dll",
+            "bytes": 1610240,
+            "sha256": "a6da1daab805a3dd87ea014eeecd3dc2635e9d6c64ad00aba032316056b7ec25"
+          },
+          {
+            "path": "runtime/ggml-cpu-sse42.dll",
+            "bytes": 923648,
+            "sha256": "61af71df1552573652aba39f51534dd241677279d83afe5e8157669de7d9dec9"
+          },
+          {
+            "path": "runtime/ggml-cpu-x64.dll",
+            "bytes": 916480,
+            "sha256": "4e7c99f142af802b363dd3f6773bebf8a68cde243bb685afff90af7e1800f12a"
+          },
+          {
+            "path": "runtime/ggml-cpu-zen4.dll",
+            "bytes": 1605632,
+            "sha256": "36498224b262e2a08425a1fafc2e4cc030a615f7d63a7af0e66974cc2061aa69"
+          },
+          {
+            "path": "runtime/ggml.dll",
+            "bytes": 78848,
+            "sha256": "a4950e05c41c3ca8d019b665e353daa7180b884acd457bcfa42bd1def5f107d8"
+          },
+          {
+            "path": "runtime/libomp.dll",
+            "bytes": 768000,
+            "sha256": "a12116ba72d1d6820407cf30be23da04ce79d6bb8a71a5ee71759c5a1faa6f1c"
+          },
+          {
+            "path": "runtime/LICENSE-LLVM-OpenMP",
+            "bytes": 19741,
+            "sha256": "fdad1758a9e1f9d5a81e18879b3406772115edc92c24bfa36b70c654f325e8e4"
+          },
+          {
+            "path": "runtime/llama.dll",
+            "bytes": 3686912,
+            "sha256": "341d7f7119f797fe5c7aa2e246eed4de14f7977847d646823f4bb1e6f98751d2"
+          },
+          {
+            "path": "runtime/msvcp140.dll",
+            "bytes": 557728,
+            "sha256": "0f885b509a685d2bbfa652fed26b5fb31d88fbdab0a978c641d1c7b8aa460aa9"
+          },
+          {
+            "path": "runtime/msvcp140_1.dll",
+            "bytes": 35952,
+            "sha256": "bfad5aef4c63a669e3c140655cdfdf395b6c979b400a447bd5dcb65ed8826c3d"
+          },
+          {
+            "path": "runtime/msvcp140_2.dll",
+            "bytes": 280200,
+            "sha256": "3ea06f0ee098b4823cb79599df3780e7f23cce52c19aac31d2a0d47efe33a5e9"
+          },
+          {
+            "path": "runtime/msvcp140_atomic_wait.dll",
+            "bytes": 50304,
+            "sha256": "640b2aefced484d0368eea5bdd06addd0658a3a70a49256e560d6923b404a479"
+          },
+          {
+            "path": "runtime/msvcp140_codecvt_ids.dll",
+            "bytes": 31872,
+            "sha256": "f2069a52880ec885ee7f0511186100eb7fada0411a2b4948fafea7735b878a18"
+          },
+          {
+            "path": "runtime/privacy_has.dll",
+            "bytes": 126464,
+            "sha256": "453aaa8caa1567578b5e71859cfe1dc8e1abd67fb7fe506897cf1df2ecc164a7"
+          },
+          {
+            "path": "runtime/vccorlib140.dll",
+            "bytes": 352384,
+            "sha256": "19839407c3fdbc824e5bce189bf68ddf8097f12ec28b757797ffa0415c144ddd"
+          },
+          {
+            "path": "runtime/vcruntime140.dll",
+            "bytes": 124544,
+            "sha256": "d5e4d9a3e835fa679450145d6a7d94e36573a509317111904d9b3712c30d9066"
+          },
+          {
+            "path": "runtime/vcruntime140_1.dll",
+            "bytes": 49792,
+            "sha256": "1f2d41c4aa5db0bc33ebf7b66d72943a817d7ce6cbe880502a9403823633093f"
+          },
+          {
+            "path": "runtime/vcruntime140_threads.dll",
+            "bytes": 38528,
+            "sha256": "219915cf20822f34d5e7c1fdd4e21ae7f3396881096c51036225fb8f84b47afa"
+          },
+          {
+            "path": "source-identity.json",
+            "bytes": 692,
+            "sha256": "7e11377ba0553d7b503410fa14a985c7838b712314b54830b04a67a2a074a6a6"
+          },
+          {
+            "path": "UPSTREAM-README.md",
+            "bytes": 17373,
+            "sha256": "d5532318cf0335ad18b864d7227d295afcb799b12a89afd01d8afc21b480d86d"
+          }
+        ]
+      },
+      "installed_bytes": 666898314
     }
   ],
   "cpu_required": true,
-  "gpu_enabled": false
+  "gpu_enabled": false,
+  "version": "0.7.0"
 }

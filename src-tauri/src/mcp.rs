@@ -34,7 +34,7 @@ impl BoundedHttp {
         if self.guard.as_ref().is_some_and(|guard|guard().is_err()){return Err(self.failed("authorization_revoked"));}
         if self.calls.fetch_add(1, Ordering::AcqRel) >= MAX_EXCHANGES { return Err(self.failed("mcp_request_budget")); }
         let wire = serde_json::to_value(&message).map_err(|_| self.failed("mcp_contract"))?;
-        #[cfg(feature="m0-harness")]
+        #[cfg(feature="test-harness")]
         crate::network::charge_live(uri.as_ref(),wire["method"].as_str().unwrap_or("protocol_reply")).map_err(|_|self.failed("live_request_budget"))?;
         // Unknown server requests never gain a client capability. Only bounded
         // protocol replies/cancellation can accompany this one read-only call.

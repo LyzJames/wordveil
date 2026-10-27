@@ -26,7 +26,7 @@ pub fn media_kind_by_magic(head: &[u8]) -> Option<&'static str> {
         };
     }
     if head.len() >= 12 && &head[4..8] == b"ftyp" {
-        return if matches!(&head[8..12], b"M4A " | b"M4B " | b"F4A ") { Some("audio") } else { Some("video") };
+        return if matches!(&head[8..12], b"V0_5_0A " | b"V0_5_0B " | b"F4A ") { Some("audio") } else { Some("video") };
     }
     if head.starts_with(b"ID3") || head.starts_with(b"OggS") || head.starts_with(b"fLaC") || head.starts_with(b"#!AMR") {
         return Some("audio");
@@ -110,10 +110,9 @@ pub fn import(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
     {
         let vault = ctx.lock()?;
         vault.expect_kind(&target, &["MatterRef", "PublicKnowledgeCollectionRef"])?;
-        let is_root: i64 = vault.db().query_row("SELECT is_root FROM matters WHERE id=?", [&target], |r| r.get(0)).optional()?.ok_or(Error::Denied)?;
-        if is_root != 0 {
-            return Err(Error::NeedsInput("matter"));
-        }
+        // The root is the general app's personal file collection. It has the
+        // same vault scope and immutable import-selection checks as a project;
+        // the retired specialist UI required creating a matter first.
         // Idempotent replay: a completed import of this selection returns its result.
         if let Some(outcome) = vault.db().query_row("SELECT outcome FROM commit_log WHERE idempotency_key=?", [format!("import:{selection_id}")], |r| r.get::<_, String>(0)).optional()? {
             let outcome: Value = serde_json::from_str(&outcome)?;
@@ -246,7 +245,7 @@ fn store_original(ctx: &Ctx, invocation: &Invocation, selection_id: &str, select
     } else {
         None
     };
-    let version_id = vault.register("DocumentVersionRef", "m1", Some(matter))?;
+    let version_id = vault.register("DocumentVersionRef", "0.2.0", Some(matter))?;
     let blob = if let Some(data)=&selection.artifact { vault.put_blob(&version_id,"original",data)? } else {
         let file = std::io::BufReader::new(std::fs::File::open(&selection.path)?);
         vault.put_blob_reader(&version_id, "original", file, bytes)?
@@ -314,7 +313,7 @@ fn insert_page(ctx: &Ctx, version: &str, page_no: i64, source: &str, width: f64,
     if let Some(existing) = vault.db().query_row("SELECT id FROM pages WHERE version_id=? AND page_no=?", params![version, page_no], |r| r.get::<_, String>(0)).optional()? {
         return Ok(existing);
     }
-    let page = vault.register("PageRef", "m1", Some(version))?;
+    let page = vault.register("PageRef", "0.2.0", Some(version))?;
     let blob = match image {
         Some(bytes) => Some(vault.put_blob(&page, "page_image", bytes)?),
         None => None,
@@ -371,7 +370,7 @@ fn process_version(ctx: &Ctx, invocation: &Invocation, version: &str) -> Result<
             match existing {
                 Some(id) => id,
                 None => {
-                    let media = vault.register("MediaVersionRef", "m1", Some(version))?;
+                    let media = vault.register("MediaVersionRef", "0.2.0", Some(version))?;
                     vault.db().execute(
                         "INSERT INTO media(id,version_id,probe,duration_s,has_audio,has_video,created_at) VALUES(?,?,'{}',NULL,?,?,?)",
                         params![media, version, i64::from(kind == "audio" || kind == "video"), i64::from(kind == "video"), now_rfc3339()],
@@ -408,14 +407,15 @@ fn process_version(ctx: &Ctx, invocation: &Invocation, version: &str) -> Result<
                 let batch = local(ctx, json!({"op": "pdf_pages", "upload_id": upload.id, "first": first, "last": last}), 300)?;
                 for page in batch["pages"].as_array().ok_or(Error::Contract)? {
                     let page_no = page["page_no"].as_i64().ok_or(Error::Contract)?;
-                    if page["needs_ocr"].as_bool() == Some(true) {
+                    let page_id = if page["needs_ocr"].as_bool() == Some(true) {
                         let rendered = local(ctx, json!({"op": "pdf_render", "upload_id": upload.id, "first": page_no, "purpose": "ocr"}), 300)?;
                         let image = png_bytes(&rendered)?;
                         let page_id = insert_page(ctx, version, page_no, "scan", rendered["width"].as_f64().unwrap_or(0.0), rendered["height"].as_f64().unwrap_or(0.0), Some(&image))?;
-                        ocr_pages.push(page_id);
-                        continue;
-                    }
-                    let page_id = insert_page(ctx, version, page_no, "native", page["display_width_pt"].as_f64().unwrap_or(0.0), page["display_height_pt"].as_f64().unwrap_or(0.0), None)?;
+                        ocr_pages.push(page_id.clone());
+                        page_id
+                    } else {
+                        insert_page(ctx, version, page_no, "native", page["display_width_pt"].as_f64().unwrap_or(0.0), page["display_height_pt"].as_f64().unwrap_or(0.0), None)?
+                    };
                     for line in page["lines"].as_array().ok_or(Error::Contract)? {
                         let mut locator = json!({"type": "page", "page_no": page_no, "page_id": page_id, "bbox": line["bbox"], "frame": "page"});
                         if line["outside_page"].as_bool() == Some(true) {
@@ -523,15 +523,17 @@ fn process_version(ctx: &Ctx, invocation: &Invocation, version: &str) -> Result<
     let written = insert_blocks(ctx, version, &rows, None)?;
     ctx.lock()?.db().execute("UPDATE document_versions SET page_count=?,status='ocr' WHERE id=?", params![page_count, version])?;
     let mut ocr_ok = true;
-    if !ocr_pages.is_empty() {
-        let (_, envelope) = child(ctx, invocation, "document-ocr", json!({"document_version": version, "page_ids": ocr_pages, "purpose": "index"}))?;
+    for page_batch in ocr_pages.chunks(200) {
+        let (_, envelope) = child(ctx, invocation, "document-ocr", json!({"document_version": version, "page_ids": page_batch, "purpose": "index"}))?;
         ctx.check()?;
         if status_of(&envelope) != "completed" {
             ocr_ok = false;
             parts.warnings.extend(child_warnings(&envelope));
         }
     }
-    let candidates = extract_candidates(ctx, version, &matter)?;
+    // General file ingestion never extracts legal/financial business facts.
+    // Existing historical facts remain readable in the encrypted vault.
+    let candidates = 0usize;
     let summary=json!({"format":format,"pages":page_count,"ocr_pages":ocr_pages.len(),"native_blocks":written,"candidate_facts":candidates,"ocr_ok":ocr_ok});
     ctx.lock()?.db().execute("UPDATE jobs SET state=json_set(state,'$.phase','indexing','$.parse_summary',json(?)),updated_at=? WHERE id=?",params![summary.to_string(),now_rfc3339(),version])?;
     ctx.lock()?.db().execute("UPDATE document_versions SET status='indexing' WHERE id=?", [version])?;
@@ -673,7 +675,7 @@ fn extract_candidates(ctx: &Ctx, version: &str, matter: &str) -> Result<usize> {
         let source = json!({"block": rowid, "start": candidate["start"], "end": candidate["end"], "page_id": page, "block_locator": serde_json::from_str::<Value>(locator).unwrap_or(Value::Null), "basis": candidate["basis"]});
         let id = crate::store::new_ref();
         let now = now_rfc3339();
-        tx.execute("INSERT INTO objects(id,scope,kind,version,active,created_at,parent) VALUES(?,?,'FactRef','m1',1,?,?)", params![id, scope, now, version])?;
+        tx.execute("INSERT INTO objects(id,scope,kind,version,active,created_at,parent) VALUES(?,?,'FactRef','0.2.0',1,?,?)", params![id, scope, now, version])?;
         tx.execute(
             "INSERT INTO facts(id,matter_id,fact_type,value,label,source_version,source_locator,status,origin,created_at) VALUES(?,?,?,?,?,?,?,'candidate','rule_extracted',?)",
             params![id, matter, candidate["type"].as_str().unwrap_or(""), value.to_string(), candidate["raw"].as_str().unwrap_or(""), version, source.to_string(), now],
@@ -730,6 +732,19 @@ fn sort_reading_order(items: &mut [(usize, [f64; 4])]) {
             }
         }
     }
+}
+
+/// Retain the exact native spelling when OCR repeats it at the same position.
+/// Similar but different text remains available for proofreading.
+fn same_native_line(native: &str, native_box: &Value, ocr: &str, bbox: [f64; 4]) -> bool {
+    let normalize = |text: &str| text.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    if normalize(native) != normalize(ocr) { return false; }
+    let Some(values) = native_box.as_array().filter(|v| v.len() == 4) else { return false };
+    let coords: Option<Vec<f64>> = values.iter().map(Value::as_f64).collect();
+    let Some(b) = coords else { return false };
+    let overlap = (b[2].min(bbox[2]) - b[0].max(bbox[0])).max(0.0) * (b[3].min(bbox[3]) - b[1].max(bbox[1])).max(0.0);
+    let smaller = ((b[2] - b[0]) * (b[3] - b[1])).min((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]));
+    smaller > 0.0 && overlap / smaller >= 0.5
 }
 
 pub fn ocr(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
@@ -873,14 +888,26 @@ pub fn ocr(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
             mapped.push((vec![[bbox[0], bbox[1]], [bbox[2], bbox[3]]].into_iter().chain(normalized).collect(), frame));
         }
         sort_reading_order(&mut items);
+        let native: Vec<(String, Value)> = {
+            let vault = ctx.lock()?;
+            let mut statement = vault.db().prepare("SELECT text,locator FROM blocks WHERE page_id=? AND source='native'")?;
+            let values = statement.query_map([&page.id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            values.into_iter().map(|(text, locator)| Ok((text, serde_json::from_str(&locator)?))).collect::<Result<_>>()?
+        };
         let mut low = 0;
         let mut kept = 0;
+        let mut recognized = 0;
         for (index, _) in &items {
             let (text, score) = &texts[cursor + index];
             if text.trim().is_empty() {
                 continue;
             }
             let (geometry, frame) = &mapped[*index];
+            recognized += 1;
+            let bbox = [geometry[0][0], geometry[0][1], geometry[1][0], geometry[1][1]];
+            if frame == &"original" && native.iter().any(|(original, locator)| same_native_line(original, &locator["bbox"], text, bbox)) {
+                continue;
+            }
             if *score < 0.8 {
                 low += 1;
             }
@@ -896,7 +923,7 @@ pub fn ocr(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
             });
         }
         cursor += page.crops.len();
-        page_reports.push(json!({"page_id": page.id, "page_no": page.page_no, "lines": kept, "low_confidence_lines": low, "clockwise_turns": page.turns, "unwarped": page.grid.is_some()}));
+        page_reports.push(json!({"page_id": page.id, "page_no": page.page_no, "lines": kept, "recognized_lines": recognized, "native_lines": native.len(), "low_confidence_lines": low, "clockwise_turns": page.turns, "unwarped": page.grid.is_some()}));
     }
     insert_blocks(ctx, &version, &rows, Some(&page_ids))?;
     {
@@ -908,7 +935,7 @@ pub fn ocr(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelope
             )?;
         }
     }
-    let unreadable: Vec<&Value> = page_reports.iter().filter(|p| p["lines"] == json!(0)).collect();
+    let unreadable: Vec<&Value> = page_reports.iter().filter(|p| p["recognized_lines"] == json!(0)).collect();
     let models: Vec<&str> = ["doc-ori", if unwarp { "uvdoc" } else { "" }, "ocr-det", "textline-ori", "ocr-rec"].into_iter().filter(|m| !m.is_empty()).collect();
     let payload = json!({"version_id": version, "pages": page_reports, "lines": rows.len(), "models": models});
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "OcrResultRef", &payload)?;
@@ -946,6 +973,40 @@ pub fn ensure_display_image(ctx: &Ctx, page: &str) -> Result<String> {
     Ok(blob)
 }
 
+/// Preserve the source of every quoted span, including chunks made before
+/// OCR and ASR were split into separate index groups. Never infer provenance
+/// from the first page of a mixed chunk.
+pub(crate) fn source_parts(vault: &crate::store::Vault, version: &str, spans: &[Value]) -> Result<Vec<Value>> {
+    let mut parts: Vec<Value> = vec![];
+    for span in spans {
+        let block = span["block"].as_i64().ok_or(Error::Integrity)?;
+        let (text, source, locator, page, page_source): (String, String, String, Option<String>, Option<String>) = vault.db().query_row(
+            "SELECT b.text,b.source,b.locator,b.page_id,p.source FROM blocks b LEFT JOIN pages p ON p.id=b.page_id WHERE b.rowid=? AND b.version_id=?",
+            params![block, version], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?.ok_or_else(|| Error::Worker("source_changed".into()))?;
+        let start = span["start"].as_u64().unwrap_or(0) as usize;
+        let end = span["end"].as_u64().unwrap_or(text.chars().count() as u64) as usize;
+        let text: String = text.chars().skip(start).take(end.saturating_sub(start)).collect();
+        let mut locator: Value = serde_json::from_str(&locator)?;
+        let (kind, label) = if source == "asr" {
+            ("audio_asr", format!("音轨转写（本机 ASR，{:.1}–{:.1} 秒）", locator["start_s"].as_f64().unwrap_or(0.0), locator["end_s"].as_f64().unwrap_or(0.0)))
+        } else if page_source.as_deref() == Some("frame") {
+            let time: Option<f64> = vault.db().query_row("SELECT time_s FROM frames WHERE page_id=? ORDER BY seq LIMIT 1", [&page], |r| r.get(0)).optional()?;
+            if let Some(time) = time { locator["time_s"] = json!(time); }
+            ("frame_ocr", match time { Some(t) => format!("画面文字（本机 OCR，{t:.1} 秒）"), None => "画面文字（本机 OCR）".into() })
+        } else if source == "ocr" { ("image_ocr", "图片文字（本机 OCR）".into()) }
+        else { ("native", "文档正文".into()) };
+        if matches!(kind, "frame_ocr" | "image_ocr") {
+            if let Some(previous) = parts.last_mut().filter(|p| p["kind"] == kind && p["page_id"] == json!(page)) {
+                previous["text"] = json!(format!("{}\n{text}", previous["text"].as_str().unwrap_or("")));
+                previous["locators"].as_array_mut().ok_or(Error::Integrity)?.push(locator);
+                continue;
+            }
+        }
+        parts.push(json!({"kind": kind, "label": label, "text": text, "locators": [locator.clone()], "locator": locator, "page_id": page}));
+    }
+    Ok(parts)
+}
+
 pub fn evidence_read(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
     ctx.authorize(invocation, "vault.read")?;
     let ids = refs_of(input, "evidence_ids")?;
@@ -967,6 +1028,7 @@ pub fn evidence_read(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         let span_rows: Vec<Value> = serde_json::from_str(&spans)?;
+        let source_parts = source_parts(&*ctx.lock()?, &version, &span_rows)?;
         let block_ids: Vec<i64> = match mode.as_str() {
             "parent_clause" => {
                 let vault = ctx.lock()?;
@@ -1026,7 +1088,7 @@ pub fn evidence_read(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Resul
         let highlight: Vec<Value> = span_rows.iter().filter_map(|s| s["block"].as_i64()).filter_map(|b| block_ids.iter().position(|x| *x == b)).map(|p| json!(p)).collect();
         let legal:Option<String>=ctx.lock()?.db().query_row("SELECT metadata FROM legal_sources WHERE version_id=?",[&version],|r|r.get(0)).optional()?;
         items.push(json!({"evidence_id": id, "version_id": version, "matter_id": matter, "document": {"display_name": display, "version_no": version_no, "media_kind": media_kind},"legal_source":legal.map(|s|serde_json::from_str::<Value>(&s)).transpose()?,
-            "unit_title": unit_title, "exact_text": body, "text": texts.join("\n"), "locators": locators, "highlight_indexes": highlight, "pages": pages}));
+            "unit_title": unit_title, "exact_text": body, "text": texts.join("\n"), "source_parts": source_parts, "locators": locators, "highlight_indexes": highlight, "pages": pages}));
     }
     let payload = json!({"mode": mode, "items": items, "pages": page_set, "content_hash": sha256_hex(serde_json::to_string(&items)?.as_bytes())});
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "EvidenceReadRef", &payload)?;

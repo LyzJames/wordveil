@@ -1,4 +1,4 @@
-"""LangGraph orchestrator for flows with generation steps (M2).
+"""LangGraph orchestrator for flows with generation steps.
 
 Runs in the same no-network AppContainer as the other workers and is bound
 to one root task. It owns control flow only: every business step, model

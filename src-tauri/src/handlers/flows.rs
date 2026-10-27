@@ -1,4 +1,4 @@
-//! LangGraph flow runs (M2 second segment; docs research/M2-架构审查与编排选型.md §8).
+//! LangGraph flow runs (0.3.0 second segment; docs research/0.3.0-架构审查与编排选型.md §8).
 //!
 //! One orchestrator process (no network, AppContainer) owns the control flow
 //! of one root task. It reaches the core only through typed JSON-RPC
@@ -229,7 +229,7 @@ impl Run<'_, '_> {
                 Err(_) => {
                     // Test builds keep the child's exit code and stderr for
                     // diagnosis; production builds never copy them anywhere.
-                    #[cfg(feature = "m0-harness")]
+                    #[cfg(feature = "test-harness")]
                     eprintln!("orchestrator diagnostic: start failed: {}", process.synthetic_diagnostics());
                     return Err(Error::Worker("orchestrator_start_failed".into()));
                 }
@@ -592,7 +592,7 @@ impl Run<'_, '_> {
             let vault = self.ctx.lock()?;
             let goal = vault.runtime.registry.goal(&goal_id)?.clone();
             let object = |kind: &str, table_kind: &str, text: &str| -> Result<String> {
-                let id = vault.register(kind, "m2", Some(owner.id()))?;
+                let id = vault.register(kind, "0.3.0", Some(owner.id()))?;
                 vault.db().execute("INSERT INTO goals(id,root,kind,text,created_at) VALUES(?,?,?,?,?)", params![id, self.root, table_kind, text, now_rfc3339()])?;
                 Ok(id)
             };
@@ -607,7 +607,7 @@ impl Run<'_, '_> {
                 let catalog = json!({"roles": ANALYSTS, "max_roles": max_roles});
                 refs = json!({"catalog_ref": object("CatalogRef", "catalog", &catalog.to_string())?, "goal_ref": goal_ref, "stop_constraints_ref": object("StopConstraintsRef", "stop", &goal.stop)?});
             }
-            let packet = vault.register("ContextPacketRef", "m2", Some(owner.id()))?;
+            let packet = vault.register("ContextPacketRef", "0.3.0", Some(owner.id()))?;
             let payload = json!({"role": role, "agent": agent.id(), "question_id": self.question, "goal": {"goal_id": goal_id, "goal_ref": goal_ref, "acceptance_ref": acceptance_ref, "stop_ref": stop_ref},
                 "evidence_bundle_id": spec.get("evidence_bundle_id"), "evidence_ids": kept, "calculation_ids": calculations, "draft_ref": draft, "omitted_ids": omitted,
                 "token_estimate": chars * 2 / 3, "source_generation": generation, "created_at": now_rfc3339()});
@@ -630,13 +630,13 @@ impl Run<'_, '_> {
             let payload: Value = serde_json::from_str(&payload)?;
             let mut originals = vec![];
             for id in payload["evidence_ids"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
-                originals.push(vault.register("OriginalRecordRef", "m2", Some(id))?);
+                originals.push(vault.register("OriginalRecordRef", "0.3.0", Some(id))?);
             }
             let mut statement = vault.db().prepare("SELECT r.id FROM results r JOIN invocations i ON i.id=r.invocation WHERE r.kind='RoleAnalysisRef' AND i.root=? AND i.parent=?")?;
             let analyses: Vec<String> = statement.query_map(params![self.root, owner.id()], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
             let mut progress = vec![];
             for id in analyses {
-                progress.push(vault.register("ProgressRef", "m2", Some(&id))?);
+                progress.push(vault.register("ProgressRef", "0.3.0", Some(&id))?);
             }
             (originals, progress)
         };
@@ -873,14 +873,17 @@ pub(crate) fn clean_process(value: &Value) -> Vec<Value> {
 }
 
 /// Messages for the codes a flow itself reports (step outcomes it decided).
-pub(crate) fn flow_warning(code: &str) -> Option<&'static str> {
-    Some(match code {
+pub(crate) fn flow_warning(code: &str) -> Option<String> {
+    let message = match code {
         "plan_fallback" => "查询规划未完成，改用原始问题检索。",
         "revision_stopped" => "修订未完成，保留上一版回答。",
         "insufficient_evidence" => "依据不足：所选范围内没有检索到可用于回答的原文，未生成回答。",
         "role_incomplete" => "有角色分析未完成（额度不足或请求失败），结论只基于已完成的部分。",
         "check_skipped" => "检查者未能完成复核（额度不足或请求失败）；回答仍经过逐句核查。",
         "native_media_not_sent" => "没有直接读取原始媒体（接口未通过对应能力自检、未获准或请求失败）；按本机识别文字分析。",
-        _ => return None,
-    })
+        "retrieval_failed" => "本机检索未能完成；请查看具体失败原因。未把执行失败判为没有依据。",
+        "no_draft" => "回答生成未完成；已保留本机找到的原文与请求计数。",
+        _ => return super::error_message(code),
+    };
+    Some(message.into())
 }

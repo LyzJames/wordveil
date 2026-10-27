@@ -31,6 +31,7 @@ const STATUS: Record<Capability['status'], [string, IconName]> = {
   supported: ['支持', 'check'], unsupported: ['不支持', 'close'], unknown: ['未知', 'unknown'], unavailable: ['暂不可用', 'warning'], policy_blocked: ['策略禁止', 'warning'],
 };
 const PURPOSE: Record<string, string> = {
+  answer:'对话回答',media_read:'媒体阅读（最低推理）',web_search:'受保护的联网搜索',
   capability_probe: '能力自检（合成内容）', search_plan: '改写检索词', draft_answer: '起草或修订回答', task_plan: '安排专业角色', role_analysis: '专业角色分析',
   role_check: '证据检查', context_brief: '上下文简报', direct_media: '直接读取媒体',
 };

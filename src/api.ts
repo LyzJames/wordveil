@@ -20,7 +20,7 @@ export type Envelope = {
 export type Declined = { status: 'declined' };
 export type VaultSummary = { handle: string; vault_id: string; created_at: string };
 export type AppStatus = {
-  milestone: string;
+  release_version: string;
   version: string;
   installation_ok: boolean;
   error?: string;
@@ -66,10 +66,10 @@ export type Snapshot = {
 };
 export type GraphProof = { version_id?: string; document?: { display_name: string; version_no: number }; locators?: Locator[]; evidence_id?: string };
 export type GraphPath = { hops: number; steps: { relation_type: string; traversal: string; origin: string; status: string; proof: GraphProof; valid_from?: string | null; valid_to?: string | null; jurisdiction?: string | null }[] };
-export type EvidenceItem = { evidence_id: string; version_id: string; matter_id: string; document: { display_name: string; version_no: number; media_kind: string }; unit_title: string; exact_text: string; text: string; locators: Locator[]; highlight_indexes: number[]; pages: string[]; graph_paths?: GraphPath[]; legal_source?: { title: string; issuer: string; region: string; effective_on: string; expires_on: string | null; verified_on: string; source_url: string } | null };
+export type EvidenceItem = { evidence_id: string; version_id: string; matter_id: string; document: { display_name: string; version_no: number; media_kind: string }; unit_title: string; exact_text: string; text: string; source_parts?: { kind: string; label: string; text: string; locator: Locator; locators?: Locator[]; page_id: string | null }[]; locators: Locator[]; highlight_indexes: number[]; pages: string[]; graph_paths?: GraphPath[]; legal_source?: { title: string; issuer: string; region: string; effective_on: string; expires_on: string | null; verified_on: string; source_url: string } | null };
 export type RetrievalPolicy = { graph_enabled?: boolean; as_of?: string | null; region?: string | null };
 export type ComparisonDocument = { version_id: string; matter_id: string; display_name: string; version_no: number; content_sha256: string; chunks: number };
-export type ComparisonCell = { id: string; row: number; col: number; state: string; reason: string | null; result_ref: string | null; task_id: string | null; run_id: string | null; attempts: number; used_requests: number; used_attempts: number; remaining_requests: number; progress?: Progress | null };
+export type ComparisonCell = { id: string; row: number; col: number; state: string; reason: string | null; reason_message?: string | null; result_ref: string | null; task_id: string | null; run_id: string | null; attempts: number; used_requests: number; used_attempts: number; remaining_requests: number; progress?: Progress | null };
 export type Comparison = { id: string; title: string; state: string; max_requests: number; used_requests: number; remaining_requests: number; spec: { documents: ComparisonDocument[]; questions: string[]; per_cell_max_requests: number }; cells: ComparisonCell[] };
 export type ComparisonListItem = { id: string; title: string; state: string; max_requests: number; used_requests: number; updated_at: string };
 export type ComparisonPreview = { id: string; title: string; binding: string; spec: Comparison['spec']; connection: AnswerPreview['connection']; max_requests: number; used_requests: number; remaining_requests: number; per_cell_max_requests: number; max_output_tokens: number; cells: { id: string; row: number; col: number; state: string; used_requests: number; remaining_requests: number; unknown_requests: number; preview: AnswerPreview; continuation: boolean }[] };
@@ -85,7 +85,7 @@ export type Connection = {
   has_key: boolean; is_default: boolean; adapter_version: string; capabilities: Record<string, Capability>;
 };
 export type ConnectionDraft = { connection_id: string | null; name: string; provider: string; protocol: string; base_url: string; model_id: string; timeout_s: number; max_output_tokens: number; proxy: 'system' | 'none' };
-export type Excerpt = { evidence_id: string; display_name: string; unit_title: string; pages: string[]; locators: Locator[]; excerpt: string };
+export type Excerpt = { evidence_id: string; display_name: string; unit_title: string; pages: string[]; locators: Locator[]; excerpt: string; source_parts?: EvidenceItem['source_parts'] | null };
 export type NativeMedia = { media_ref: string; kind: 'image' | 'audio'; page_id?: string; display: string; location?: string; bytes: number; width?: number; height?: number };
 /** What a grant approves: the Q&A modes, a written analysis or a media review. */
 export type Purpose = 'answer' | 'deep_answer' | 'contract_review' | 'loan_analysis' | 'budget_analysis' | 'image_review' | 'audio_review' | 'video_review';
@@ -93,10 +93,12 @@ export type AnswerPreview = {
   grant_id: string; question_id: string; scope_id: string; question: string; purpose: Purpose; matters: number;
   connection: { id: string; name: string; host: string; model_id: string }; excerpts: Excerpt[]; max_items: number; max_requests: number; max_output_tokens: number;
   roles?: string[]; native_media?: NativeMedia[]; native_media_note?: string;
+  calculations?: { calculation_id: string; calculation_type: string; text: string; input_count: number; source_documents: string[]; evidence_ids: string[] }[];
   media_policy?: { frames: number; audio_seconds: number; range: { start_s: number; end_s: number | null } };
   retrieval_policy?: RetrievalPolicy;
+  preparation_warnings?: { code: string; message: string }[];
 };
-export type ClaimRow = { claim_id: string; text: string; evidence: { label: string; evidence_id: string }[]; status: 'supported' | 'partial' | 'unsupported' | 'unchecked' | 'advice' | null; message: string | null; flagged: { start: number; end: number; utf16_start: number; utf16_end: number }[] | null };
+export type ClaimRow = { claim_id: string; text: string; evidence: { label: string; evidence_id: string }[]; status: 'supported' | 'partial' | 'unsupported' | 'unchecked' | 'advice' | null; message: string | null; flagged: { start: number; end: number; utf16_start: number; utf16_end: number }[] | null; arithmetic?: { equation: string; evidence_refs: string[] }[] };
 export type Answer = {
   draft_ref: string; validation_report_ref: string; version: number; revisions: number; insufficient_evidence: boolean;
   sections: { conclusion: ClaimRow[]; basis: ClaimRow[]; calculations: ClaimRow[]; next_steps: ClaimRow[]; assumptions: string[]; missing_information: string[]; conflicts: string[] };
@@ -261,7 +263,7 @@ const STATUS: Record<string, string> = {
 export const statusLabel = (status: string) => STATUS[status] ?? status;
 
 const VERSION_STATUS: Record<string, string> = {
-  ready: '可检索', partial: '部分可用', stored: '已保存', stored_media: '已保存（待转写）', parsing: '解析中', ocr: '识别中', indexing: '建立索引中', interrupted: '已中断', failed: '失败',
+  ready: '可检索', partial: '部分可用', stored: '已保存', stored_media: '已保存（待转写）', processing_media: '媒体识别与转写中', no_text: '已处理（无可检索文字）', parsing: '解析中', ocr: '识别中', indexing: '建立索引中', interrupted: '已中断', failed: '失败',
 };
 export const versionStatus = (status: string) => VERSION_STATUS[status] ?? status;
 

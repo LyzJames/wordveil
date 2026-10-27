@@ -32,6 +32,8 @@ pub(crate) struct Grant {
     pub max_requests: i64,
     /// Excerpts the user removed in the preview; never sent in this task.
     pub excluded: Vec<String>,
+    /// Immutable calculation snapshots explicitly listed in the preview.
+    pub calculations: Vec<Value>,
     /// Native media the user approved for upload in this task.
     pub media: Vec<String>,
     /// What the user approved: answer, deep_answer, an analysis or a media review.
@@ -56,7 +58,12 @@ pub(crate) fn grant_for_root(ctx: &Ctx, root: &str) -> Result<Option<Grant>> {
     let excluded_media = strings(&preview["excluded_media"]);
     let mut statement = vault.db().prepare("SELECT id FROM native_media WHERE grant_id=? ORDER BY created_at,rowid")?;
     let media = statement.query_map([&id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().filter(|m| !excluded_media.contains(m)).collect();
-    Ok(Some(Grant { id, connection_id, host, scope_id, question_id, max_items, max_requests, excluded: strings(&preview["excluded"]), media, purpose, policy: preview["media_policy"].clone() }))
+    let excluded = strings(&preview["excluded"]);
+    let calculations = preview["calculations"].as_array().cloned().unwrap_or_default().into_iter().filter(|c| {
+        c["calculation_id"].as_str().is_some_and(|id| !excluded.iter().any(|e| e == id))
+            && !strings(&c["evidence_ids"]).iter().any(|id| excluded.contains(id))
+    }).collect();
+    Ok(Some(Grant { id, connection_id, host, scope_id, question_id, max_items, max_requests, excluded, calculations, media, purpose, policy: preview["media_policy"].clone() }))
 }
 
 /// True when this root may use generation (capability and approved grant).
@@ -74,6 +81,7 @@ pub(crate) struct Call {
     pub question: String,
     /// Chunk IDs whose text is in the prompt.
     pub evidence: Vec<String>,
+    pub calculations: Vec<String>,
     /// NativeMediaRefs whose bytes are in the request.
     pub media: Vec<String>,
 }
@@ -115,7 +123,7 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
         return Err(Error::Denied);
     }
     if call.evidence.len() as i64 > grant.max_items {
-        return Err(Error::Budget);
+        return Err(Error::Worker("egress_passage_budget".into()));
     }
     if call.evidence.iter().any(|id| grant.excluded.contains(id)) || call.media.iter().any(|id| !grant.media.contains(id)) {
         return Err(Error::Denied);
@@ -134,6 +142,19 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
         let (matters, versions): (String, String) = vault.db().query_row("SELECT matters,versions FROM scopes WHERE id=?", [&grant.scope_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
         let matters: Vec<String> = serde_json::from_str(&matters)?;
         let versions: Vec<String> = serde_json::from_str(&versions)?;
+        for id in &call.calculations {
+            let approved = grant.calculations.iter().find(|c| c["calculation_id"] == *id).ok_or(Error::Denied)?;
+            let (_, kind, payload) = vault.get_result(id)?;
+            let text = calculation_value(&payload);
+            if kind != "CalculationRef" || approved["sha256"] != crate::store::sha256_hex(text.as_bytes())
+                || !payload["matter_id"].as_str().is_some_and(|m| matters.iter().any(|known| known == m)) {
+                return Err(Error::Denied);
+            }
+            let sources = payload["input_sources"].as_array().ok_or(Error::Denied)?;
+            if !versions.is_empty() && sources.iter().any(|source| !source["version_id"].as_str().is_some_and(|v| versions.iter().any(|known| known == v))) {
+                return Err(Error::Denied);
+            }
+        }
         for id in &call.evidence {
             let (matter, version): (String, String) = vault.db().query_row("SELECT matter_id,version_id FROM chunks WHERE id=?", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?.ok_or(Error::Denied)?;
             if !matters.contains(&matter) || (!versions.is_empty()&&!versions.contains(&version)) {
@@ -145,17 +166,27 @@ fn send(ctx: &Ctx, invocation: &Invocation, call: &Call, request: &GenRequest) -
         let mut sent = sent_evidence(&vault, invocation.root_id())?;
         sent.extend(call.evidence.iter().cloned());
         if sent.len() as i64 > grant.max_items {
-            return Err(Error::Budget);
+            return Err(Error::Worker("egress_passage_budget".into()));
         }
         let used: i64 = vault.db().query_row("SELECT COUNT(*) FROM generation_requests WHERE root=?", [invocation.root_id()], |r| r.get(0))?;
         if used >= grant.max_requests {
-            return Err(Error::Budget);
+            return Err(Error::Worker("generation_request_budget".into()));
         }
         // Reserve the attempt in the root ledger before anything leaves.
         crate::service::comparison::check(&vault,invocation.root_id())?;
-        vault.runtime.dispatch_generation(invocation, &request_id, !call.media.is_empty())?;
+        if let Err(error) = vault.runtime.dispatch_generation(invocation, &request_id, !call.media.is_empty()) {
+            if matches!(error, Error::Budget) {
+                let counters = vault.runtime.ledger.counters(invocation.root_id())?;
+                let reason = if counters.generation >= 7 { Some("generation_request_budget") }
+                    else if call.purpose == "draft_answer" && counters.answer_versions >= 3 { Some("answer_attempt_budget") }
+                    else if !call.media.is_empty() && counters.native_media >= 2 { Some("native_media_budget") }
+                    else { None };
+                if let Some(reason) = reason { return Err(Error::Worker(reason.into())); }
+            }
+            return Err(error);
+        }
         crate::service::comparison::reserve(&vault,invocation.root_id())?;
-        let materials = json!({"question_id": call.question, "evidence_ids": call.evidence, "media_ids": call.media,
+        let materials = json!({"question_id": call.question, "evidence_ids": call.evidence, "calculation_ids": call.calculations, "media_ids": call.media,
             "prompt": format!("{}@{}", call.prompt, &call.prompt_sha[..12])});
         let audit = connections::begin_request(&vault, invocation.root_id(), invocation.id(), &connection, call.purpose, &materials)?;
         let store = CredentialStore::for_vault(&ctx.services.layout.data_root, &vault.id, &vault.keys.credential)?;
@@ -302,7 +333,7 @@ pub fn strip_labels(text: &str) -> (String, usize) {
 
 /// Bare evidence labels ("见 E4 中的约定") that are known labels of this
 /// answer, as whole tokens. Calculation and media labels are left alone in
-/// bare form: "C1", "M1" are also ordinary words (licence class, money supply).
+/// bare form: "C1", "0.2.0" are also ordinary words (licence class, money supply).
 pub fn strip_bare_labels(text: &str, known: &[String]) -> (String, usize) {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::new();
@@ -346,6 +377,7 @@ pub(crate) struct EvidenceText {
     pub display: String,
     pub location: String,
     pub text: String,
+    pub source_parts: Vec<Value>,
 }
 
 /// Active chunks in the given order, labelled E1, E2…
@@ -356,18 +388,22 @@ pub(crate) fn evidence_texts(ctx: &Ctx, ids: &[String]) -> Result<Vec<EvidenceTe
         let (body, version, unit_title, spans): (String, String, String, String) =
             vault.db().query_row("SELECT c.body,c.version_id,c.unit_title,c.spans FROM chunks c JOIN objects o ON o.id=c.id WHERE c.id=? AND o.active=1", [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?.ok_or(Error::Denied)?;
         let display: String = vault.db().query_row("SELECT d.display_name FROM document_versions v JOIN documents d ON d.id=v.document_id WHERE v.id=?", [&version], |r| r.get(0))?;
-        let block = serde_json::from_str::<Vec<Value>>(&spans)?.iter().find_map(|s| s["block"].as_i64());
+        let spans: Vec<Value> = serde_json::from_str(&spans)?;
+        let source_parts = super::documents::source_parts(&vault, &version, &spans)?;
+        let block = spans.iter().find_map(|s| s["block"].as_i64());
         let page: Option<i64> = match block {
             Some(block) => vault.db().query_row("SELECT p.page_no FROM blocks b JOIN pages p ON p.id=b.page_id WHERE b.rowid=?", [block], |r| r.get(0)).optional()?,
             None => None,
         };
         let location = match page {
             Some(page) if page < 100_000 => format!("第{page}页"),
-            Some(_) => "视频画面".into(),
+            Some(_) => "媒体证据（来源见分段标注）".into(),
             None => String::new(),
         };
         let location = if unit_title.is_empty() { location } else if location.is_empty() { unit_title } else { format!("{location} · {unit_title}") };
-        out.push(EvidenceText { label: format!("E{}", index + 1), evidence_id: id.clone(), display, location, text: body });
+        let media = source_parts.iter().any(|p| matches!(p["kind"].as_str(), Some("frame_ocr" | "audio_asr")));
+        let text = if media { source_parts.iter().map(|p| format!("【{}】{}", p["label"].as_str().unwrap_or(""), p["text"].as_str().unwrap_or(""))).collect::<Vec<_>>().join("\n") } else { body };
+        out.push(EvidenceText { label: format!("E{}", index + 1), evidence_id: id.clone(), display, location, text, source_parts });
     }
     Ok(out)
 }
@@ -389,15 +425,19 @@ fn evidence_block(items: &[EvidenceText], max_chars: usize) -> String {
     items.iter().map(|item| format!("[{}] 《{}》{}：{}\n", item.label, item.display, if item.location.is_empty() { String::new() } else { format!(" {}", item.location) }, item.text.chars().take(max_chars).collect::<String>())).collect()
 }
 
+pub(crate) fn calculation_value(payload: &Value) -> String {
+    serde_json::to_string(&payload["result"]).unwrap_or_default().chars().take(3000).collect()
+}
+
 fn calculation_text(ctx: &Ctx, ids: &[String]) -> Result<Vec<(String, String)>> {
     let vault = ctx.lock()?;
     let mut out = vec![];
     for (index, id) in ids.iter().enumerate() {
         let (_, kind, payload) = vault.get_result(id)?;
-        if kind != "CalculationRef" {
+        if kind != "CalculationRef" || payload["requires_recalculation"] == true {
             return Err(Error::Denied);
         }
-        out.push((format!("C{}", index + 1), serde_json::to_string(&payload["result"]).unwrap_or_default().chars().take(3000).collect()));
+        out.push((format!("C{}", index + 1), calculation_value(&payload)));
     }
     Ok(out)
 }
@@ -468,7 +508,7 @@ fn search_plan(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Enve
         if constraints.is_empty() { "无".to_owned() } else { format!("{} 条已确认约束", constraints.len()) }
     );
     let (system, prompt, prompt_sha) = system_prompt(ctx, &["search_plan"])?;
-    let call = Call { purpose: "search_plan", prompt, prompt_sha, question: question.clone(), evidence: vec![], media: vec![] };
+    let call = Call { calculations: vec![], purpose: "search_plan", prompt, prompt_sha, question: question.clone(), evidence: vec![], media: vec![] };
     let (value, request_id, response) = generate_json(ctx, invocation, &call, &system, &user, vec![], 800)?;
     // Drop rewrites that only repeat q0 or each other.
     let mut rewrites: Vec<String> = vec![];
@@ -611,7 +651,7 @@ fn task_plan(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelo
         goal_lines(&packet.goal), allowed.join("、"), evidence_block(&evidence, 160)
     );
     let (system, prompt, prompt_sha) = system_prompt(ctx, &["task_plan"])?;
-    let call = Call { purpose: "task_plan", prompt, prompt_sha, question: question.clone(), evidence: packet.evidence.clone(), media: vec![] };
+    let call = Call { calculations: vec![], purpose: "task_plan", prompt, prompt_sha, question: question.clone(), evidence: packet.evidence.clone(), media: vec![] };
     let (wire, request_id, response) = generate_json(ctx, invocation, &call, &system, &user, vec![], 1200)?;
     // The plan is checked by the core: known roles only, earlier dependencies
     // only (acyclic), within the limit; goals become core objects.
@@ -626,14 +666,14 @@ fn task_plan(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envelo
         let depends: Vec<String> = task["depends_on"].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str().map(str::to_owned)).filter(|d| seen.contains(d)).collect();
         let vault = ctx.lock()?;
         let goal_ref = |kind: &str, text: &str| -> Result<String> {
-            let id = vault.register(match kind { "goal" => "GoalRef", "acceptance" => "AcceptanceRef", _ => "StopRef" }, "m2", Some(invocation.id()))?;
+            let id = vault.register(match kind { "goal" => "GoalRef", "acceptance" => "AcceptanceRef", _ => "StopRef" }, "0.3.0", Some(invocation.id()))?;
             vault.db().execute("INSERT INTO goals(id,root,kind,text,created_at) VALUES(?,?,?,?,?)", params![id, root, kind, text.chars().take(300).collect::<String>(), now_rfc3339()])?;
             Ok(id)
         };
         let goal = goal_ref("goal", task["goal"].as_str().unwrap_or(""))?;
         let acceptance = goal_ref("acceptance", task["acceptance"].as_str().unwrap_or(""))?;
         let stop = goal_ref("stop", task["stop"].as_str().unwrap_or(""))?;
-        let packet_id = vault.register("ContextPacketRef", "m2", Some(invocation.id()))?;
+        let packet_id = vault.register("ContextPacketRef", "0.3.0", Some(invocation.id()))?;
         let packet_payload = json!({"role": role_id, "question_id": question, "goal": {"goal_ref": goal, "acceptance_ref": acceptance, "stop_ref": stop},
             "evidence_ids": packet.evidence, "calculation_ids": packet.calculations, "omitted_ids": packet.payload["omitted_ids"], "planned_by": invocation.id(),
             "source_generation": packet.payload["source_generation"], "created_at": now_rfc3339()});
@@ -720,6 +760,7 @@ fn draft_answer(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
     let labels: BTreeMap<String, String> = evidence.iter().map(|e| (e.label.clone(), e.evidence_id.clone())).collect();
     let label_of = |id: &str| labels.iter().find(|(_, v)| v.as_str() == id).map(|(k, _)| k.clone()).unwrap_or_else(|| "未提供".into());
     let mut user = format!("原问题：{text}\n\n原文证据：\n{}\n确定性计算结果：\n{}", evidence_block(&evidence, 1800), calculation_block(&calc));
+    user.push_str("\n计算时将完整算式独立写出，操作数含义和凭证局限另写文字说明；不要在算式内部插入解释性括注。算式正确不代表付款事实已经确认。\n");
     if !analyses.is_empty() {
         user.push_str("\n专业角色分析（候选分析，不是证据；只采信有证据编号支持的内容）：\n");
         for (_, analysis) in &analyses {
@@ -774,11 +815,11 @@ fn draft_answer(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Env
         }
         user.push_str("\n只修正这些问题：删去或改写缺乏依据的内容，补上正确的证据编号；不要新增证据里没有的事实。输出新的完整 JSON。");
     } else {
-        user.push_str("\n请生成回答 JSON：conclusion 用 1–3 句直接回答问题；basis 列出支撑结论的原文要点；calculations 只复述给出的计算结果；assumptions 写适用前提；missing_information 写资料里缺少、会影响结论的信息（资料外的规定写“需核实的规定”）；conflicts 写相互矛盾的证据或意见；next_steps 写可执行的下一步；follow_up_questions 写 0–3 个可以继续用这些资料核对的追问。每条 conclusion、basis、calculations 都在 evidence 中写出支持它的证据编号（如 \"E1\"）或计算编号（如 \"C1\"），正文不写编号。");
+        user.push_str("\n请生成回答 JSON：conclusion 用 1–3 句直接回答问题；basis 列出支撑结论的原文要点；calculations 可复述给出的计算结果，也可用所引原文数字写出完整加减乘除算式，逐步列出操作数、结果、单位与舍入规则；推算不等于已确认交易。assumptions 写适用前提；missing_information 写资料里缺少、会影响结论的信息（资料外的规定写“需核实的规定”）；conflicts 写相互矛盾的证据或意见；next_steps 写可执行的下一步；follow_up_questions 写 0–3 个可以继续用这些资料核对的追问。每条 conclusion、basis、calculations 都在 evidence 中写出支持它的证据编号（如 \"E1\"）或计算编号（如 \"C1\"），正文不写编号。媒体分段标注中的画面文字仅来自 OCR，音轨转写仅来自 ASR；不得把音轨中的日期、金额说成画面显示，也不得把画面文字说成当事人口述。");
     }
     let evidence_ids: Vec<String> = evidence.iter().map(|e| e.evidence_id.clone()).collect();
     let (system, prompt, prompt_sha) = system_prompt(ctx, &["draft_answer"])?;
-    let call = Call { purpose: "draft_answer", prompt, prompt_sha, question: question.clone(), evidence: evidence_ids.clone(), media: vec![] };
+    let call = Call { calculations: calculations.clone(), purpose: "draft_answer", prompt, prompt_sha, question: question.clone(), evidence: evidence_ids.clone(), media: vec![] };
     // On the 16 GiB tier the flow already preloads the grounding model at its
     // start; below it the model may only load once retrieval is done, so it
     // loads while this draft is being generated.
@@ -870,7 +911,7 @@ fn role_analysis(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
     );
     let role_prompt = format!("role.{}", role.id);
     let (system, prompt, prompt_sha) = system_prompt(ctx, &[&role_prompt, "role_analysis"])?;
-    let call = Call { purpose: "role_analysis", prompt, prompt_sha, question: question.clone(), evidence: packet.evidence.clone(), media: vec![] };
+    let call = Call { calculations: calculations.clone(), purpose: "role_analysis", prompt, prompt_sha, question: question.clone(), evidence: packet.evidence.clone(), media: vec![] };
     let (wire, request_id, response) = generate_json(ctx, invocation, &call, &system, &user, vec![], 1800)?;
     let labels: BTreeMap<String, String> = evidence.iter().map(|e| (e.label.clone(), e.evidence_id.clone())).collect();
     let calc_labels: BTreeMap<String, String> = calc.iter().map(|(label, _)| label.clone()).zip(calculations.iter().cloned()).collect();
@@ -933,7 +974,7 @@ fn role_check(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<Envel
         goal_lines(&packet.goal), evidence_block(&evidence, 1800), calculation_block(&calc), if claims_text.is_empty() { "（无）\n".into() } else { claims_text }
     );
     let (system, prompt, prompt_sha) = system_prompt(ctx, &["role_check"])?;
-    let call = Call { purpose: "role_check", prompt, prompt_sha, question: question.clone(), evidence: packet.evidence.clone(), media: vec![] };
+    let call = Call { calculations: calculations.clone(), purpose: "role_check", prompt, prompt_sha, question: question.clone(), evidence: packet.evidence.clone(), media: vec![] };
     let (wire, request_id, response) = generate_json(ctx, invocation, &call, &system, &user, vec![], 1500)?;
     let mut challenges = vec![];
     let mut dropped = 0;
@@ -1000,7 +1041,7 @@ fn context_brief(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
         goal_lines(&packet.goal), evidence_block(&evidence, 1800), if progress_text.is_empty() { "无\n".into() } else { progress_text }
     );
     let (system, prompt, prompt_sha) = system_prompt(ctx, &["context_brief"])?;
-    let call = Call { purpose: "context_brief", prompt, prompt_sha, question, evidence: originals.clone(), media: vec![] };
+    let call = Call { calculations: vec![], purpose: "context_brief", prompt, prompt_sha, question, evidence: originals.clone(), media: vec![] };
     let (wire, request_id, response) = generate_json(ctx, invocation, &call, &system, &user, vec![], 1200)?;
     let labels: BTreeMap<String, String> = evidence.iter().map(|e| (e.label.clone(), e.evidence_id.clone())).collect();
     let map = |field: &str| -> Vec<String> { wire[field].as_array().cloned().unwrap_or_default().iter().filter_map(|v| v.as_str()).filter_map(|l| labels.get(&l.trim().to_ascii_uppercase()).cloned()).collect() };
@@ -1210,7 +1251,7 @@ fn marked_numbers(text: &str) -> Vec<(String, bool)> {
             index += 1;
             continue;
         }
-        // Only whole tokens: "E1", "M2", "v3" are labels or names, not numbers.
+        // Only whole tokens: "E1", "0.3.0", "v3" are labels or names, not numbers.
         if c.is_ascii_digit() && index > 0 && chars[index - 1].is_ascii_alphabetic() {
             index = read_arabic(&chars, index).1;
             continue;
@@ -1238,7 +1279,12 @@ fn marked_numbers(text: &str) -> Vec<(String, bool)> {
             || matches!(next, Some('元' | '块'))
             || matches!(previous, Some('¥' | '￥'))
             || before.ends_with("人民币");
-        let negative=matches!(previous,Some('-'|'−'|'负'));
+        // A subtraction operand is positive; only a unary sign denotes debt.
+        let binary_minus = matches!(previous, Some('-' | '−' | '－')) && start >= 2
+            && chars[..start - 1].iter().rev().find(|c| !c.is_whitespace()).is_some_and(|c|
+                c.is_ascii_digit() || cn_digit(*c).is_some() || cn_unit(*c).is_some()
+                    || matches!(*c, ')' | '）' | '元' | '块' | '钱' | '%' | '％'));
+        let negative = previous == Some('负') || (matches!(previous, Some('-' | '−' | '－')) && !binary_minus);
         if marked || value >= 100.0 {
             out.push((format_number(if negative{-value}else{value}), percent));
         }
@@ -1293,6 +1339,34 @@ pub fn numbers_supported(claim: &str, source: &str) -> bool {
             })
         })
     })
+}
+
+/// Numeric notation for already verified, unitless results. This is an exact
+/// decimal-point shift, not a financial ratio inferred from a source amount.
+/// Keep quantity units and rounded results out; NLI still checks their meaning.
+fn arithmetic_context(proofs: &[Value]) -> String {
+    let mut context = proofs.iter().filter_map(|p| p["equation"].as_str()).collect::<Vec<_>>().join("\n");
+    for equation in proofs.iter().filter_map(|p| p["equation"].as_str()) {
+        let Some((_, result)) = equation.rsplit_once('=') else { continue; };
+        let raw = result.trim();
+        let negative = raw.starts_with(['-', '−', '－']);
+        let unsigned = raw.strip_prefix(['-', '−', '－', '+', '＋']).unwrap_or(raw);
+        let mut fields = unsigned.split('.');
+        let whole = fields.next().unwrap_or("");
+        let fraction = fields.next().unwrap_or("");
+        if fields.next().is_some() || whole.is_empty() && fraction.is_empty()
+            || whole.trim_start_matches('0').len() > 16 || fraction.len() > 48
+            || !whole.chars().chain(fraction.chars()).all(|c| c.is_ascii_digit()) { continue; }
+        let fraction = format!("{fraction}00");
+        let integer = format!("{whole}{}", &fraction[..2]);
+        let integer = integer.trim_start_matches('0');
+        let integer = if integer.is_empty() { "0" } else { integer };
+        let tail = fraction[2..].trim_end_matches('0');
+        let sign = if negative && (integer != "0" || !tail.is_empty()) { "-" } else { "" };
+        let percent = if tail.is_empty() { format!("{sign}{integer}") } else { format!("{sign}{integer}.{tail}") };
+        context.push_str(&format!("\n等值数字表示（仅换算已核验的无单位结果，不推断经济含义）：{raw} = {percent}%"));
+    }
+    context
 }
 
 /// A whole number (Arabic or Chinese) at `start`, for dates.
@@ -1365,6 +1439,24 @@ pub fn date_supported(date: &str, source: &[String]) -> bool {
     source.iter().any(|s| s == date) || (date.starts_with("--") && source.iter().any(|s| s.ends_with(&date[1..])))
 }
 
+/// A user-specified evaluation date is a condition, not a transaction date.
+/// Keep occurrence ranges so another use of the same date still needs evidence.
+fn evaluation_date_spans(text: &str) -> Vec<(String, usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = vec![];
+    for start in 0..chars.len() {
+        if start > 0 && (chars[start - 1].is_ascii_digit() || cn_digit(chars[start - 1]).is_some() || matches!(chars[start - 1], '十' | '拾')) { continue; }
+        let Some((date, end)) = read_date(&chars, start) else { continue; };
+        if chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() { continue; }
+        let before: String = chars[start.saturating_sub(12)..start].iter().collect();
+        let after: String = chars[end..(end + 10).min(chars.len())].iter().collect();
+        let qualified = ["截至", "截止到", "截止于", "截止", "核对日为", "核对日期为"].iter().any(|s| before.trim_end().ends_with(s))
+            || (before.trim_end().ends_with('以') && ["为核对日", "为基准日", "为核对基准", "为截止日"].iter().any(|s| after.trim_start().starts_with(s)));
+        if qualified { out.push((date, start, end)); }
+    }
+    out
+}
+
 pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<EnvelopeParts> {
     ctx.authorize(invocation, "vault.read")?;
     ctx.authorize(invocation, "local.grounding")?;
@@ -1388,6 +1480,24 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
     let calc = calculation_text(ctx, &calculations)?;
     let calc_by_ref: BTreeMap<String, String> = calculations.iter().cloned().zip(calc.iter().map(|(_, v)| v.clone())).collect();
     let invalid: Vec<Value> = draft["invalid_citations"].as_array().cloned().unwrap_or_default();
+    // Derivations are checked locally with Decimal before either the literal
+    // number guard or the token classifier sees them. Each proof is bound to
+    // this claim's actual citations; it never supplies a new factual premise.
+    let arithmetic_claims: Vec<Value> = draft["draft"]["claims"].as_array().cloned().unwrap_or_default().iter().filter(|c| c["kind"] != "next_step").take(64).map(|claim| {
+        let mut sources = vec![];
+        for id in claim["evidence_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
+            if let Some(e) = by_id.get(id) {
+                let raw = e.source_parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n");
+                sources.push(json!({"id": id, "text": if raw.is_empty() { e.text.as_str() } else { raw.as_str() }}));
+            }
+        }
+        for id in claim["calculation_refs"].as_array().cloned().unwrap_or_default().iter().filter_map(Value::as_str) {
+            if let Some(text) = calc_by_ref.get(id) { sources.push(json!({"id": id, "text": text})); }
+        }
+        json!({"id": claim["claim_id"], "text": claim["text"], "sources": sources})
+    }).collect();
+    let arithmetic = ctx.services.local.call(&json!({"op": "verify_arithmetic", "claims": arithmetic_claims}), ctx.cancel, std::time::Duration::from_secs(30))?;
+    let evaluation_dates: Vec<String> = evaluation_date_spans(&question_text).into_iter().map(|(date, _, _)| date).collect();
     let mut rows = vec![];
     let mut actions = vec![];
     let mut checked = 0usize;
@@ -1412,20 +1522,35 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
         }
         let cited: Vec<&EvidenceText> = refs.iter().filter_map(|r| by_id.get(r).copied()).collect();
         let source_text: String = cited.iter().map(|e| e.text.as_str()).chain(calc_refs.iter().filter_map(|r| calc_by_ref.get(r).map(String::as_str))).collect::<Vec<_>>().join("\n");
+        let math = &arithmetic["claims"][&claim_id];
+        let arithmetic_incomplete = math["coverage_incomplete"] == json!(true);
+        let proofs: Vec<Value> = math["verified"].as_array().cloned().unwrap_or_default();
+        let derivations = arithmetic_context(&proofs);
+        let numeric_source = format!("{source_text}\n{derivations}");
+        let evaluation_spans: Vec<_> = evaluation_date_spans(&text).into_iter().filter(|(date, _, _)| evaluation_dates.contains(date)).collect();
+        let factual_date_text: String = text.chars().enumerate().filter(|(i, _)| !evaluation_spans.iter().any(|(_, start, end)| start <= i && i < end)).map(|(_, c)| c).collect();
+        if math["invalid"].as_array().is_some_and(|v| !v.is_empty()) { checks.push("arithmetic_mismatch"); }
         if !refs.is_empty() || !calc_refs.is_empty() {
-            if !numbers_supported(&text, &source_text) {
+            if !arithmetic_incomplete && !numbers_supported(&text, &numeric_source) {
                 checks.push("amount_not_in_evidence");
             }
             let source_dates = key_dates(&source_text);
-            if key_dates(&text).iter().any(|d| !date_supported(d, &source_dates)) {
+            if key_dates(&factual_date_text).iter().any(|d| !date_supported(d, &source_dates)) {
                 checks.push("date_not_in_evidence");
             }
+            // An ASR date/amount is not evidence that it appears on screen.
+            let visual: String = cited.iter().flat_map(|e| &e.source_parts).filter(|p| p["kind"] == "frame_ocr").filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n");
+            if !visual.is_empty() && text.split(['，', '。', '；', '\n']).any(|clause| {
+                ["画面显示", "画面中显示", "画面可见", "画面文字显示", "字幕显示", "画面记载", "视频显示", "屏幕显示"].iter().any(|word| clause.contains(word))
+                    && !["音轨", "转写", "口述", "录音"].iter().any(|word| clause.contains(word))
+                    && (!numbers_supported(clause, &visual) || key_dates(clause).iter().any(|d| !date_supported(d, &key_dates(&visual))))
+            }) { checks.push("source_kind_mismatch"); }
         }
         // mmBERT signal on the claim against its cited evidence (design 9.12).
-        let mut signal = "not_run";
+        let mut signal = if arithmetic_incomplete { "coverage_incomplete" } else { "not_run" };
         let mut flagged: Vec<Value> = vec![];
         let mut ratio = 0.0f64;
-        if !cited.is_empty() && checked < 12 {
+        if !arithmetic_incomplete && !cited.is_empty() && checked < 12 {
             let unit = format!("{}:{claim_id}", invocation.id());
             let dispatched = ctx.lock()?.runtime.dispatch_grounding_unit(invocation, &unit, &draft_ref);
             match dispatched {
@@ -1433,7 +1558,9 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
                 Err(error) => return Err(error),
                 Ok(_) => {
                     checked += 1;
-                    let evidence_text: String = cited.iter().map(|e| format!("《{}》{}：{}", e.display, e.location, e.text)).collect::<Vec<_>>().join("\n");
+                    let mut evidence_text: String = cited.iter().map(|e| format!("《{}》{}：{}", e.display, e.location, e.text)).collect::<Vec<_>>().join("\n");
+                    if !evaluation_spans.is_empty() { evidence_text.push_str(&format!("\n核对基准（来自用户问题，仅作截至日期，不是交易发生日期）：{}。", evaluation_spans.iter().map(|(date, _, _)| date.as_str()).collect::<Vec<_>>().join("、"))); }
+                    if !derivations.is_empty() { evidence_text.push_str(&format!("\n本机精确运算核验（仅证明算式，不证明交易事实或法律适用）：\n{derivations}")); }
                     match ctx.services.predict("grounding", &json!({"kind": "grounding", "question": question_text, "evidence": evidence_text, "answer": text}), ctx.cancel) {
                         Ok(output) => {
                             let tokens = output["answer_tokens"].as_array().cloned().unwrap_or_default();
@@ -1461,15 +1588,17 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
                     }
                 }
             }
-        } else if cited.is_empty() && !calc_refs.is_empty() {
-            signal = "not_applicable";
+        } else if !arithmetic_incomplete && cited.is_empty() && !calc_refs.is_empty() {
+            // Numeric membership or a valid equation proves no factual or
+            // legal proposition in free-form prose, regardless of claim kind.
+            signal = "source_evidence_missing";
         }
-        let hard = checks.iter().any(|c| matches!(*c, "unknown_citation" | "missing_citation" | "amount_not_in_evidence" | "date_not_in_evidence"));
+        let hard = !checks.is_empty();
         let status = if hard || ratio >= 0.5 {
             "unsupported"
         } else if signal == "signal_flagged" {
             "partial"
-        } else if matches!(signal, "coverage_incomplete" | "execution_failed" | "not_run") {
+        } else if matches!(signal, "coverage_incomplete" | "execution_failed" | "not_run" | "source_evidence_missing") {
             "unchecked"
         } else {
             "supported"
@@ -1479,6 +1608,10 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
             Some(&"missing_citation") => "没有标注支持它的证据".to_owned(),
             Some(&"amount_not_in_evidence") => "其中的金额或数字在所引证据中找不到".to_owned(),
             Some(&"date_not_in_evidence") => "其中的日期在所引证据中找不到".to_owned(),
+            Some(&"arithmetic_mismatch") => "算式的结果与本机精确计算不一致".to_owned(),
+            Some(&"source_kind_mismatch") => "将音轨转写中的信息归到了画面文字；请分别核对来源".to_owned(),
+            _ if signal == "source_evidence_missing" => "仅引用计算结果，尚未核查文字结论的事实或法律依据；算式核验不等于结论有证据支持".to_owned(),
+            _ if arithmetic_incomplete => "算式依赖链超过单句24步的核验范围，未完成全部核查；请拆分计算后再核对".to_owned(),
             _ if status == "unsupported" => "大部分内容缺乏所引证据支持".to_owned(),
             _ if status == "partial" => {
                 let piece: String = flagged.first().map(|f| text.chars().skip(f["start"].as_u64().unwrap_or(0) as usize).take((f["end"].as_u64().unwrap_or(0) - f["start"].as_u64().unwrap_or(0)) as usize).collect()).unwrap_or_default();
@@ -1489,7 +1622,7 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
         if matches!(status, "unsupported" | "partial") {
             actions.push(json!({"claim_id": claim_id, "action": "revise_answer", "reason": checks.first().copied().unwrap_or(if status == "partial" { "signal_flagged" } else { "unsupported" }), "message": message}));
         }
-        rows.push(json!({"claim_id": claim_id, "kind": kind, "status": status, "checks": checks, "signal": signal, "flagged": flagged, "flagged_ratio": ratio, "message": message}));
+        rows.push(json!({"claim_id": claim_id, "kind": kind, "status": status, "checks": checks, "signal": signal, "flagged": flagged, "flagged_ratio": ratio, "message": message, "arithmetic": proofs}));
     }
     let run_status = if rows.iter().any(|r| r["status"] == "unchecked") { "partial" } else { "completed" };
     let payload = json!({"draft_ref": draft_ref, "version": draft["version"], "claims": rows, "coverage": {"checked": checked, "groundable": groundable},
@@ -1499,7 +1632,12 @@ pub fn answer_grounding(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Re
     let mut parts = completed(Some(result));
     if run_status == "partial" {
         parts.status = "partial".into();
-        warn(&mut parts, "coverage_incomplete", "部分内容未能完成核查（超出核查预算或输入过长）。");
+        if rows.iter().any(|row| row["signal"] == "source_evidence_missing") {
+            warn(&mut parts, "source_evidence_missing", "部分文字仅引用计算结果，缺少原文证据，未完成事实或法律依据核查。");
+        }
+        if rows.iter().any(|row| row["status"] == "unchecked" && row["signal"] != "source_evidence_missing") {
+            warn(&mut parts, "coverage_incomplete", "部分内容未能完成核查（超出核查预算、输入过长或核查失败）。");
+        }
     }
     Ok(parts)
 }

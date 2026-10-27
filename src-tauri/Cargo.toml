@@ -1,6 +1,6 @@
 [package]
 name = "lvjin-core"
-version = "0.5.0"
+version = "0.7.0"
 edition = "2024"
 autotests = false
 
@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-m0-harness = []
+test-harness = []
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog"]
 # Development and test builds may launch the Python worker from source under
 # docs. Production desktop builds use only the frozen, hash-pinned worker.
@@ -34,12 +34,16 @@ sha2 = "0.10.9"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 zeroize = { version = "1", features = ["derive"] }
-jieba-rs = "=0.11.0"
+# Load the byte-identical embedded MIT dictionary directly; no compressed
+# dictionary context or zstd dependency is needed in the application.
+jieba-rs = { version = "=0.11.0", default-features = false }
 usearch = { version = "=2.26.4", default-features = false }
-# Generation connections (M2): blocking HTTPS through Windows SChannel and the
+# Generation connections (0.3.0): blocking HTTPS through Windows SChannel and the
 # system certificate store; redirects disabled, timeouts set per connection.
 ureq = { version = "=3.4.2", default-features = false, features = ["native-tls"] }
 url = "=2.5.8"
+regex = "=1.13.1"
+serde-saphyr = { version = "=2.0.0", default-features = false, features = ["deserialize"] }
 rmcp = { version = "=3.6.0", default-features = false, features = ["client", "server", "transport-streamable-http-client-reqwest", "transport-streamable-http-server", "reqwest-native-tls"] }
 reqwest = { version = "=0.13.5", default-features = false, features = ["native-tls", "json", "stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"] }
@@ -66,5 +70,5 @@ required-features = ["desktop"]
 name = "lvjin-public-mcp"
 path = "src/public_mcp_main.rs"
 
-# Tests, benchmarks and the validation programs (m0-verify, m1-verify) build
+# Tests, benchmarks and the validation programs (v0_1_0-verify, v0_2_0-verify) build
 # from the docs workspace (docs/tests/Cargo.toml) against this library.

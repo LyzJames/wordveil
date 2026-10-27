@@ -1,528 +1,102 @@
-// Application shell (design §5–§6): lock screen; app bar with privacy and
-// connection status, task center, command palette entry and lock; collapsible
-// sidebar; the content stage with the inspector beside or over it.
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { api, onLocked, onTask, relative, skillName, snapshot, stageName, statusLabel, type AppStatus, type Connection, type DueTodo, type Matter, type TaskState, type UnlockInfo } from './api';
-import { ConnectionsPage } from './connections';
-import { ComparisonPage } from './comparison';
-import { KnowledgePage, ToolsPage } from './external';
-import { Icon, type IconName } from './icons';
-import { LockScreen } from './lock';
-import { MatterList, MatterPage } from './matters';
-import { QaPage, watchQaTasks, type QaTurn } from './qa';
-import { SessionContext, useSession, type InspectorTarget, type Session, type View } from './session';
-import { applyPreferences, isLockKey, lockKeyLabel, preference, savePreference, SettingsPage, usePreferences } from './settings';
-import { Busy, Empty, Notices, useDismiss, useFocusTrap, useNotice } from './ui';
-import { Inspector } from './viewer';
-import { NewMatter, RetryButton, Workbench } from './workbench';
-import './tokens.css';
-import './style.css';
-import './app.css';
+import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
+import {createRoot} from 'react-dom/client';
+import {api,onLocked,bytes,type AppStatus,type UnlockInfo,type Connection,type TaskState} from './api';
+import {personal,onPersonal,type Conversation,type ConversationSummary,type Project,type PersonalFile,type SearchResult,type Source,type ChatRequest} from './personal-api';
+import {ConversationMenu,MessageMenu,MemorySettings,ContextPanel,ContextSettings} from './conversation-controls';
+import {LockScreen} from './lock';
+import {LegacyHistory,FileReader,LegacyProject} from './personal-readers';
+import {Icon,type IconName} from './icons';
+import {ConnectionsPage} from './connections';
+import {SessionContext,type Session,type View} from './session';
+import {SettingsPage,applyPreferences,isLockKey,preference} from './settings';
+import {Busy} from './ui';
+import {ExportButton} from './export';
+import './tokens.css';import './style.css';import './app.css';import './personal.css';
 
-function App() {
-  const [status, setStatus] = useState<AppStatus | null>(null);
-  const [info, setInfo] = useState<UnlockInfo | null>(null);
-  const load = useCallback(() => api.status().then(setStatus).catch((e) => setStatus({ milestone: 'M4', version: '', installation_ok: false, error: String(e) })), []);
-  useEffect(() => {
-    load();
-  }, [load]);
-  useEffect(()=>{if(status?.e2e_session)setInfo(status.e2e_session);},[status?.e2e_session]);
-  useEffect(() => {
-    const off = onLocked(() => {
-      setInfo(null);
-      setStatus(null);
-      load();
-    });
-    return () => {
-      off.then((f) => f());
-    };
-  }, [load]);
-  if (!status) return <Busy label="正在检查安装…" />;
-  if (!info) return <LockScreen status={status} onUnlocked={setInfo} onRefresh={load} />;
-  return (
-    <Workspace
-      info={info}
-      onLock={() => {
-        // Re-read the vault list before the lock screen chooses its default form.
-        setInfo(null);
-        setStatus(null);
-        load();
-      }}
-    />
-  );
+function App(){
+ const [status,setStatus]=useState<AppStatus|null>(null),[info,setInfo]=useState<UnlockInfo|null>(null);
+ const load=useCallback(()=>api.status().then(setStatus).catch(e=>setStatus({release_version:'',version:'',installation_ok:false,error:String(e)})),[]);
+ useEffect(()=>{load();const off=onLocked(()=>{setInfo(null);setStatus(null);load();});return()=>{off.then(f=>f());};},[load]);
+ useEffect(()=>{if(status?.e2e_session)setInfo(status.e2e_session);},[status?.e2e_session]);
+ if(!status)return <Busy label="正在检查安装…"/>;
+ if(!info)return <LockScreen status={status} onUnlocked={setInfo} onRefresh={load}/>;
+ return <Workspace info={info} onLock={()=>{setInfo(null);setStatus(null);load();}}/>;
 }
-
-function useWindowWidth() {
-  const [width, setWidth] = useState(window.innerWidth);
-  useEffect(() => {
-    const resize = () => setWidth(window.innerWidth);
-    window.addEventListener('resize', resize);
-    return () => window.removeEventListener('resize', resize);
-  }, []);
-  return width;
+type Page='chat'|'search'|'projects'|'files'|'settings';
+type Popup='add'|'model'|'privacy'|null;
+const PHASE:Record<string,string>={privacy:'正在本机保护文字',retrieval:'正在检索本地资料',search_plan:'正在进一步搜索',web:'正在搜索网页',answer:'正在回答',media:'正在本机读取媒体',context_compact:'正在整理较早上下文'};
+function Workspace({info,onLock}:{info:UnlockInfo;onLock:()=>void}){
+ const [page,setPage]=useState<Page>('chat'),[collapsed,setCollapsed]=useState(()=>preference('lvjin-sidebar')==='collapsed'),[conversations,setConversations]=useState<ConversationSummary[]>([]),[current,setCurrent]=useState<Conversation|null>(null);
+ const [projects,setProjects]=useState<Project[]>([]),[project,setProject]=useState<string|null>(null),[files,setFiles]=useState<PersonalFile[]>([]),[attached,setAttached]=useState<string[]>([]);
+ const [connections,setConnections]=useState<Connection[]>([]),[connection,setConnection]=useState(''),[tasks,setTasks]=useState<TaskState[]>([]),[revision,setRevision]=useState(0);
+ const [text,setText]=useState(''),[mode,setMode]=useState<'local'|'cloud'>('local'),[effort,setEffort]=useState<ChatRequest['effort']>('auto'),[web,setWeb]=useState(false),[agentic,setAgentic]=useState(true),[popup,setPopup]=useState<Popup>(null);
+ const [running,setRunning]=useState<string|null>(null),[phase,setPhase]=useState(''),[stream,setStream]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[settingsTab,setSettingsTab]=useState('models');
+ const [search,setSearch]=useState(''),[foundConversations,setFoundConversations]=useState<ConversationSummary[]>([]),[searchResult,setSearchResult]=useState<SearchResult|null>(null),[strategy,setStrategy]=useState<'auto'|'exact'|'semantic'>('auto');
+ const [searchConnection,setSearchConnection]=useState(''),[projectName,setProjectName]=useState(''),[reading,setReading]=useState<{id:string;name:string}|null>(null),[artifact,setArtifact]=useState<string|null>(null);
+ const [temporary,setTemporary]=useState(false),[activeRoot,setActiveRoot]=useState(info.root_matter);
+ const currentId=useRef<string|null>(null),runningId=useRef<string|null>(null),input=useRef<HTMLTextAreaElement>(null),transcript=useRef<HTMLDivElement>(null);
+ currentId.current=current?.id??null;runningId.current=running;
+ const reloadConnections=useCallback(()=>{api.connections().then(rows=>{setConnections(rows);setConnection(old=>rows.some(c=>c.id===old)?old:(rows.find(c=>c.is_default)?.id??rows[0]?.id??''));}).catch(e=>setNotice(String(e)));},[]);
+ const reload=useCallback(()=>{Promise.all([personal.conversations(),personal.projects(),personal.files(),api.tasks()]).then(([cs,ps,fs,ts])=>{setConversations(cs);setProjects(ps);setFiles(fs);setTasks(ts);}).catch(e=>setNotice(String(e)));},[]);
+ const read=useCallback(async(id:string)=>{try{const value=await personal.conversation(id);if(currentId.current===id)setCurrent(value);}catch(e){setNotice(String(e));}},[]);
+ useEffect(()=>{reload();reloadConnections();},[reload,reloadConnections]);
+ useEffect(()=>{if(page!=='search')return;let active=true;const timer=window.setTimeout(()=>personal.conversations(search).then(rows=>{if(active)setFoundConversations(rows);}).catch(e=>{if(active)setNotice(String(e));}),200);return()=>{active=false;window.clearTimeout(timer);};},[page,search,revision]);
+ useEffect(()=>{const tick=window.setInterval(()=>{if(!runningId.current&&!tasks.some(t=>t.status==='running'))return;api.tasks().then(rows=>{setTasks(rows);const id=runningId.current;if(!id)return;const task=rows.find(t=>t.task_id===id);if(task&&task.status!=='running'){setRunning(null);runningId.current=null;setStream('');setPhase('');if(currentId.current)read(currentId.current);if(task.status==='failed')setNotice(task.envelope?.warnings?.map(w=>w.message).join('；')||'任务未完成，请查看对话状态。');reload();}}).catch(()=>{});},1200);return()=>window.clearInterval(tick);},[tasks,read,reload]);
+ useEffect(()=>{const off=onPersonal(event=>{
+  if(event.kind==='chat_progress'&&event.task_id===runningId.current)setPhase(PHASE[event.progress?.stage??'']??'正在处理');
+  if(event.kind==='chat_delta'&&event.task_id===runningId.current)setStream(event.envelope?.text??'');
+  if(event.kind==='chat_finished'){
+   if(event.task_id===runningId.current){setRunning(null);setStream('');setPhase('');const r=event.envelope;if(r?.status==='failed'||r?.status==='cancelled')setNotice(r.message??'任务未完成');else if(r?.warnings?.length)setNotice(r.warnings.join('；'));}
+   if(currentId.current)read(currentId.current);reload();
+  }else if(event.kind==='finished'){reload();setRevision(v=>v+1);}
+ });return()=>{off.then(f=>f());};},[read,reload]);
+ useEffect(()=>{let last=0;const ping=()=>{const now=Date.now();if(now-last>30000){last=now;api.touch().catch(()=>{});}};const events=['keydown','pointerdown','wheel'] as const;events.forEach(e=>window.addEventListener(e,ping,{passive:true}));return()=>events.forEach(e=>window.removeEventListener(e,ping));},[]);
+ const lock=useCallback(async()=>{onLock();try{await api.lock();}finally{onLock();}},[onLock]);
+ const newChat=useCallback(async()=>{if(runningId.current){setNotice('请先停止当前回答，再新建对话。');return;}if(temporary){await toggleTemporary();return;}setCurrent(null);setArtifact(null);setText('');setAttached([]);setNotice('');setPage('chat');setStream('');input.current?.focus();},[temporary]);
+ useEffect(()=>{const key=(e:KeyboardEvent)=>{if(isLockKey(e)){e.preventDefault();lock();}else if(e.ctrlKey&&!e.shiftKey&&e.key.toLowerCase()==='n'){e.preventDefault();newChat();}else if(e.ctrlKey&&e.key.toLowerCase()==='k'){e.preventDefault();setPage('search');}else if(e.key==='Escape'){setPopup(null);setArtifact(null);}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[lock,newChat]);
+ useEffect(()=>{transcript.current?.scrollTo({top:transcript.current.scrollHeight,behavior:'auto'});},[stream,current?.messages.length,phase]);
+ async function openChat(c:ConversationSummary){if(running){setNotice('请先停止当前回答，再切换对话。');return;}try{currentId.current=c.id;setCurrent(await personal.conversation(c.id));setProject(c.project_id);setMode(c.media_mode);setPage('chat');setArtifact(null);setNotice('');if(c.connection_id)setConnection(c.connection_id);}catch(e){setNotice(String(e));}}
+ async function send(continueFrom?:string){
+  const prompt=continueFrom?current?.messages.find(m=>m.id===continueFrom)?.text??'':text.trim();if(!prompt||busy||running)return;if(!connection){setSettingsTab('models');setPage('settings');setNotice('请先添加自己的模型连接。');return;}if(current?.pending){setNotice('请先处理上一次的隐私预览。');return;}
+  setBusy(true);setNotice('');setPopup(null);try{let id=current?.id;if(!id){id=(await personal.createConversation(project)).id;currentId.current=id;setCurrent(await personal.conversation(id));}
+   const r=await personal.send({conversation_id:id,text:prompt,continue_from:continueFrom??null,connection_id:connection,projects:project?[project]:[],versions:attached,retrieval:'auto',agentic,web,search_connection_id:searchConnection||null,media_mode:mode,effort});
+   if(r.task_id){setRunning(r.task_id);runningId.current=r.task_id;setPhase('正在本机保护文字');setText('');setStream('');setAttached([]);await read(id);reload();}
+  }catch(e){setNotice(String(e));}finally{setBusy(false);}
+ }
+ async function approve(){if(!current?.pending)return;setBusy(true);try{const r=await personal.approve(current.pending.id);if(r.task_id){setRunning(r.task_id);runningId.current=r.task_id;setPhase('正在处理已批准内容');await read(current.id);}}catch(e){setNotice(String(e));}finally{setBusy(false);}}
+ async function discard(){if(!current?.pending)return;try{await personal.discard(current.pending.id);await read(current.id);}catch(e){setNotice(String(e));}}
+ async function importFiles(){setPopup(null);setBusy(true);try{const rows=await api.importFiles(project??activeRoot,'copy');if(rows.length){setNotice(`已开始在本机导入 ${rows.length} 份资料。完成后可在“文件”中选择。`);reload();}}catch(e){setNotice(String(e));}finally{setBusy(false);}}
+ async function searchLocal(){if(!search.trim())return;if(!project&&projects.length>64){setNotice('资料项目较多，请先在项目或文件页面选择一个项目，再搜索。');return;}setBusy(true);setSearchResult(null);try{setSearchResult(await personal.search({query:search,projects:project?[project]:projects.map(p=>p.id),versions:[],strategy}));}catch(e){setNotice(String(e));}finally{setBusy(false);}}
+ async function createProject(){const title=projectName;if(!title.trim()){setPage('projects');return;}try{setProject((await personal.createProject(title.trim())).id);setProjectName('');reload();}catch(e){setNotice(String(e));}}
+ function go(v:View){if(temporary){setNotice('请结束临时对话后再修改持久设置。');return;}if(v.name==='connections'){setSettingsTab('models');setPage('settings');}else if(v.name==='settings'){setSettingsTab(v.tab??'security');setPage('settings');}else if(v.name==='matter'){setProject(v.id);setPage('files');}else setPage('chat');}
+ async function toggleTemporary(){
+  if(busy||runningId.current){setNotice('请先停止并等待当前处理结束。');return;}setBusy(true);
+  try{const r=await personal.action(temporary?'temporary_end':'temporary_start');if(r.status==='declined')return;setTemporary(!temporary);setActiveRoot(temporary?info.root_matter:r.root_matter??info.root_matter);currentId.current=null;setCurrent(null);setProject(null);setArtifact(null);setReading(null);setAttached([]);setText('');setStream('');setSearch('');setSearchResult(null);setFoundConversations([]);setPage('chat');setNotice(temporary?'临时对话已结束，本机临时密钥和内容已清理。':'临时对话不进历史、搜索、记忆或备份。锁定、关闭或退出会清理；此处导入的文件也只在临时区保留。');reload();reloadConnections();}
+  catch(e){setNotice(String(e));}finally{setBusy(false);}
+ }
+ function changed(deleted=false){setArtifact(null);setStream('');setRunning(null);runningId.current=null;setPhase('');if(deleted){currentId.current=null;setCurrent(null);setText('');}else if(currentId.current)read(currentId.current);reload();setRevision(v=>v+1);}
+ async function older(){if(!current?.messages.length)return;try{const rows=await personal.older(current.id,current.messages[0].ordinal);setCurrent(v=>v?.id===current.id&&v.branch===current.branch?{...v,messages:[...rows,...v.messages]}:v);}catch(e){setNotice(String(e));}}
+ async function locate(id:string){if(!current)return;let messages=current.messages;try{while(!messages.some(m=>m.id===id)&&messages.length<current.message_count){const rows=await personal.older(current.id,messages[0]?.ordinal??Number.MAX_SAFE_INTEGER);if(!rows.length)break;messages=[...rows,...messages];}setCurrent(v=>v?.id===current.id&&v.branch===current.branch?{...v,messages}:v);window.setTimeout(()=>document.getElementById(id)?.scrollIntoView({block:'center',behavior:'smooth'}),80);}catch(e){setNotice(String(e));}}
+ const selectedConnection=connections.find(c=>c.id===connection)??null;
+ const session=useMemo<Session>(()=>({info,view:page==='settings'?{name:'settings',tab:settingsTab}:{name:'home'},go,open:()=>{},inspect:()=>{},inspector:null,tasks,revision,refresh:reload,matters:projects.map(p=>({id:p.id,title:p.title,matter_type:'other',status:'active',updated_at:''})),mattersLoaded:true,due:[],connections,connection:selectedConnection,reloadConnections,newMatter:createProject,lock,qa:{turns:[],update:()=>{}}}),[info,page,settingsTab,tasks,revision,projects,connections,selectedConnection,reload,reloadConnections,lock]);
+ const title=page==='chat'?(current?.title??'新对话'):({search:'搜索',projects:'项目',files:'文件',settings:'设置'} as const)[page];
+ return <SessionContext.Provider value={session}><div className={`sy ${collapsed?'sy-collapsed':''}`}><aside className="sy-sidebar" aria-label="导航"><div className="sy-brand"><Icon name="shield"/><span>守语</span></div><nav><Nav icon="add" label="新对话" active={page==='chat'&&!current} onClick={newChat}/><Nav icon="search" label="搜索" active={page==='search'} onClick={()=>setPage('search')}/><Nav icon="folder" label="项目" active={page==='projects'} onClick={()=>setPage('projects')}/><Nav icon="document" label="文件" active={page==='files'} onClick={()=>setPage('files')}/></nav><div className="sy-history"><div className="sy-label">{temporary?'临时区':'最近对话'}</div>{conversations.map(c=><button key={c.id} className={current?.id===c.id?'active':''} onClick={()=>openChat(c)} title={c.title}>{c.title}</button>)}{!conversations.length&&<p className="sy-muted">{temporary?'结束或锁定后清理':'从一个问题开始'}</p>}</div><footer><Nav icon="settings" label="设置" active={page==='settings'} onClick={()=>{if(temporary){setNotice('请先结束临时对话，再修改持久设置或记忆。');return;}setPage('settings');}}/><Nav icon="lock" label="锁定私密空间" onClick={lock}/><small>{info.name} · 本机加密存储</small></footer></aside>
+ <main className="sy-main"><header className="sy-header"><button className="sy-icon-btn" aria-label={collapsed?'展开侧栏':'收起侧栏'} onClick={()=>setCollapsed(v=>!v)}><Icon name="nav"/></button><span className="sy-title">{temporary?'临时对话':title}</span>{page==='chat'&&<button className={`sy-temp-toggle ${temporary?'active':''}`} disabled={busy||!!running} onClick={toggleTemporary}>{temporary?'结束临时对话':'临时对话'}</button>}{page==='chat'&&current&&<ConversationMenu chat={current} busy={busy||!!running} onChanged={changed} onError={setNotice}/>}{page==='chat'&&!temporary&&current&&(current.messages.length>0)&&<ExportButton small name={current.title} resultRefs={async()=>[(await personal.exportConversation(current.id)).id]}/>}{project&&<button className="sy-project-tag" onClick={()=>setProject(null)} title="取消当前项目范围">{projects.find(p=>p.id===project)?.title??'当前项目'} ×</button>}<button className="sy-icon-btn" title="锁定私密空间 Ctrl+L" aria-label="锁定私密空间" onClick={lock}><Icon name="lock"/></button></header>{notice&&<div className="sy-notice" role="status"><span>{notice}</span><button aria-label="关闭提示" onClick={()=>setNotice('')}><Icon name="close"/></button></div>}
+ {page==='chat'&&<><div className="sy-transcript" ref={transcript}><div className="sy-reading">{current&&<ContextPanel chat={current} onLocate={locate}/>} {current&&current.message_count>current.messages.length&&<button onClick={older}>加载更早的消息</button>}{!current?.messages.length&&!running&&<div className="sy-welcome"><Icon name="shield" size="xl"/><h1>有什么想聊的？</h1><p>思考、阅读和查找，都从这里开始。</p><small>文字在本机保护后交给你选择的模型</small></div>}{current?.messages.map(m=><article id={m.id} key={m.id} className={`sy-message sy-${m.role}`}><div className="sy-speaker">{m.role==='assistant'?'守语':'你'}</div><SafeMarkdown text={m.text}/>{m.status==='partial'&&<p className="sy-muted">回答达到输出上限，内容尚未完整。</p>}<div className="sy-message-actions"><MessageMenu chat={current!} message={m} projects={projects} busy={busy||!!running} onChanged={changed} onError={setNotice} onRead={()=>setArtifact(m.id)} onCopy={()=>navigator.clipboard.writeText(m.text).then(()=>setNotice('已复制到本机剪贴板。')).catch(()=>setNotice('复制未完成，请选择文字后按 Ctrl+C。'))}/></div>{m.sources.length>0&&<Sources sources={m.sources} onRead={id=>setReading({id,name:files.find(f=>f.id===id)?.name??'参考资料'})}/>}</article>)}{running&&<article className="sy-message sy-assistant"><div className="sy-speaker">守语 <span className="sy-muted">· {phase}</span></div>{stream?<SafeMarkdown text={stream}/>:<span className="sy-thinking" aria-label={phase}>● ● ●</span>}</article>}{current?.messages.at(-1)?.role==='user'&&!running&&!current.pending&&<button disabled={busy} onClick={()=>send(current.messages.at(-1)!.id)}>从此消息继续回答</button>}{current?.pending?.state==='review'&&<section className="sy-review"><h2>需要核对本次外发内容</h2><p>发现凭证、重叠实体或资料中的指令性内容。本次请求已暂停。</p><details><summary>查看保护后的完整上下文</summary><pre>{JSON.stringify(current.pending.preview,null,2)}</pre></details><button className="sy-primary" disabled={busy} onClick={approve}>复核并批准本次</button><button onClick={discard}>取消这次请求</button></section>}</div></div>
+ <div className="sy-composer-wrap">{attached.length>0&&<div className="sy-attachments">{attached.map(id=><button key={id} onClick={()=>setAttached(v=>v.filter(x=>x!==id))}>{files.find(f=>f.id===id)?.name??'所选资料'} ×</button>)}</div>}<div className="sy-composer"><textarea ref={input} aria-label="发送消息" placeholder="发消息给守语…" value={text} maxLength={16384} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send();}}}/><div className="sy-composer-tools"><button className="sy-icon-btn" aria-label="添加资料与搜索选项" aria-expanded={popup==='add'} onClick={()=>setPopup(p=>p==='add'?null:'add')}><Icon name="add"/></button><button className="sy-model-btn" aria-label="选择模型和推理程度" aria-expanded={popup==='model'} onClick={()=>setPopup(p=>p==='model'?null:'model')}>{selectedConnection?.model_id??'选择模型'} <Icon name="chevronDown"/></button><button className={`sy-privacy-btn ${mode==='cloud'?'sy-cloud':''}`} aria-expanded={popup==='privacy'} onClick={()=>setPopup(p=>p==='privacy'?null:'privacy')}><Icon name={mode==='local'?'shield':'globe'}/>{mode==='local'?'媒体本机处理':'媒体云端处理'}</button><button className="sy-send" aria-label={running?'停止回答':'发送消息'} disabled={!running&&(!text.trim()||busy||!!current?.pending)} onClick={()=>running?api.cancelTask(running).catch(e=>setNotice(String(e))):send()}><Icon name={running?'stop':'send'}/></button></div>
+ {popup&&<div className={`sy-popup sy-popup-${popup}`} role="region" aria-label="对话选项">{popup==='add'&&<><button onClick={importFiles}><Icon name="import"/>导入本机文件</button><button onClick={()=>{setPage('files');setPopup(null);}}><Icon name="document"/>选择已有资料</button><label><input type="checkbox" checked={web} onChange={e=>setWeb(e.target.checked)}/>联网搜索</label>{web&&<label>搜索连接<select value={searchConnection} onChange={e=>setSearchConnection(e.target.value)}><option value="">使用当前模型连接</option>{connections.filter(c=>c.provider==="deepseek").map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>}<label><input type="checkbox" checked={agentic} onChange={e=>setAgentic(e.target.checked)}/>需要时进一步搜索本地资料</label><small>查询和返回文字都经过本机保护。联网搜索首版使用官方 DeepSeek Search。</small></>}{popup==='model'&&<><label>模型连接<select value={connection} onChange={e=>setConnection(e.target.value)}>{connections.map(c=><option key={c.id} value={c.id}>{c.name} · {c.model_id}</option>)}{!connections.length&&<option value="">尚未配置</option>}</select></label><label>主模型推理<select value={effort} onChange={e=>setEffort(e.target.value as ChatRequest['effort'])}><option value="auto">服务默认</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label><small>搜索和媒体子任务使用该模型已验证的最低程度。</small><button onClick={()=>{setSettingsTab('models');setPage('settings');setPopup(null);}}>管理模型连接</button></>}{popup==='privacy'&&<><strong>媒体处理方式</strong><label><input type="radio" name="media" checked={mode==='local'} onChange={()=>setMode('local')}/>本机 OCR / 转写（默认）</label><label><input type="radio" name="media" checked={mode==='cloud'} onChange={()=>setMode('cloud')}/>允许所选媒体交给模型 API</label><small>云端发送前会确认原始图像、声音和范围；人脸及声纹无法用文字脱敏保护。文字保护始终开启。</small></>}</div>}</div><p className="sy-caption">守语可能出错，请核对重要信息。{web?' 本轮允许联网搜索。':''} Enter 发送 · Shift+Enter 换行</p></div></>}
+ {page==='search'&&<div className="sy-page"><h1>查找你的内容</h1><div className="sy-search"><input autoFocus aria-label="搜索内容" placeholder="搜索对话或本地资料" maxLength={128} value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')searchLocal();}}/><select aria-label="检索策略" value={strategy} onChange={e=>setStrategy(e.target.value as typeof strategy)}><option value="auto">自动选择</option><option value="semantic">语义 + 精确</option><option value="exact">精确文本</option></select><button className="sy-primary" disabled={busy||!search.trim()} onClick={searchLocal}>搜索资料</button></div><p className="sy-muted">搜索在本机完成。没有选项目时搜索全部个人资料。</p><LegacyHistory search={search}/><h2>对话</h2>{foundConversations.slice(0,20).map(c=><button className="sy-row" key={c.id} onClick={()=>openChat(c)}><Icon name="chat"/><span>{c.title}</span></button>)}{searchResult&&<><h2>本地资料 · {searchResult.strategy==='hybrid'?'语义与精确文本':searchResult.strategy==='exact'?'精确匹配':'文本索引'}</h2>{searchResult.warning&&<p className="sy-warning">{searchResult.warning}</p>}{searchResult.truncated&&<p className="sy-warning">扫描或结果达到上限，不能据此判断其他资料没有匹配。</p>}{searchResult.items.map(item=><article className="sy-search-item" key={item.source_id}><strong>{item.name}</strong><p>{item.text}</p><button onClick={()=>{setAttached(v=>[...new Set([...v,item.version_id])]);setPage('chat');}}>加入当前对话</button></article>)}{!searchResult.items.length&&<p>在已扫描范围内没有匹配结果。</p>}</>}</div>}
+ {page==='projects'&&<div className="sy-page"><div className="sy-page-heading"><div><h1>项目</h1><p className="sy-muted">将相关对话和文件放在一起。</p></div><div className="sy-new-project"><input aria-label="新项目名称" placeholder="项目名称" value={projectName} maxLength={60} onChange={e=>setProjectName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")createProject();}}/><button className="sy-primary" onClick={createProject}>新建项目</button></div></div><div className="sy-projects">{projects.map(p=><button key={p.id} onClick={()=>{setProject(p.id);setPage('files');}}><Icon name="folder"/><strong>{p.root?'个人资料':p.title}</strong><small>{p.documents} 份文件{p.legacy?' · 原版历史项目':''}</small></button>)}</div></div>}
+ {page==='files'&&<div className="sy-page"><div className="sy-page-heading"><div><h1>文件</h1><p className="sy-muted">原件和索引保存在本机加密空间。</p></div><button className="sy-primary" disabled={busy} onClick={importFiles}>导入文件</button></div><select className="sy-scope" aria-label="文件所属项目" value={project??''} onChange={e=>setProject(e.target.value||null)}><option value="">所有个人资料</option>{projects.map(p=><option key={p.id} value={p.id}>{p.root?'个人资料':p.title}</option>)}</select>{project&&projects.find(p=>p.id===project)?.legacy&&<LegacyProject id={project}/>}<div className="sy-files">{files.filter(f=>!project||f.project_id===project).map(f=><div className="sy-file" key={f.id}><Icon name={f.kind==='audio'?'mic':f.kind==='video'?'video':'document'}/><div><button className="sy-file-name" onClick={()=>setReading({id:f.id,name:f.name})}>{f.name}</button><small>{bytes(f.bytes)} · {fileStatus(f.status)}{f.error?` · ${f.error}`:''}</small></div><button aria-pressed={attached.includes(f.id)} onClick={()=>{setAttached(v=>v.includes(f.id)?v.filter(id=>id!==f.id):[...v,f.id]);setPage('chat');}}>{attached.includes(f.id)?'已选':'用于对话'}</button></div>)}{!files.filter(f=>!project||f.project_id===project).length&&<div className="sy-placeholder">导入文档、图片、音频或视频，开始阅读与查找。</div>}</div>{tasks.some(t=>t.status==='running'&&t.skill!=='shouyu-chat')&&<p className="sy-muted">本机导入处理中…</p>}</div>}
+ {page==='settings'&&<div className="sy-settings"><nav aria-label="设置分类">{[['models','模型连接'],['text','文字保护'],['memory','记忆'],['context','上下文'],['security','安全'],['appearance','界面'],['backup','备份与恢复'],['about','关于']].map(([id,label])=><button key={id} className={settingsTab===id?'active':''} onClick={()=>setSettingsTab(id)}>{label}</button>)}</nav><div>{settingsTab==='models'?<ConnectionsPage/>:settingsTab==='text'?<PrivacySettings/>:settingsTab==='memory'?<MemorySettings projects={projects}/>:settingsTab==='context'?<ContextSettings connection={connection}/>:<SettingsPage key={settingsTab} initialTab={settingsTab}/>}</div></div>}
+ {artifact&&current&&<aside className="sy-artifact" aria-label="回答阅读面板"><header><select aria-label="选择已保存的回答" value={artifact} onChange={e=>setArtifact(e.target.value)}>{current.messages.filter(m=>m.role==='assistant').map((m,i)=><option key={m.id} value={m.id}>回答 {i+1} · {m.text.slice(0,24)}</option>)}</select><button aria-label="关闭回答面板" onClick={()=>setArtifact(null)}>×</button></header><div><SafeMarkdown text={current.messages.find(m=>m.id===artifact)?.text??''}/></div><footer>人工智能生成，请核对重要信息。代码和网页仅作文本显示。</footer></aside>}
+ {reading&&<FileReader id={reading.id} name={reading.name} onClose={()=>setReading(null)}/>}</main></div></SessionContext.Provider>;
 }
-
-function Workspace({ info, onLock }: { info: UnlockInfo; onLock: () => void }) {
-  const [view, setView] = useState<View>({ name: 'home' });
-  const [inspector, setInspector] = useState<InspectorTarget | null>(null);
-  const [tasks, setTasks] = useState<TaskState[]>([]);
-  const [revision, setRevision] = useState(0);
-  const [matters, setMatters] = useState<Matter[] | null>(null);
-  const [due, setDue] = useState<DueTodo[]>([]);
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [connectionTick, setConnectionTick] = useState(0);
-  const [turns, setTurns] = useState<QaTurn[]>([]);
-  const [palette, setPalette] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [pinnedCollapsed, setPinnedCollapsed] = useState(() => preference('lvjin-sidebar') === 'collapsed');
-  const [expandedOnce, setExpandedOnce] = useState(false);
-  const width = useWindowWidth();
-  const notice = useNotice();
-  const lastTouch = useRef(0);
-
-  const refreshTasks = useCallback(() => api.tasks().then(setTasks).catch(() => {}), []);
-  useEffect(() => {
-    refreshTasks();
-    const off = onTask((event) => {
-      if (event.kind === 'finished') {
-        const envelope = event.envelope;
-        // Answers report in their own card; other background work gets a toast.
-        if (envelope && envelope.skill_id !== 'lvjin-retrieval') {
-          const tone = envelope.status === 'completed' ? 'ok' : envelope.status === 'cancelled' ? 'info' : 'error';
-          notice(tone, `${skillName(envelope.skill_id)}${statusLabel(envelope.status)}${envelope.warnings.length ? '：' + envelope.warnings.map((w) => w.message).join('；') : ''}`);
-        }
-        setRevision((r) => r + 1);
-      }
-      refreshTasks();
-    });
-    return () => {
-      off.then((f) => f());
-    };
-  }, [notice, refreshTasks]);
-
-  useEffect(() => {
-    snapshot(info.root_matter)
-      .then((s) => {
-        setMatters(s.matters ?? []);
-        setDue(s.due_todos ?? []);
-      })
-      .catch(() => setMatters((m) => m ?? []));
-  }, [info.root_matter, revision]);
-  useEffect(() => {
-    api.connections().then(setConnections).catch(() => setConnections([]));
-  }, [connectionTick]);
-  useEffect(() => watchQaTasks(tasks, setTurns), [tasks, turns]);
-
-  // Activity keeps the auto-lock timer fresh (at most every 30 seconds):
-  // typing, clicking, scrolling and moving the pointer over the window.
-  useEffect(() => {
-    const ping = () => {
-      const now = Date.now();
-      if (now - lastTouch.current > 30000) {
-        lastTouch.current = now;
-        api.touch().catch(() => {});
-      }
-    };
-    const events = ['keydown', 'pointerdown', 'pointermove', 'wheel'] as const;
-    for (const name of events) window.addEventListener(name, ping, { passive: true });
-    return () => {
-      for (const name of events) window.removeEventListener(name, ping);
-    };
-  }, []);
-
-  const lock = useCallback(async () => {
-    // Hide already rendered private content before waiting for native cleanup.
-    onLock();
-    try {
-      await api.lock();
-    } finally {
-      onLock();
-    }
-  }, [onLock]);
-
-  const go = useCallback((next: View) => {
-    setView(next);
-    setInspector(null);
-    document.getElementById('main')?.scrollTo?.(0, 0);
-  }, []);
-
-  // Global shortcuts (design §11).
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      const ctrl = e.ctrlKey && !e.altKey && !e.shiftKey;
-      // Lock always works; other shortcuts wait until open dialogs close.
-      const blocked = !!document.querySelector('.overlay');
-      if (isLockKey(e)) {
-        e.preventDefault();
-        lock();
-      } else if (blocked) {
-        return;
-      } else if (ctrl && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setPalette(true);
-      } else if (ctrl && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        setCreating(true);
-      } else if (ctrl && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        go({ name: 'qa', matters: view.name === 'matter' ? [view.id] : undefined });
-      } else if (e.key === 'F6') {
-        e.preventDefault();
-        const regions = ['.sidebar', '#main', '.inspector'].map((s) => document.querySelector<HTMLElement>(s)).filter((x): x is HTMLElement => !!x);
-        const index = regions.findIndex((r) => r.contains(document.activeElement));
-        const next = regions[(index + (e.shiftKey ? regions.length - 1 : 1)) % regions.length];
-        (next.querySelector<HTMLElement>('button,[href],input,textarea,select,[tabindex]') ?? next).focus();
-      }
-    };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [lock, go, view]);
-
-  const connection = connections.find((c) => c.is_default) ?? connections[0] ?? null;
-  const session = useMemo<Session>(
-    () => ({
-      info, view, go, inspector, tasks, revision, matters: matters ?? [], mattersLoaded: matters !== null, due, connections, connection,
-      open: (source) => setInspector({ kind: 'source', source }),
-      inspect: setInspector,
-      refresh: () => setRevision((r) => r + 1),
-      reloadConnections: () => setConnectionTick((t) => t + 1),
-      newMatter: () => setCreating(true),
-      lock,
-      qa: { turns, update: setTurns },
-    }),
-    [info, view, go, inspector, tasks, revision, matters, due, connections, connection, lock, turns],
-  );
-
-  useEffect(() => setExpandedOnce(false), [inspector === null]);
-  const auto = width < 1280 || (inspector !== null && width < 1440);
-  const collapsed = pinnedCollapsed || (auto && !expandedOnce);
-  function toggleSidebar() {
-    if (collapsed) {
-      if (pinnedCollapsed) {
-        setPinnedCollapsed(false);
-        savePreference('lvjin-sidebar', 'expanded');
-      }
-      if (auto) setExpandedOnce(true);
-    } else {
-      setPinnedCollapsed(true);
-      savePreference('lvjin-sidebar', 'collapsed');
-    }
-  }
-
-  return (
-    <SessionContext.Provider value={session}>
-      <div className="app">
-        <AppBar collapsed={collapsed} onToggle={toggleSidebar} onPalette={() => setPalette(true)} />
-        <div className={`frame${collapsed ? ' collapsed' : ''}`}>
-          <Sidebar collapsed={collapsed} />
-          <div className="stage">
-            <main className="content" id="main" tabIndex={-1}>
-              {view.name === 'home' && <Workbench />}
-              {view.name === 'matters' && <MatterList />}
-              {view.name === 'matter' && <MatterPage key={view.id} id={view.id} initialTab={view.tab} />}
-              {view.name === 'qa' && <QaPage key={`${(view.matters ?? []).join(',')}|${view.question ?? ''}`} initialMatters={view.matters} initialQuestion={view.question} />}
-              {view.name === 'connections' && <ConnectionsPage />}
-              {view.name === 'comparison' && <ComparisonPage key={view.id ?? 'list'} initialId={view.id} />}
-              {view.name === 'knowledge' && <KnowledgePage />}
-              {view.name === 'tools' && <ToolsPage />}
-              {view.name === 'settings' && <SettingsPage key={view.tab ?? ''} initialTab={view.tab} />}
-            </main>
-            {inspector && <Inspector target={inspector} onClose={() => setInspector(null)} overlay={width < 1280} />}
-          </div>
-        </div>
-      </div>
-      {palette && <CommandPalette onClose={() => setPalette(false)} />}
-      {creating && (
-        <NewMatter
-          root={info.root_matter}
-          onClose={() => setCreating(false)}
-          onCreated={(id) => {
-            setCreating(false);
-            setRevision((r) => r + 1);
-            go({ name: 'matter', id });
-          }}
-        />
-      )}
-    </SessionContext.Provider>
-  );
-}
-
-// ------------------------------------------------------------------ app bar
-
-function AppBar({ collapsed, onToggle, onPalette }: { collapsed: boolean; onToggle: () => void; onPalette: () => void }) {
-  const { info, tasks, connection, lock } = useSession();
-  const [panel, setPanel] = useState<'status' | 'tasks' | null>(null);
-  usePreferences();
-  const lockHint = lockKeyLabel();
-  const running = tasks.filter((t) => t.status === 'running');
-  const fractions = running.map((t) => (t.progress && t.progress.total > 0 ? t.progress.done / t.progress.total : 0));
-  const progress = fractions.length ? Math.round((fractions.reduce((a, b) => a + b, 0) / fractions.length) * 100) : 0;
-  return (
-    <header className="appbar">
-      <button className="btn btn-subtle btn-icon" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} title={collapsed ? '展开侧栏' : '收起侧栏'} onClick={onToggle}>
-        <Icon name="nav" />
-      </button>
-      <div className="brand">
-        <span className="mark" aria-hidden="true">律</span>
-        <span className="brand-name">律金智库</span>
-        <span className="space-switch ellipsis" title="当前私密空间（锁定后可切换）">{info.name}</span>
-      </div>
-      <button className="command-entry" onClick={onPalette} aria-label="打开命令面板（Ctrl+K）">
-        <Icon name="search" />
-        <span className="grow">搜索事务、页面，或直接提问</span>
-        <span className="kbd">Ctrl K</span>
-      </button>
-      <div className="status-cluster" role="group" aria-label="隐私与连接">
-        <button className="status-pill local" title="导入、识别、检索、重排、核查与计算都在本机完成" onClick={() => setPanel(panel === 'status' ? null : 'status')} aria-expanded={panel === 'status'}>
-          <Icon name="shield" />
-          本机处理
-        </button>
-        <button className={`status-pill${connection ? ' connected' : ''}`} title={connection ? `${connection.name} · ${connection.model_id}` : '未连接生成接口'} onClick={() => setPanel(panel === 'status' ? null : 'status')}>
-          <span className="dot" />
-          {connection ? connection.name : '生成：未连接'}
-        </button>
-        <button className="status-pill" title="联网检索与外部工具默认关闭" onClick={() => setPanel(panel === 'status' ? null : 'status')}>
-          <Icon name="globe" />
-          联网：逐次授权
-        </button>
-      </div>
-      <button className="btn btn-subtle btn-icon task-button" aria-label={`任务中心：${running.length} 个进行中`} title="任务中心" onClick={() => setPanel(panel === 'tasks' ? null : 'tasks')} aria-expanded={panel === 'tasks'}>
-        {running.length ? <span className="ring" style={{ ['--p' as string]: `${Math.max(progress, 8)}%` } as React.CSSProperties} /> : <Icon name="clock" />}
-        {running.length > 0 && <span className="badge">{running.length}</span>}
-      </button>
-      <button className="btn btn-sm lock-button" title={lockHint ? `锁定（${lockHint}）` : '锁定'} onClick={lock}>
-        <Icon name="lock" />
-        锁定
-      </button>
-      {panel === 'status' && <StatusPanel onClose={() => setPanel(null)} />}
-      {panel === 'tasks' && <TaskCenter onClose={() => setPanel(null)} />}
-    </header>
-  );
-}
-
-function StatusPanel({ onClose }: { onClose: () => void }) {
-  const { connection, go } = useSession();
-  const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, true, onClose, '.status-cluster');
-  const jump = (view: View) => {
-    onClose();
-    go(view);
-  };
-  return (
-    <div className="popover status-popover fade-in" ref={ref} role="dialog" aria-label="隐私与连接">
-      <div className="status-line">
-        <Icon name="shield" className="cap-supported" />
-        <div>
-          <div className="t-strong">本机处理</div>
-          <div className="text-secondary t-caption">导入、识别、转写、检索、重排、逐句核查与计算都在这台电脑上完成；资料加密保存在本机。</div>
-        </div>
-      </div>
-      <div className="status-line">
-        <Icon name="robot" className={connection ? 'cap-supported' : 'cap-unknown'} />
-        <div>
-          <div className="t-strong">{connection ? `生成接口：${connection.name}` : '生成接口：未连接'}</div>
-          <div className="text-secondary t-caption">
-            {connection
-              ? `${connection.host} · ${connection.model_id}。每次发送资料前都会先预览，再由系统对话框确认。`
-              : '连接后可以生成带引用的回答；不连接也能检索原文、校对和计算。'}
-          </div>
-          <button className="btn btn-link t-caption" onClick={() => jump({ name: 'connections' })}>{connection ? '管理生成接口' : '连接生成接口'}</button>
-        </div>
-      </div>
-      <div className="status-line">
-        <Icon name="globe" className="cap-unknown" />
-        <div>
-          <div className="t-strong">联网：逐次授权</div>
-          <div className="text-secondary t-caption">公共搜索、知识更新、生成和 MCP 分别授权；在“工具与连接”中配置，发送前展示内容并确认。</div>
-        </div>
-      </div>
-      <button className="btn btn-sm" onClick={() => jump({ name: 'settings', tab: 'security' })}>
-        <Icon name="permissions" />
-        查看授权记录
-      </button>
-    </div>
-  );
-}
-
-function elapsed(iso: string): string {
-  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
-}
-
-function TaskCenter({ onClose }: { onClose: () => void }) {
-  const { tasks } = useSession();
-  const ref = useRef<HTMLDivElement>(null);
-  const notice = useNotice();
-  useDismiss(ref, true, onClose, '.task-button');
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(() => tick((t) => t + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const running = tasks.filter((t) => t.status === 'running');
-  const recent = tasks.filter((t) => t.status !== 'running').sort((a, b) => b.started_at.localeCompare(a.started_at)).slice(0, 8);
-  return (
-    <div className="popover task-popover fade-in" ref={ref} role="dialog" aria-label="任务中心">
-      <div className="t-strong" style={{ padding: '6px 8px' }}>进行中（{running.length}）</div>
-      {running.length === 0 && <p className="text-tertiary t-caption" style={{ padding: '0 8px 8px' }}>没有进行中的任务。</p>}
-      {running.map((t) => (
-        <div key={t.task_id} className="task-row">
-          <div style={{ minWidth: 0 }}>
-            <div className="ellipsis">{skillName(t.skill)}</div>
-            <div className="t-caption text-secondary">
-              {t.progress ? `${stageName(t.progress.stage)}${t.progress.total > 0 ? ` · ${t.progress.done}/${t.progress.total}` : ''}` : '准备中'} · 已用 {elapsed(t.started_at)}
-            </div>
-          </div>
-          <button className="btn btn-xs" onClick={() => api.cancelTask(t.task_id).then(() => notice('info', '已请求停止')).catch(() => {})}>
-            <Icon name="stop" />
-            停止
-          </button>
-          <div className="progress">
-            <span style={{ width: `${t.progress && t.progress.total > 0 ? Math.round((t.progress.done / t.progress.total) * 100) : 6}%` }} />
-          </div>
-        </div>
-      ))}
-      {recent.length > 0 && <div className="t-strong" style={{ padding: '10px 8px 4px' }}>最近完成</div>}
-      {recent.map((t) => (
-        <div key={t.task_id} className="task-row">
-          <div style={{ minWidth: 0 }}>
-            <div className="ellipsis">{skillName(t.skill)}</div>
-            <div className="t-caption text-tertiary">{relative(t.started_at)}{t.envelope?.warnings.length ? ` · ${t.envelope.warnings[0].message}` : ''}</div>
-          </div>
-          <div className="actions">
-            <RetryButton task={t} />
-            <span className={`chip ${t.status === 'completed' ? 'success' : t.status === 'partial' ? 'attention' : t.status === 'cancelled' ? '' : 'danger'}`.trim()}>{statusLabel(t.status)}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ------------------------------------------------------------------ sidebar
-
-function Sidebar({ collapsed }: { collapsed: boolean }) {
-  const { view, go, matters } = useSession();
-  const recent = [...matters].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5);
-  const inRecent = view.name === 'matter' && recent.some((m) => m.id === view.id);
-  const item = (id: View['name'], icon: IconName, label: string, current: boolean, later?: string) => (
-    <button className="nav-item" aria-current={current ? 'page' : undefined} title={collapsed ? label : undefined} aria-label={collapsed ? label : undefined} onClick={() => go({ name: id } as View)}>
-      <Icon name={icon} size="lg" />
-      <span>{label}</span>
-      {later && <span className="later">{later}</span>}
-    </button>
-  );
-  return (
-    <nav className="sidebar" aria-label="主导航">
-      {item('home', 'home', '工作台', view.name === 'home')}
-      {item('matters', 'folder', '我的事务', view.name === 'matters' || (view.name === 'matter' && (collapsed || !inRecent)))}
-      {!collapsed && recent.length > 0 && (
-        <div className="nav-sub">
-          {recent.map((m) => (
-            <button key={m.id} title={m.title} aria-current={view.name === 'matter' && view.id === m.id ? 'page' : undefined} onClick={() => go({ name: 'matter', id: m.id })}>
-              {m.title}
-            </button>
-          ))}
-        </div>
-      )}
-      {item('qa', 'chat', '问答与检索', view.name === 'qa')}
-      {item('comparison', 'list', '资料对照表', view.name === 'comparison')}
-      {item('knowledge', 'library', '知识中心', view.name === 'knowledge')}
-      <div className="nav-sep" />
-      {item('connections', 'robot', '生成接口', view.name === 'connections')}
-      {item('tools', 'connect', '工具与连接', view.name === 'tools')}
-      <div className="sidebar-foot">{item('settings', 'settings', '设置', view.name === 'settings')}</div>
-    </nav>
-  );
-}
-
-// ------------------------------------------------------------ command palette
-
-type Command = { group: string; icon: IconName; label: string; hint?: string; run: () => void };
-
-function CommandPalette({ onClose }: { onClose: () => void }) {
-  const { matters, go, view, newMatter, lock } = useSession();
-  const [query, setQuery] = useState('');
-  const [index, setIndex] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
-  useFocusTrap(ref, onClose);
-  const q = query.trim();
-  const needle = q.toLowerCase();
-  const current = view.name === 'matter' ? matters.find((m) => m.id === view.id) : undefined;
-  const commands: Command[] = [];
-  if (q) {
-    commands.push({ group: '提问', icon: 'chat', label: current ? `在“${current.title}”中提问：${q}` : `提问：${q}`, hint: 'Enter', run: () => go({ name: 'qa', matters: current ? [current.id] : undefined, question: q }) });
-  }
-  for (const m of matters.filter((m) => !needle || m.title.toLowerCase().includes(needle)).slice(0, 6)) {
-    commands.push({ group: '事务', icon: 'folder', label: m.title, hint: m.candidate_facts ? `${m.candidate_facts} 条待校对` : undefined, run: () => go({ name: 'matter', id: m.id }) });
-  }
-  const pages: [View, IconName, string][] = [
-    [{ name: 'home' }, 'home', '工作台'], [{ name: 'matters' }, 'folder', '我的事务'], [{ name: 'qa' }, 'chat', '问答与检索'], [{ name: 'connections' }, 'robot', '生成接口'],
-    [{ name: 'comparison' }, 'list', '资料对照表'],
-    [{ name: 'settings', tab: 'security' }, 'settings', '设置：安全'], [{ name: 'settings', tab: 'appearance' }, 'settings', '设置：界面'], [{ name: 'settings', tab: 'backup' }, 'settings', '设置：备份与恢复'],
-  ];
-  for (const [target, icon, label] of pages.filter(([, , label]) => !needle || label.toLowerCase().includes(needle))) {
-    commands.push({ group: '前往', icon, label, run: () => go(target) });
-  }
-  const actions: Command[] = [
-    { group: '操作', icon: 'add', label: '新建事务', hint: 'Ctrl N', run: newMatter },
-    { group: '操作', icon: 'lock', label: '锁定私密空间', hint: lockKeyLabel().replace(/\+/g, ' ') || undefined, run: lock },
-  ];
-  commands.push(...actions.filter((a) => !needle || a.label.includes(q)));
-  const selected = Math.min(index, Math.max(commands.length - 1, 0));
-  function run(command: Command | undefined) {
-    if (!command) return;
-    onClose();
-    command.run();
-  }
-  function key(e: React.KeyboardEvent) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setIndex((selected + 1) % Math.max(commands.length, 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setIndex((selected + commands.length - 1) % Math.max(commands.length, 1));
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      run(commands[selected]);
-    }
-  }
-  let lastGroup = '';
-  return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="palette fade-in" role="dialog" aria-label="命令面板" ref={ref}>
-        <div className="palette-input">
-          <Icon name="search" size="lg" />
-          <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setIndex(0); }} onKeyDown={key} placeholder="搜索事务、页面，或输入问题" aria-label="搜索或输入命令" aria-controls="palette-list" aria-activedescendant={commands.length ? `cmd-${selected}` : undefined} />
-          <span className="kbd">Esc</span>
-        </div>
-        <div className="palette-list" role="listbox" id="palette-list">
-          {commands.length === 0 && <div className="palette-empty">没有匹配的事务或操作。</div>}
-          {commands.map((c, i) => {
-            const head = c.group !== lastGroup ? <div className="palette-group">{c.group}</div> : null;
-            lastGroup = c.group;
-            return (
-              <React.Fragment key={`${c.group}-${i}`}>
-                {head}
-                <div id={`cmd-${i}`} className="palette-item" role="option" aria-selected={i === selected} onMouseEnter={() => setIndex(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => run(c)}>
-                  <Icon name={c.icon} />
-                  <span className="ellipsis">{c.label}</span>
-                  {c.hint && <span className="hint">{c.hint}</span>}
-                </div>
-              </React.Fragment>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-applyPreferences();
-
-createRoot(document.getElementById('root')!).render(
-  <Notices>
-    <App />
-  </Notices>,
-);
+function Nav({icon,label,active,onClick}:{icon:IconName;label:string;active?:boolean;onClick:()=>void}){return <button className={`sy-nav ${active?'active':''}`} onClick={onClick}><Icon name={icon}/>{label}</button>;}
+function fileStatus(s:string){return ({ready:'可检索',stored_media:'待本机读取',indexing:'正在建立索引',parsing:'正在读取',partial:'部分完成',failed:'处理未完成',ocr:'正在识别文字',processing_media:'正在处理媒体'} as Record<string,string>)[s]??s;}
+function Sources({sources,onRead}:{sources:Source[];onRead:(id:string)=>void}){return <details className="sy-sources"><summary>{sources.length} 个参考来源</summary>{sources.map(s=><div key={s.source_id}><strong>[{s.source_number}]</strong>{s.version_id&&<button onClick={()=>onRead(s.version_id!)}>查看本机原文</button>}<pre>{s.content}</pre></div>)}</details>;}
+// React text nodes escape HTML. No remote images, auto-open links or raw HTML.
+function SafeMarkdown({text}:{text:string}){return <div className="sy-markdown">{text.split(/(```[^\n]*\n[\s\S]*?(?:```|$))/g).map((b,i)=>b.startsWith('```')?<pre key={i}><code>{b.replace(/^```[^\n]*\n/,'').replace(/```$/,'')}</code></pre>:<React.Fragment key={i}>{b.split(/\n\s*\n/).map((p,n)=>{const rows=p.split('\n');if(rows.length>=2&&/^\s*\|?.*\|/.test(rows[0])&&/^\s*\|?\s*:?-{3,}/.test(rows[1])){const cells=(line:string)=>line.trim().replace(/^\||\|$/g,'').split('|').map(c=>c.trim());return <div className="sy-table" key={n}><table><thead><tr>{cells(rows[0]).map((c,j)=><th key={j}>{inline(c)}</th>)}</tr></thead><tbody>{rows.slice(2).map((r,j)=><tr key={j}>{cells(r).map((c,k)=><td key={k}>{inline(c)}</td>)}</tr>)}</tbody></table></div>;}const h=p.match(/^(#{1,4}) (.+)$/);if(h)return <h3 key={n}>{inline(h[2])}</h3>;if(p.split('\n').every(l=>/^\s*(?:[-*]|\d+\.) /.test(l)))return <ul key={n}>{p.split('\n').map((l,j)=><li key={j}>{inline(l.replace(/^\s*(?:[-*]|\d+\.) /,''))}</li>)}</ul>;return <p key={n}>{inline(p)}</p>;})}</React.Fragment>)}</div>;}
+function inline(t:string){return t.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((p,i)=>p.startsWith('**')?<strong key={i}>{p.slice(2,-2)}</strong>:p.startsWith('`')?<code key={i}>{p.slice(1,-1)}</code>:p);}
+function PrivacySettings(){const [yaml,setYaml]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);useEffect(()=>{personal.privacy().then(v=>setYaml(v.yaml)).catch(e=>setMessage(String(e)));},[]);return <div className="sy-page"><h1>文字保护</h1><p>内置凭证规则、你的词表和 HaS 实体识别共同工作。识别异常时停止自动外发。映射表只在本机加密空间中保存。</p><label>个人词表与规则（受限 YAML）<textarea className="sy-yaml" aria-label="文字保护 YAML" spellCheck={false} value={yaml} onChange={e=>setYaml(e.target.value)}/></label><details><summary>配置示例</summary><pre>{'private_terms:\n  - value: 林岚\n    kind: person\n    aliases: [林老师]\nrules:\n  - id: custom_customer\n    pattern: \'CUST-[0-9]{6}\'\n    kind: identifier\npreview_every_request: false'}</pre></details><p className="sy-muted">规则不能关闭内置凭证保护，也不能授权网络请求。实体识别仍可能遗漏，不承诺完全匿名。</p><button className="sy-primary" disabled={busy} onClick={async()=>{setBusy(true);try{await personal.savePrivacy(yaml);setMessage('已加密保存，本地规则校验通过。');}catch(e){setMessage(String(e));}finally{setBusy(false);}}}>保存配置</button>{message&&<p role="status">{message}</p>}</div>;}
+applyPreferences();createRoot(document.getElementById('root')!).render(<App/>);

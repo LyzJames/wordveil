@@ -24,7 +24,7 @@ MAX_ZIP_MEMBERS = 20000
 MAX_SHEET_CELLS = 2_000_000
 MAX_ROWS_PER_CALL = 2000
 OCR_PIXEL_BUDGET = 4_000_000          # below the model adapter's 4,194,304 limit
-MIN_NATIVE_CHARS = 12                 # fewer visible characters: treat as scanned
+MIN_NATIVE_CHARS = 12                 # sparse text still requires OCR
 
 
 class ParseError(ValueError):
@@ -249,8 +249,16 @@ def pdf_pages(data: bytes, first: int, last: int, password=None) -> dict:
                         # Text drawn outside the visible page is reported, not hidden.
                         item['outside_page'] = True
                     out_lines.append(item)
+                # A footer or a partial text layer says nothing about raster
+                # content on the same page. Form XObjects may contain images at
+                # arbitrary depth, so treat them conservatively without an
+                # unbounded traversal or a depth limit that silently loses text.
+                object_types = {obj.type for obj in page.get_objects(filter=[raw.FPDF_PAGEOBJ_IMAGE, raw.FPDF_PAGEOBJ_FORM], max_depth=1)}
+                has_raster = raw.FPDF_PAGEOBJ_IMAGE in object_types
+                has_forms = raw.FPDF_PAGEOBJ_FORM in object_types
                 result.append({'page_no': page_no, 'rotation': rotation, 'display_width_pt': round(display_w, 3), 'display_height_pt': round(display_h, 3),
-                               'visible_chars': visible, 'needs_ocr': visible < MIN_NATIVE_CHARS, 'lines': out_lines})
+                               'visible_chars': visible, 'has_raster': has_raster, 'has_forms': has_forms,
+                               'needs_ocr': visible < MIN_NATIVE_CHARS or has_raster or has_forms, 'lines': out_lines})
             finally:
                 textpage.close()
                 page.close()

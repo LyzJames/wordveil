@@ -1,98 +1,32 @@
-# 律金智库 (Lvjin)
+# 守语 Wordveil 0.7.0
 
-A Windows desktop assistant for personal legal and financial documents. All
-import, OCR, speech recognition, retrieval, verification and calculation run on
-the local computer; documents are stored encrypted (SQLCipher). Generated
-answers use a model service the user connects and approves per request.
+面向 Windows 11 x64 的私密个人 AI 桌面应用。通用聊天、文件阅读、本地资料与联网搜索共用一个简洁聊天界面；模型 API 由用户配置，辅助搜索与媒体阅读使用该模型已验证的最低推理配置。
 
-The M4 implementation (0.5.0) retains all 30 skill handlers, approved
-DeepSeek Search/Fetch, versioned official public knowledge packages, a
-read-only MCP client and the independent `lvjin-public-mcp` business service.
-The public service uses only the 20 bundled mainland Chinese official texts;
-it never opens the user's encrypted vault. External operations require their
-own immutable approval, and arbitrary local stdio programs are not enabled.
-Installation and completion evidence is kept in the documentation workspace.
+文字外发前由本机 HaS 0.6B、内置规则和受限 YAML 词表识别并替换敏感实体；核心只接受可在原文中核对的实体跨度，使用按会话、分支和接收方隔离的稳定随机代号，回包精确恢复。识别超时、截断或无效时停止自动外发；高风险内容进入原生窗口复核。实体识别仍可能遗漏，不承诺完全匿名。
 
-M3 adds version-bound document/question comparisons with one batch approval,
-sequential cell progress and explicit failed-cell recovery. Request counters
-survive interruption; completed cells are preserved. Retrieval supports frozen
-dates and mainland regions, plus source-backed graph paths of at most two hops.
-Graph expansion remains disabled by default because the fixed small holdout
-did not show an improvement. F32 encrypted index partitions use a bounded
-cache; long indexing jobs persist completed batches and publish atomically.
+默认用本机 OCR / ASR 处理媒体；将所选原始媒体交给模型 API，需要本轮原生确认及已验证的模型能力。图片、人脸、原始声音和声纹不受文字脱敏保护。首版联网搜索使用官方 DeepSeek Search，可单独选择搜索连接。
 
-The M3 release also pins Pillow 13.0.0, certifi 2026.10.19 and
-webpki-root-certs 1.0.10 for reviewed security fixes. Model artefacts and CPU
-FP32 inference remain fixed. Test results, limits and actual installed-media
-acceptance are recorded separately; implementation does not imply every
-release gate has passed.
+本地资料使用 FTS5/BM25、未改变数值身份的本地 Embedding 和受控只读 Glob/文本匹配检索；不会把整库上传到 Embedding API。共打包8个CPU模型，移除重排/grounding权重、法律文本包及7角色专业流程。旧版资料与结果保留只读查看和导出。
 
-M4 includes a vault-scoped Q&A history
-browser with search, mainland date filters and cursor pagination. Opening a
-saved answer, citation or feedback is read-only and never restarts generation.
-The financial engine reports one annual rate only when a verified root and
-one cash-flow sign change establish uniqueness; a bounded grid cannot certify
-other cases. Saved calculations with unproven uniqueness are guarded on read,
-preserving the original encrypted audit record. The previously accepted M3
-installation media remains a separate, unchanged historical deliverable.
+会话可重命名、删除，单条消息可编辑为新分支或删除依赖后续；长期记忆经确认后按全局/项目保存。临时对话使用只在内存持有的独立密钥，结束、锁定或退出后清理，不写入普通历史、资料索引或记忆。上下文按连接窗口预留输出预算，较早历史压缩为带原消息引用的可校验摘录，近期消息保留原文；云端缓存不代替上下文。
 
-The public package covers common mainland personal contracts and housing,
-lending, labor, consumer protection, insurance, marriage/inheritance and
-individual income tax. Official source URLs, amendment/effective dates,
-verification dates, text hashes and coverage limits travel with every text.
-Tax-rate annexes are retained; an old labor interpretation with a partially
-repealed provision and a proposed insurance-law revision are excluded.
+SQLCipher 加密数据库，原件及派生文件使用 AEAD；API 凭证由 Windows DPAPI 封装。隔离处理进程无联网能力，路径和模型身份由核心决定。普通使用不需要本机 Python、开发工具、CUDA 或 docs 目录。云模型仍能读取受保护的必要内容；HTTPS不是让模型服务商无法解密的端到端加密。
 
-One CUDA-capable offline runtime preserves the nine selected model artefacts.
-Only reranking may use the qualified RTX 3060 Laptop GPU, with FP32 IEEE
-arithmetic, a numerical self-check and micro-batches of two. Unsupported
-devices, unavailable CUDA, low VRAM and execution errors use CPU. The core
-waits for a dead GPU worker before one local CPU retry and keeps one owner per
-artefact. Other models remain CPU. No driver or runtime is downloaded at use.
-Generation adapters reject truncated/unfinished streams and bound streamed
-tool indexes before allocation. Actual quality, timing, installed fallback and
-upgrade/rollback evidence are recorded separately in `docs/reports/m4`.
+安装程序显示名称为“守语”，保留内部 lvjin.exe、cn.lvjin.desktop、旧安装 AppId 和数据目录身份以支持升级。数据库升级到schema 8；回退旧程序必须恢复升级前备份，不能让旧程序直接打开已升级数据库。个人测试介质尚无 Authenticode 签名，使用随介质的 SHA-256 清单核验。
 
-## Layout
+生产源码在本目录。当前说明、测试、模型来源、构建工具和安装包在相邻 docs：
 
-| Path | Contents |
-| --- | --- |
-| `src/` | React interface (TypeScript), bundled with esbuild |
-| `src-tauri/` | Trusted Rust core (`lvjin_core` library) and the Tauri desktop binary `lvjin` |
-| `agent_core/` | Python worker: local model owners, document parsing and the LangGraph orchestrator |
-| `resources/` | Locked runtime resources (skills, prompts, contracts, model and installation manifests; hashes in `resource-lock.json`) |
-| `worker.spec` | PyInstaller onedir specification of the frozen worker |
-| `installer/` | Inno Setup scripts for the offline media |
+- 当前架构与实际验证：`../docs/reports/律金智库-应用架构与功能说明.md`
+- 用户确认的产品方案：`../docs/守语-整体产品与技术设计方案.md`
+- 构建工具：`../docs/tooling/README.md`
+- 回归测试：`../docs/tests/README.md`
+- 0.7.0 离线安装介质：`../docs/dist/0.7.0/README.txt`
 
-Tests, benchmarks, validation programs, fixtures, build tooling and reports
-live in the separate documentation workspace (`docs/`, with `docs/tests/Cargo.toml`
-building the tests against this library). This repository builds without it.
 
-## Building the desktop binary
+## 源码仓库
 
-Requirements: Windows 11 x64, the stable Rust toolchain with MSVC Build Tools,
-Node.js with npm, and a static OpenSSL 3.5 LTS build for SQLCipher.
+GitHub：https://github.com/LyzJames/wordveil
 
-1. OpenSSL 3.5 LTS (static, `libcrypto.lib`), for example from the official
-   source with Strawberry Perl and the Visual C++ developer prompt:
-   `perl Configure VC-WIN64A --prefix=<dir> --libdir=lib no-shared no-module no-tests no-comp no-zlib no-zlib-dynamic no-legacy no-ssl3 no-md2 no-rc5 no-weak-ssl-ciphers no-camellia no-idea no-seed no-capieng no-asm`,
-   then `nmake build_libs` and `nmake install_dev`.
-2. Environment for the Rust build:
-   - `OPENSSL_DIR=<dir>` (the build checks for `lib/libcrypto.lib` and the headers);
-   - `LIBSQLITE3_FLAGS=-DSQLCIPHER_OMIT_LOG` (SQLCipher's internal logging must be compiled out).
-3. Frontend: `npm ci`, `npm run typecheck`, `npm run build` (writes `dist/`).
-4. Core and desktop binary:
-   `cargo build --release --manifest-path src-tauri/Cargo.toml --features desktop --bin lvjin`.
+英文名为 **Wordveil**，中文名为“守语”。本目录是应用源码仓库，保留既有Git开发历史。代码中的 `lvjin` 加密格式、程序及数据身份用于现有数据与安装升级兼容。
 
-For a full production image, first build `--bin lvjin-public-mcp`, stage that
-fixed executable, the frozen worker and all runtime/model files, and regenerate
-the installation and resource hashes. Build the desktop core against those
-final anchors. Rebuilding a staged runtime afterwards requires refreshing its
-inventory and rebuilding the desktop core. The documentation workspace keeps
-the exact build scripts, SBOM, source archive and offline installer pipeline.
-
-The binary expects the installed layout next to it (`resources/`, the frozen
-worker and the nine CPU models under `runtimes/`, the fixed WebView2 runtime and
-`data-root.txt`); the release staging and installer steps produce it. Builds
-with the `dev-worker` feature run the worker from source using the
-documentation workspace instead.
+本仓库不包含模型权重、运行时、安装介质、API私密配置或用户资料。本机项目布局为 `E:\AI项目\守语`（应用）和 `E:\AI项目\docs`（设计、工具链、测试及模型/构建材料）。相邻docs链接仅适用于完整本机工作区；仅克隆本仓库时需另行准备这些开发/离线打包材料。前端依赖按package-lock.json安装后可执行 `npm run typecheck`、`npm run build`；Windows桌面编译与完整离线包需要相应Rust/MSVC、静态SQLCipher/OpenSSL及已核验模型输入。

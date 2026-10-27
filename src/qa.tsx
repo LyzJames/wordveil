@@ -430,7 +430,7 @@ function TurnView({ turn, latest, onStop, onRetry, onAsk, onResume, onDiscard }:
       {turn.state === 'preparing' && (
         <div className="answer running">
           <div className="answer-empty">
-            <Busy label={turn.kind === 'evidence' ? '正在本机检索与重排…' : '正在本机检索可以发送的原文…（首次加载模型约需一分钟）'} />
+            <Busy label={turn.kind === 'evidence' ? '正在本机检索与重排…' : '正在本机检索可以发送的原文…（首次加载模型可能需要几分钟）'} />
           </div>
         </div>
       )}
@@ -539,7 +539,7 @@ function EvidenceCard({ turn, result }: { turn: QaTurn; result: RetrievalResult 
         {result.observations && result.observations.length > 0 && <Observations rows={result.observations} visual={result.visual_check} audio={result.direct_audio_check} />}
         {result.calculation && <CalculationSummary result={result.calculation} />}
         {result.items.length === 0 ? (
-          <Callout tone="attention" title="依据不足">所选范围内没有检索到相关原文。可以换个说法、扩大范围，或导入补充资料。</Callout>
+          result.process.some((p) => p.status !== 'completed') ? <Callout tone="warning" title="检索未完成">请查看处理过程和上方失败原因；当前结果不能用于判断已导入资料是否缺少正文。</Callout> : <Callout tone="attention" title="依据不足">所选范围内没有检索到相关原文。可以换个说法、扩大范围，或导入补充资料。</Callout>
         ) : (
           <EvidenceList items={result.items} onOpen={(item) => open(sourceOf(item))} />
         )}
@@ -814,7 +814,7 @@ function Part({ title, claims, items, onCite, byLabel, flagged, className }: {
   return (
     <section className={`answer-part${className ? ` ${className}` : ''}`}>
       <h3>{title}</h3>
-      {body.length === 1 ? <p>{body[0]}</p> : <ul>{body.map((b, i) => <li key={i}>{b}</li>)}</ul>}
+      {body.length === 1 ? claims ? body[0] : <p>{body[0]}</p> : <ul>{body.map((b, i) => <li key={i}>{b}</li>)}</ul>}
     </section>
   );
 }
@@ -845,7 +845,7 @@ function Claim({ claim, onCite, byLabel, flag }: { claim: ClaimRow; onCite: (evi
     let at = 0;
     for (const [i, f] of claim.flagged.entries()) {
       if (f.utf16_start > at) pieces.push(claim.text.slice(at, f.utf16_start));
-      pieces.push(<span key={i} className="claim-partial" title={`部分有依据：${claim.message || '这部分在所引原文中没有找到'}`}>{claim.text.slice(f.utf16_start, f.utf16_end)}</span>);
+      pieces.push(<span key={i} className="claim-partial" title={`需要核对这一段：“${claim.text.slice(f.utf16_start, f.utf16_end)}”；核查信号不代替原文判断`}>{claim.text.slice(f.utf16_start, f.utf16_end)}</span>);
       at = Math.max(at, f.utf16_end);
     }
     if (at < claim.text.length) pieces.push(claim.text.slice(at));
@@ -854,15 +854,16 @@ function Claim({ claim, onCite, byLabel, flag }: { claim: ClaimRow; onCite: (evi
     text = <span className="claim-partial" title={`部分有依据：${claim.message ?? ''}`}>{claim.text}</span>;
   }
   return (
-    <span className="claim">
+    <div className="claim">
       {text}
       {claim.evidence.map((e) => (
         <Cite key={e.evidence_id} label={numberOf(e.label)} evidence={e.evidence_id} onOpen={() => onCite(e.evidence_id)} />
       ))}
       {claim.status === 'unsupported' && <span className="claim-status"><Chip tone="danger">未找到依据</Chip></span>}
       {claim.status === 'unchecked' && <span className="claim-status"><Chip title="超出核查预算或输入过长，这句话没有核查">未核查</Chip></span>}
+      {!!claim.arithmetic?.length && <details className="t-caption"><summary>本机算式已核验（{claim.arithmetic.length}）</summary>{claim.arithmetic.map((proof, i) => <div key={i}>{proof.equation}</div>)}<span className="text-secondary">仅核验运算与所引原文操作数，事实含义和法律适用仍需核查。</span></details>}
       {flag && <span className="claim-status"><Chip tone="warn" icon="flag" title={`你的标注：${flag}`}>已标注</Chip></span>}
-    </span>
+    </div>
   );
 }
 
@@ -957,6 +958,8 @@ function Cite({ label, evidence, onOpen }: { label: string; evidence: string; on
 
 /** The cited passage in a little of its context, the cited part highlighted. */
 function Excerpt({ item }: { item: EvidenceItem }) {
+  const parts = item.source_parts?.filter((p) => ['frame_ocr', 'audio_asr'].includes(p.kind)) ?? [];
+  if (parts.length) return <div className="quote">{parts.map((p, i) => <p key={i}><strong>{p.label}</strong><br />{p.text.slice(0, 200)}{p.text.length > 200 ? '…' : ''}</p>)}</div>;
   const exact = item.exact_text.trim();
   const context = item.text || exact;
   const at = exact ? context.indexOf(exact) : -1;
@@ -1113,11 +1116,12 @@ function Process({ steps, running }: { steps: ProcessStep[]; running: boolean })
   const verify = [...steps].reverse().find((s) => s.step === 'verify');
   const roles = steps.filter((s) => s.step === 'role').length;
   const path = [
-    search ? `检索 ${search.candidates ?? 0} 段 → 重排` : '',
+    search ? search.status === 'completed' ? `检索 ${search.candidates ?? 0} 段` : '检索未完成' : '',
+    steps.some((s) => s.step === 'rerank') ? '重排' : '',
     steps.some((s) => s.step === 'observe') ? '直接读取媒体' : '',
     roles ? `${roles} 个角色分析` : '',
-    '起草',
-    `核查${verify ? `（${verify.problems ? `${verify.problems} 处待改` : '通过'}）` : ''}`,
+    steps.some((s) => s.step === 'draft') ? '起草' : '',
+    verify ? `核查（${verify.status !== 'completed' ? '部分完成' : verify.problems ? `${verify.problems} 处待改` : '完成'}）` : '',
     steps.some((s) => s.step === 'check') ? '证据检查' : '',
   ].filter(Boolean).join(' → ');
   return (

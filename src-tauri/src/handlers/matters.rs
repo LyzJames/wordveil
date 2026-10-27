@@ -48,7 +48,7 @@ fn matter_of(tx: &Transaction, table: &str, id: &str) -> Result<String> {
 
 fn register(tx: &Transaction, scope: &str, kind: &str, parent: Option<&str>) -> Result<String> {
     let id = crate::store::new_ref();
-    tx.execute("INSERT INTO objects(id,scope,kind,version,active,created_at,parent) VALUES(?,?,?,'m1',1,?,?)", params![id, scope, kind, now_rfc3339(), parent])?;
+    tx.execute("INSERT INTO objects(id,scope,kind,version,active,created_at,parent) VALUES(?,?,?,'0.2.0',1,?,?)", params![id, scope, kind, now_rfc3339(), parent])?;
     Ok(id)
 }
 
@@ -112,7 +112,7 @@ fn read(ctx: &Ctx, invocation: &Invocation, matter: &str) -> Result<EnvelopePart
         payload["due_todos"] = json!(due.iter().map(|r| json!({"id": r[0], "title": r[1], "due_on": r[2], "matter_id": r[3], "matter_title": r[4]})).collect::<Vec<_>>());
     }
     let versions = rows(ctx,
-        "SELECT d.id,d.display_name,v.id,v.version_no,v.media_kind,v.status,v.page_count,v.bytes,v.created_at,v.error_code,(SELECT m.id FROM media m WHERE m.version_id=v.id) FROM documents d JOIN document_versions v ON v.document_id=d.id JOIN objects o ON o.id=v.id WHERE d.matter_id=? AND o.active=1 ORDER BY d.created_at,v.version_no",
+        "SELECT d.id,d.display_name,v.id,v.version_no,v.media_kind,CASE WHEN v.status='stored_media' AND EXISTS(SELECT 1 FROM chunks c JOIN objects co ON co.id=c.id WHERE c.version_id=v.id AND co.active=1) THEN CASE WHEN EXISTS(SELECT 1 FROM audio_segments a JOIN media m ON m.id=a.media_id WHERE m.version_id=v.id AND (a.status<>'transcribed' OR a.truncated=1)) OR EXISTS(SELECT 1 FROM pages p WHERE p.version_id=v.id AND p.source='frame' AND p.ocr_status<>'done') THEN 'partial' ELSE 'ready' END ELSE v.status END,v.page_count,v.bytes,v.created_at,v.error_code,(SELECT m.id FROM media m WHERE m.version_id=v.id) FROM documents d JOIN document_versions v ON v.document_id=d.id JOIN objects o ON o.id=v.id WHERE d.matter_id=? AND o.active=1 ORDER BY d.created_at,v.version_no",
         &[matter], 11)?;
     payload["documents"] = json!(versions.iter().map(|r| json!({"document_id": r[0], "display_name": r[1], "version_id": r[2], "version_no": r[3], "media_kind": r[4], "status": r[5], "pages": r[6], "bytes": r[7], "created_at": r[8], "error_code": r[9], "media_id": r[10]})).collect::<Vec<_>>());
     let facts = rows(ctx, "SELECT f.id,f.fact_type,f.value,f.label,f.status,f.origin,f.source_version,f.source_locator,f.created_at FROM facts f JOIN objects o ON o.id=f.id WHERE f.matter_id=? AND o.active=1 ORDER BY f.created_at LIMIT 5000", &[matter], 9)?;
@@ -760,7 +760,7 @@ pub fn delete_version(tx: &Transaction, version: &str, removed: &mut Vec<String>
         tx.execute("DELETE FROM relations WHERE id=?", [id])?;
         objects.push(id.clone());
     }
-    // M2 artefacts of this version: the model copies of its pages or audio
+    // 0.3.0 artefacts of this version: the model copies of its pages or audio
     // (native media), the context packets that carried its passages with the
     // goals written for them, and the passage excerpts kept in egress previews.
     let mut gone: std::collections::HashSet<String> = objects.iter().cloned().collect();
@@ -886,10 +886,11 @@ pub fn calculate(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
     let kind = text_of(input, "calculation_type")?;
     let inputs = refs_of(input, "confirmed_inputs")?;
     let assumption_ids = refs_of(input, "assumption_ids")?;
-    let (records, assumptions, matter) = {
+    let (records, assumptions, matter, sources) = {
         let vault = ctx.lock()?;
         let mut records = vec![];
         let mut matters = std::collections::BTreeSet::new();
+        let mut sources = vec![];
         for id in &inputs {
             let row: Option<(String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, String)> = vault.db().query_row(
                 "SELECT c.occurred_on,c.amount,c.currency,c.direction,c.kind,c.status,c.category,c.counterparty,c.account_id,c.matter_id FROM cashflows c JOIN objects o ON o.id=c.id WHERE c.id=? AND o.active=1",
@@ -901,6 +902,8 @@ pub fn calculate(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
                 return Err(Error::NeedsInput("confirmed_inputs"));
             }
             matters.insert(matter);
+            let source: (Option<String>, Option<String>) = vault.db().query_row("SELECT source_version,source_locator FROM cashflows WHERE id=?", [id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            sources.push(json!({"input_id": id, "version_id": source.0, "locator": source.1}));
             records.push(json!({"id": id, "date": date, "amount": amount, "currency": currency, "direction": direction, "kind": kind, "category": category, "counterparty": counterparty, "account": account}));
         }
         let mut assumptions = serde_json::Map::new();
@@ -912,13 +915,13 @@ pub fn calculate(ctx: &Ctx, invocation: &Invocation, input: &Value) -> Result<En
         if matters.len() > 1 {
             return Err(Error::Denied);
         }
-        (records, assumptions, matters.into_iter().next())
+        (records, assumptions, matters.into_iter().next(), sources)
     };
     ctx.check()?;
     let request = json!({"op": "finance", "request": {"calculation_type": kind, "records": records, "assumptions": assumptions}});
     let computed = ctx.services.local.call(&request, ctx.cancel, Duration::from_secs(120))?;
     let payload = json!({"calculation_type": kind, "matter_id": matter, "inputs": inputs, "assumption_ids": assumption_ids, "assumptions": assumptions,
-        "engine": computed["engine"], "assumptions_used": computed["assumptions_used"], "result": computed["result"], "computed_at": now_rfc3339()});
+        "engine": computed["engine"], "assumptions_used": computed["assumptions_used"], "input_sources": sources, "result": computed["result"], "computed_at": now_rfc3339()});
     let result = ctx.lock()?.put_result(invocation.skill(), invocation.id(), "CalculationRef", &payload)?;
     let mut parts = completed(Some(result));
     parts.processed = inputs;

@@ -239,7 +239,7 @@ ol.plain.numbered { list-style: decimal; padding-left: 20px; }
   .grid-3 { grid-template-columns: 1fr 1fr; }
 }
 
-/* Narrow roles, checker challenges and native media observations (M2). */
+/* Narrow roles, checker challenges and native media observations (0.3.0). */
 .roles { margin: 0 16px 12px; padding: 4px 12px; border-radius: var(--radius-card); background: var(--surface-sunken); }
 .roles > summary { cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.8125rem; min-height: 32px; }
 .roles > p { margin: 4px 0 8px; }

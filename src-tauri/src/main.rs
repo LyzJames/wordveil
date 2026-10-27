@@ -20,10 +20,10 @@ use zeroize::Zeroizing;
 
 // Test data and loopback fixtures live in docs, outside the application.
 #[cfg(feature="e2e")]
-#[path="../../../docs/tests/m3/ui_fixture.rs"]
-mod m3_ui_fixture;
+#[path="../../../docs/tests/v0.6.0/ui_fixture.rs"]
+mod shouyu_ui_fixture;
 
-const MILESTONE: &str = lvjin_core::MILESTONE;
+const RELEASE_VERSION: &str = lvjin_core::RELEASE_VERSION;
 
 struct Shell {
     core: Result<Arc<CoreService>, String>,
@@ -33,6 +33,9 @@ struct Shell {
 type Reply = Result<Value, String>;
 
 fn message(error: &Error) -> String {
+    if matches!(error, Error::Remote(_)) || matches!(error, Error::Worker(code) if code != "too_many_attempts") {
+        return lvjin_core::handlers::failure(error).warnings.iter().map(|(_, message)| message.as_str()).collect::<Vec<_>>().join("；");
+    }
     let text = match error {
         Error::Denied => "无权执行该操作，或口令/恢复码不正确。",
         Error::Locked => "私密空间已锁定，请先解锁。",
@@ -91,6 +94,124 @@ fn confirm(app: &AppHandle, title: &str, text: &str, accept: &str) -> bool {
 
 fn picked(path: Option<tauri_plugin_dialog::FilePath>) -> Result<Option<PathBuf>, String> {
     path.map(|p| p.into_path().map_err(|_| "无法读取所选位置".to_string())).transpose()
+}
+
+#[tauri::command]
+async fn personal_query(shell:State<'_,Shell>,operation:String,request:Value)->Reply {
+    let core=core(&shell)?.clone();
+    blocking(move||{
+        let reference=|key:&str|request[key].as_str().ok_or_else(||"缺少对象引用".to_string());
+        let refs=|key:&str|->Result<Vec<String>,String>{request[key].as_array().map(|items|items.iter().map(|i|i.as_str().map(str::to_owned).ok_or_else(||"对象引用格式错误".to_string())).collect()).unwrap_or(Ok(vec![]))};
+        let result=match operation.as_str(){
+            "conversations"=>core.chat_list(request["search"].as_str().unwrap_or("")).map(|v|json!(v)),
+            "create_conversation"=>core.chat_create(request["project_id"].as_str()).map(|id|json!({"id":id})),
+            "read_conversation"=>core.chat_read(reference("id")?),
+            "older_messages"=>core.chat_older(reference("id")?,request["before"].as_i64().ok_or_else(||"缺少消息位置".to_string())?).map(|v|json!(v)),
+            "memories"=>core.memories().map(|v|json!(v)),
+            "context"=>core.context_inspect(reference("id")?),
+            "context_settings"=>core.context_settings(reference("connection_id")?,request["window"].as_u64().map(|n|u32::try_from(n).unwrap_or(0))),
+            "conversation_export"=>core.chat_export_snapshot(reference("id")?).map(|id|json!({"id":id})),
+            "projects"=>core.personal_projects().map(|v|json!(v)),
+            "create_project"=>core.personal_project_create(reference("title")?).map(|id|json!({"id":id})),
+            "files"=>core.personal_files(request["project_id"].as_str()).map(|v|json!(v)),
+            "privacy_config"=>core.text_privacy_config().map(|v|json!({"yaml":v})),
+            "save_privacy_config"=>core.text_privacy_save(reference("yaml")?).map(|_|json!({"saved":true})),
+            "discard_turn"=>core.chat_discard(reference("id")?).map(|_|json!({"discarded":true})),
+            "builtin_mcp"=>core.builtin_mcp(&request),
+            "legacy_project"=>{
+                let e=core.run_skill("matter-manage",json!({"matter_id":reference("id")?,"operation":"read"}),"ui");
+                e.and_then(|e|core.result(e["data_ref"].as_str().ok_or(Error::Integrity)?)).map(|v|v["payload"].clone())
+            },
+            "search"=>{
+                let strategy=serde_json::from_value(request.get("strategy").cloned().unwrap_or(json!("auto"))).map_err(|_|"检索策略错误".to_string())?;
+                core.personal_search(reference("query")?,&refs("projects")?,&refs("versions")?,strategy)
+            },
+            _=>Err(Error::Denied),
+        };result.map_err(|e|message(&e))
+    }).await
+}
+
+#[tauri::command]
+async fn personal_action(app:AppHandle,shell:State<'_,Shell>,operation:String,request:Value)->Reply {
+    let core=core(&shell)?.clone();blocking(move||{
+        let field=|key:&str|request[key].as_str().ok_or_else(||"操作参数不完整".to_string());
+        if operation=="temporary_start" {return core.temporary_start().map_err(|e|message(&e));}
+        if operation=="temporary_end" {
+            if !confirm(&app,"结束临时对话","结束后将销毁本轮临时密钥，清理临时消息、文件和音视频，不可恢复。模型服务商的保留不受本机清理控制。仅保留不含内容的请求计数与状态。","结束并清理"){return Ok(json!({"status":"declined"}));}
+            return core.temporary_end().map(|_|json!({"status":"completed"})).map_err(|e|message(&e));
+        }
+        if operation=="memory_save" {
+            let text=field("text")?;let project=request["project_id"].as_str();let projects=core.personal_projects().map_err(|e|message(&e))?;
+            let scope=match project{Some(id)=>projects.iter().find(|p|p["id"]==id).and_then(|p|p["title"].as_str()).ok_or_else(||"项目范围无效".to_string())?,None=>"全局"};
+            let preview=format!("保存以下记忆？\n\n范围：{scope}\n内容：{text}\n\n后续普通对话会按范围和预算选用，外发前仍经过文字保护。临时对话不读取或保存记忆。删除原会话不会自动删除已确认的独立记忆。");
+            if !confirm(&app,"确认保存记忆",&preview,"保存这条记忆"){return Ok(json!({"status":"declined"}));}
+            let source=request["source_conversation"].as_str().zip(request["source_message"].as_str());
+            return core.memory_save(request["id"].as_str(),text,project,source,request["updated_at"].as_str()).map(|id|json!({"id":id,"status":"completed"})).map_err(|e|message(&e));
+        }
+        if operation=="memory_delete" {
+            let id=field("id")?;let memories=core.memories().map_err(|e|message(&e))?;let item=memories.iter().find(|m|m["id"]==id).ok_or_else(||"记忆已变化".to_string())?;
+            if !confirm(&app,"删除这条记忆",&format!("{}\n\n已保存的原会话消息仍独立保留。进行中的相关请求将停止，派生摘要会失效。",item["text"].as_str().unwrap_or("")),"删除记忆"){return Ok(json!({"status":"declined"}));}
+            return core.memory_delete(id,field("updated_at")?).map(|_|json!({"status":"completed"})).map_err(|e|message(&e));
+        }
+        let id=field("id")?;let view=core.chat_read(id).map_err(|e|message(&e))?;
+        let revision=request["revision"].as_i64().ok_or_else(||"缺少会话版本".to_string())?;
+        if view["revision"]!=revision{return Err("会话已变化，请刷新后再操作。".into());}
+        if operation=="delete"||operation=="delete_message" {
+            let text=if operation=="delete"{format!("删除“{}”的全部分支、消息、待发送内容和派生摘要？\n\n已确认的独立记忆、资料库文件、你导出的外部文件和内容以外的请求计数会保留。",view["title"].as_str().unwrap_or("对话"))}else{
+                let target=field("target")?;let before=request["ordinal"].as_i64().unwrap_or(i64::MAX).saturating_add(1);let rows=core.chat_older(id,before).map_err(|e|message(&e))?;
+                let item=rows.iter().find(|m|m["id"]==target).ok_or_else(||"消息已变化".to_string())?;
+                format!("删除以下消息及所有包含它的分支中依赖它的后续消息？\n\n{}\n\n相关摘要和待发送内容同时清理。已独立确认的记忆可在记忆页面单独删除。",item["text"].as_str().unwrap_or("").chars().take(1200).collect::<String>())
+            };
+            if !confirm(&app,"确认删除",&text,"删除所列内容"){return Ok(json!({"status":"declined"}));}
+        }
+        core.chat_manage(id,&operation,request["text"].as_str().unwrap_or(""),request["target"].as_str(),revision).map(|v|v).map_err(|e|message(&e))
+    }).await
+}
+
+#[tauri::command]
+async fn chat_send(app:AppHandle,shell:State<'_,Shell>,request:Value)->Reply {
+    let core=core(&shell)?.clone();
+    let input:lvjin_core::service::conversation::ChatInput=serde_json::from_value(request).map_err(|_|"对话请求格式错误".to_string())?;
+    blocking(move||{
+        let destination=core.chat_destination(&input.connection_id).map_err(|e|message(&e))?;
+        if destination["consented"]!=true&&destination["loopback"]!=true {
+            let text=format!("允许守语在本机文字保护通过后，将本次及后续对话的必要内容发送至此连接？\n\n服务：{}\n地址：{}\n模型：{}\n\n高风险内容仍需逐次复核。模型服务会看到受保护文本；本机实体映射不会外发。更换连接身份需重新同意。",destination["name"].as_str().unwrap_or(""),destination["host"].as_str().unwrap_or(""),destination["model"].as_str().unwrap_or(""));
+            if !confirm(&app,"允许此模型连接",&text,"允许受保护请求"){return Ok(json!({"status":"declined"}));}
+            core.chat_consent(&input.connection_id,destination["binding"].as_str().unwrap_or("")).map_err(|e|message(&e))?;
+        }
+        if input.web {
+            let search_id=input.search_connection_id.as_deref().unwrap_or(&input.connection_id);
+            let search=core.chat_destination(search_id).map_err(|e|message(&e))?;
+            if search["consented"]!=true {
+                let text=format!("允许本轮及后续明确启用的联网搜索向此连接发送受保护查询？\n地址：{}\n模型连接：{}\n\n搜索结果也会在本机重新保护，之后才交给主模型。",search["host"].as_str().unwrap_or(""),search["model"].as_str().unwrap_or(""));
+                if !confirm(&app,"允许搜索连接",&text,"允许受保护搜索"){return Ok(json!({"status":"declined"}));}
+                core.chat_consent(search_id,search["binding"].as_str().unwrap_or("")).map_err(|e|message(&e))?;
+            }
+        }
+        let mut media_approved=false;
+        if input.media_mode=="cloud" {
+            let summary=core.chat_media_summary(&input).map_err(|e|message(&e))?;
+            if summary["items"].as_array().is_some_and(|items|!items.is_empty()) {
+                let details=serde_json::to_string_pretty(&summary["items"]).map_err(|_|"无法读取媒体范围".to_string())?;
+                let text=format!("允许本轮向 {} / {} 发送以下范围的图像或声音？\n\n{}\n\n图像中的人脸、像素文字及声音/声纹可能暴露隐私，文字保护不能保护这些原始内容。仅已验证媒体能力的连接会收到媒体；否则使用本机 OCR / 转写。",destination["host"].as_str().unwrap_or(""),destination["model"].as_str().unwrap_or(""),details);
+                if !confirm(&app,"仅批准本轮媒体",&text,"批准所列范围"){return Ok(json!({"status":"declined"}));}media_approved=true;
+            }
+        }
+        core.chat_send_with_media(input,media_approved).map(|id|json!({"task_id":id})).map_err(|e|message(&e))
+    }).await
+}
+
+#[tauri::command]
+async fn chat_approve(app:AppHandle,shell:State<'_,Shell>,turn:String)->Reply {
+    let core=core(&shell)?.clone();
+    blocking(move||{
+        let review=core.chat_review(&turn).map_err(|e|message(&e))?;
+        let contents=serde_json::to_string_pretty(&review["preview"]).map_err(|_|"无法读取预览".to_string())?;
+        if contents.len()>24000{return Err("受保护上下文过长，无法在原生确认窗口中完整展示；请减少所选资料或新建对话。".into());}
+        let text=format!("仅批准以下受保护内容发送一次。\n地址：{}\n模型：{}\n\n{}",review["host"].as_str().unwrap_or(""),review["model"].as_str().unwrap_or(""),contents);
+        if !confirm(&app,"复核本次外发内容",&text,"仅批准本次"){return Ok(json!({"status":"declined"}));}
+        core.chat_approve(&turn,review["binding"].as_str().unwrap_or("")).map(|id|json!({"task_id":id})).map_err(|e|message(&e))
+    }).await
 }
 
 // ------------------------------------------------- generation connections
@@ -230,7 +351,7 @@ async fn answer_start(app: AppHandle, shell: State<'_, Shell>, grant: String, ex
     blocking(move || {
         let excluded_media = excluded_media.unwrap_or_default();
         let preview = core.describe_grant(&grant).map_err(|e| message(&e))?;
-        let text = egress_text(&preview, excluded.len(), &excluded_media);
+        let text = egress_text(&preview, &excluded, &excluded_media);
         if !confirm(&app, "向生成接口发送资料", &text, "发送并生成") {
             let _ = core.answer_cancel_preview(&grant);
             return Err("已取消，未发送任何内容".into());
@@ -241,7 +362,7 @@ async fn answer_start(app: AppHandle, shell: State<'_, Shell>, grant: String, ex
 }
 
 /// The confirmation text, from the grant's stored real parameters only.
-fn egress_text(preview: &Value, excluded: usize, excluded_media: &[String]) -> String {
+fn egress_text(preview: &Value, excluded: &[String], excluded_media: &[String]) -> String {
     let purpose = match preview["purpose"].as_str().unwrap_or("") {
         "deep_answer" => "深入分析这一个问题（任务规划者安排至多 3 个专业角色，检查者复核，不包含联网搜索）",
         "contract_review" => "合同书面分析（法律适用、金融口径、证据检查、结果综合）",
@@ -252,14 +373,21 @@ fn egress_text(preview: &Value, excluded: usize, excluded_media: &[String]) -> S
         "video_review" => "视频分析（本机抽帧识别与转写；接口通过自检时直接读取抽帧画面与音轨）",
         _ => "生成这一次回答（不包含联网搜索）",
     };
-    let offered = preview["excerpts"].as_array().map(|e| e.len()).unwrap_or(0);
+    let offered = preview["excerpts"].as_array().map(|items| items.iter().filter(|e| !excluded.iter().any(|id| e["evidence_id"] == *id)).count()).unwrap_or(0);
     let media: Vec<&Value> = preview["native_media"].as_array().map(|m| m.iter().filter(|x| !excluded_media.iter().any(|e| x["media_ref"] == e.as_str())).collect()).unwrap_or_default();
     let mut lines = vec![
         format!("接收方：{}（{}）", preview["connection"]["name"].as_str().unwrap_or(""), preview["connection"]["host"].as_str().unwrap_or("")),
         format!("模型：{}", preview["connection"]["model_id"].as_str().unwrap_or("")),
         format!("用途：{purpose}"),
-        format!("将发送：你的问题，以及所选资料中的原文摘录（预览中 {} 段；任务中可能在同一范围内替换，全程最多 {} 段）", offered.saturating_sub(excluded), preview["max_items"].as_i64().unwrap_or(0)),
+        format!("将发送：你的问题，以及所选资料中的原文摘录（预览中 {} 段；任务中可能在同一范围内替换，全程最多 {} 段）", offered, preview["max_items"].as_i64().unwrap_or(0)),
     ];
+    for calculation in preview["calculations"].as_array().into_iter().flatten() {
+        let blocked = excluded.iter().any(|id| calculation["calculation_id"] == *id)
+            || calculation["evidence_ids"].as_array().into_iter().flatten().any(|e| excluded.iter().any(|id| e == id));
+        if !blocked {
+            lines.push(format!("将发送本机{}计算结果：涉及 {} 条金额记录，含预览所列金额、日期与明细；完整内容与发送预览一致。", if calculation["calculation_type"] == "loan" { "借款" } else { "预算" }, calculation["input_count"]));
+        }
+    }
     if let Some(policy)=preview.get("retrieval_policy") {
         lines.push(format!("检索日期：{}；地域：{}；关系扩展：{}",policy["as_of"].as_str().unwrap_or("今天"),lvjin_core::retrieval_scope::region_name(policy["region"].as_str()),if policy["graph_enabled"]==json!(true){"开启"}else{"关闭"}));
     }
@@ -340,7 +468,7 @@ async fn generation_requests(shell: State<'_, Shell>) -> Reply {
 async fn app_status(shell: State<'_, Shell>) -> Reply {
     let production = shell.production;
     match shell.core.as_ref() {
-        Err(error) => Ok(json!({"milestone": MILESTONE, "version": env!("CARGO_PKG_VERSION"), "installation_ok": false, "error": error})),
+        Err(error) => Ok(json!({"release_version": RELEASE_VERSION, "version": env!("CARGO_PKG_VERSION"), "installation_ok": false, "error": error})),
         Ok(core) => {
             let vaults = core.list_vaults().map_err(|e| message(&e))?;
             #[cfg(feature="e2e")]
@@ -348,9 +476,9 @@ async fn app_status(shell: State<'_, Shell>) -> Reply {
                 // Test-build fixture setup, not a production login bypass.
                 // Only a fresh explicit synthetic data directory is accepted.
                 let core=core.clone();
-                Some(blocking(move||m3_ui_fixture::seed(&core).map(|info|json!(info)).map_err(|e|message(&e))).await?)
+                Some(blocking(move||shouyu_ui_fixture::seed(&core).map(|info|json!(info)).map_err(|e|message(&e))).await?)
             } else {None};
-            let status=json!({"milestone": MILESTONE, "version": env!("CARGO_PKG_VERSION"), "installation_ok": true, "production": production, "unlocked": core.is_unlocked(),
+            let status=json!({"release_version": RELEASE_VERSION, "version": env!("CARGO_PKG_VERSION"), "installation_ok": true, "production": production, "unlocked": core.is_unlocked(),
                 "session": core.session_handle(), "vaults": vaults});
             #[cfg(feature="e2e")]
             {let mut status=status;status["e2e_session"]=json!(synthetic);return Ok(status);}
@@ -416,9 +544,8 @@ async fn change_passphrase(shell: State<'_, Shell>, current: String, new: String
 /// Skills the webview may start with an ordinary UI action. Commits, exports,
 /// maintenance and privacy changes have their own trusted commands below.
 const UI_SKILLS: &[&str] = &[
-    "matter-manage", "knowledge-index", "knowledge-search", "evidence-rerank", "evidence-read", "graph-relations", "finance-calculate", "report-export",
-    "diagnostics", "document-ocr", "lvjin-retrieval", "contract-review", "loan-analysis", "budget-analysis", "image-review", "audio-review", "video-review",
-    "media-decode", "audio-transcribe", "query-plan", "answer-compose", "web-research",
+    "matter-manage", "knowledge-index", "evidence-read", "report-export",
+    "diagnostics", "document-ocr", "media-decode", "audio-transcribe",
 ];
 
 fn ui_input(skill: &str, input: &Value) -> Result<(), String> {
@@ -731,7 +858,7 @@ fn layout(root: &Path) -> Result<(Layout, PathBuf, bool), String> {
         // The e2e build may point at a fresh synthetic data root; other builds cannot.
         let data = match std::env::var_os("LVJIN_E2E_DATA_ROOT").map(PathBuf::from).filter(|p| cfg!(feature = "e2e") && p.is_absolute()) {
             Some(path) => path,
-            None => docs.join("runtime/m1-dev"),
+            None => docs.join("runtime/v0_2_0-dev"),
         };
         let webview = docs.join("build/webview2-fixed/Microsoft.WebView2.FixedVersionRuntime.155.0.4283.62.x64");
         let _ = root;
@@ -843,7 +970,7 @@ fn main() {
                 }));
             }
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_title(&format!("律金智库 · {MILESTONE} 内部版"));
+                let _ = window.set_title(&format!("守语 {RELEASE_VERSION}"));
             }
             Ok(())
         })
@@ -857,13 +984,10 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_status, touch, vault_create, vault_unlock, vault_lock, vault_restore, change_passphrase, run_skill, start_skill, tasks, task_cancel, task_retry,
-            create_object, feedback_remove, import_files, resume_import, commit_change, export_commit, backup, privacy, view, connections, connection_save,
-            connection_probe, connection_revoke, connection_default, answer_preview, qa_history, answer_start, answer_discard, generation_requests,
-            comparison_create, comparison_list, comparison_read, comparison_prepare, comparison_pause, comparison_budget, comparison_preview, comparison_start,
-            index_jobs,index_resume,
-            flows_interrupted, flow_continue, flow_discard, analysis_preview, media_preview,
-            external_overview, external_save, network_preview, external_start, external_discard, knowledge_preview, public_mcp, web_knowledge_preview
+            app_status,touch,vault_create,vault_unlock,vault_lock,vault_restore,change_passphrase,run_skill,start_skill,tasks,task_cancel,task_retry,
+            create_object,feedback_remove,import_files,resume_import,export_commit,backup,privacy,view,connections,connection_save,
+            connection_probe,connection_revoke,connection_default,qa_history,generation_requests,index_jobs,index_resume,
+            personal_query,personal_action,chat_send,chat_approve
         ])
         .run(tauri::generate_context!())
         .expect("desktop runtime failed");

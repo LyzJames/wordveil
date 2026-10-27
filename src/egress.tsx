@@ -4,11 +4,18 @@
 // Continuing opens the native confirmation built by the core from the same
 // stored parameters; nothing is sent before that.
 import React, { useState } from 'react';
-import { bytes, type AnswerPreview, type Purpose } from './api';
+import { bytes, type AnswerPreview, type Excerpt, type Purpose } from './api';
 import { locatorLabel } from './evidence';
 import { Icon } from './icons';
 import { REGIONS } from './regions';
 import { Callout, Chip, Modal } from './ui';
+
+export function ExcerptText({ excerpt }: { excerpt: Excerpt }) {
+  const parts = excerpt.source_parts?.filter((part) => ['frame_ocr', 'audio_asr'].includes(part.kind)) ?? [];
+  return <div className="text-secondary excerpt-text">{parts.length
+    ? parts.map((part, index) => <div key={index}><Chip tone="info">{part.label}</Chip><p>{part.text.slice(0, 240)}{part.text.length > 240 ? '…' : ''}</p></div>)
+    : excerpt.excerpt}</div>;
+}
 
 const PURPOSE: Record<Purpose, string> = {
   answer: '生成这一次回答：改写检索词、起草，并按本机核查结果修订（不包含联网搜索）',
@@ -38,12 +45,15 @@ export function EgressDialog({ preview, onCancel, onConfirm }: { preview: Answer
   const [excludedMedia, setExcludedMedia] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const media = preview.native_media ?? [];
+  const calculations = preview.calculations ?? [];
+  const blockedCalculations = new Set(calculations.filter(c => c.evidence_ids.some(id => excluded.has(id))).map(c => c.calculation_id));
   const policy = preview.media_policy;
-  const sendingText = preview.excerpts.length - excluded.size;
+  const sendingText = preview.excerpts.filter(e => !excluded.has(e.evidence_id)).length;
+  const sendingCalculations = calculations.filter(c => !excluded.has(c.calculation_id) && !blockedCalculations.has(c.calculation_id)).length;
   const sendingMedia = media.length - excludedMedia.size;
   const mediaPurpose = preview.purpose === 'image_review' || preview.purpose === 'audio_review' || preview.purpose === 'video_review';
   // A media review may legitimately send only media, or only text produced later.
-  const nothing = sendingText === 0 && sendingMedia === 0 && !mediaPurpose;
+  const nothing = sendingText === 0 && sendingMedia === 0 && sendingCalculations === 0 && !mediaPurpose;
   return (
     <Modal
       title="发送前预览"
@@ -59,7 +69,7 @@ export function EgressDialog({ preview, onCancel, onConfirm }: { preview: Answer
             disabled={busy || (nothing && preview.excerpts.length > 0)}
             onClick={async () => {
               setBusy(true);
-              await onConfirm([...excluded], [...excludedMedia]);
+              await onConfirm([...new Set([...excluded, ...blockedCalculations])], [...excludedMedia]);
               setBusy(false);
             }}
           >
@@ -69,6 +79,7 @@ export function EgressDialog({ preview, onCancel, onConfirm }: { preview: Answer
       }
     >
       <Callout title={`以下内容将发送到你配置的生成接口，用于${PURPOSE_TITLE[preview.purpose] ?? '这一次任务'}`}>可以取消勾选不想发送的内容。继续后会弹出系统确认框，确认后才会发送。</Callout>
+      {!!preview.preparation_warnings?.length && <Callout tone="warning" title="本机准备仅部分完成">{preview.preparation_warnings.map((w) => w.message).join('；')}</Callout>}
       <dl className="kv">
         <dt>接收方</dt>
         <dd>{preview.connection.name}（{preview.connection.host}）· 模型 {preview.connection.model_id}</dd>
@@ -130,7 +141,7 @@ export function EgressDialog({ preview, onCancel, onConfirm }: { preview: Answer
             <Icon name="document" />
             <div style={{ minWidth: 0 }}>
               <div className="t-strong ellipsis">{[e.display_name, locatorLabel(e.locators ?? [])].filter(Boolean).join(' · ')}</div>
-              <div className="text-secondary excerpt-text">{e.excerpt}</div>
+              <ExcerptText excerpt={e} />
             </div>
             <label className="check t-caption">
               <input type="checkbox" checked={!excluded.has(e.evidence_id)} onChange={() => setExcluded((set) => toggled(set, e.evidence_id))} />
@@ -138,11 +149,23 @@ export function EgressDialog({ preview, onCancel, onConfirm }: { preview: Answer
             </label>
           </div>
         ))}
+        {calculations.map(c => (
+          <div key={c.calculation_id} className={`send-item${excluded.has(c.calculation_id) || blockedCalculations.has(c.calculation_id) ? ' excluded' : ''}`}>
+            <Icon name="document" />
+            <div style={{ minWidth: 0 }}>
+              <div className="t-strong">{c.calculation_type === 'loan' ? '借款' : '预算'}计算结果 · {c.input_count} 条已确认金额记录</div>
+              <p className="t-caption text-secondary">来源：{c.source_documents.join('、') || '所选事务中的手动记录'}。下列金额、日期及明细会发送到生成接口。</p>
+              <details><summary>查看将发送的完整计算内容</summary><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{c.text}</pre></details>
+              {blockedCalculations.has(c.calculation_id) && <p className="t-caption">已取消相关来源原文，此计算结果也不会发送。</p>}
+            </div>
+            <label className="check t-caption"><input type="checkbox" disabled={blockedCalculations.has(c.calculation_id)} checked={!excluded.has(c.calculation_id) && !blockedCalculations.has(c.calculation_id)} onChange={() => setExcluded(set => toggled(set, c.calculation_id))} />发送</label>
+          </div>
+        ))}
       </div>
       <p className="t-caption text-tertiary">
         {mediaPurpose
           ? '不会发送：原件文件本身（图片只发送重新压缩的副本）、未列出的页面、事实与金额记录、你的姓名与空间名称。'
-          : '不会发送：原件与页面图、其他页面、事实与金额记录、你的姓名与空间名称。'}
+          : calculations.length ? '不会发送：原件与页面图、未列出的事实及金额记录、你的姓名与空间名称。' : '不会发送：原件与页面图、其他页面、事实与金额记录、你的姓名与空间名称。'}
         任务中可能在同一范围内换用其他段落（全程不超过 {preview.max_items} 段，取消勾选的内容不会发送）。已发送的内容无法从服务方撤回。
       </p>
     </Modal>

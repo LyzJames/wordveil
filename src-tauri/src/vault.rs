@@ -85,6 +85,9 @@ pub struct VaultKeys {
 }
 
 impl VaultKeys {
+    pub(crate) fn ephemeral(vault_id: &str) -> Result<Self> {
+        Self::from_master(vault_id, SecretKey::generate())
+    }
     fn from_master(vault_id: &str, master: SecretKey) -> Result<Self> {
         let salt = vault_id.as_bytes();
         Ok(Self {
@@ -292,7 +295,7 @@ pub fn directory_for(vaults_root: &Path, handle: &str) -> Result<PathBuf> {
     Ok(vaults_root.join(handle))
 }
 
-#[cfg(feature = "m0-harness")]
+#[cfg(feature = "test-harness")]
 pub mod harness {
     /// Fast, floor-compliant parameters for synthetic tests only.
     pub const TEST_KDF: crate::crypto::KdfParams = crate::crypto::KdfParams { memory_kib: 19456, iterations: 2, parallelism: 1 };
